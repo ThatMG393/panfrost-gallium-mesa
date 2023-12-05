@@ -1572,7 +1572,7 @@ panfrost_create_sampler_view_bo(struct panfrost_sampler_view *so,
       }
    }
 
-   GENX(panfrost_new_texture)(device, &iview, tex, &payload);
+   GENX(panfrost_new_texture)(&iview, tex, &payload);
 }
 
 static void
