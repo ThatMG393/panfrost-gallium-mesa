@@ -393,9 +393,11 @@ out_free_syncs:
 void
 GENX(csf_preload_fb)(struct panfrost_batch *batch, struct pan_fb_info *fb)
 {
+   struct panfrost_device *dev = pan_device(batch->ctx->base.screen);
+
    GENX(pan_preload_fb)
-   (&batch->pool.base, NULL, fb, batch->tls.gpu, batch->tiler_ctx.bifrost,
-    NULL);
+   (&dev->blitter, &batch->pool.base, NULL, fb, batch->tls.gpu,
+    batch->tiler_ctx.bifrost, NULL);
 }
 
 void
