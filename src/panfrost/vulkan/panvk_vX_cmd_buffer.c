@@ -34,6 +34,7 @@
 #include "pan_blitter.h"
 #include "pan_desc.h"
 #include "pan_encoder.h"
+#include "pan_samples.h"
 
 #include "util/rounding.h"
 #include "util/u_pack_color.h"
@@ -197,8 +198,8 @@ panvk_cmd_fb_info_set_subpass(struct panvk_cmd_buffer *cmdbuf)
    }
 
    fbinfo->sample_positions =
-      panfrost_sample_positions(&cmdbuf->device->physical_device->pdev,
-                                pan_sample_pattern(fbinfo->nr_samples));
+      cmdbuf->device->physical_device->pdev.sample_positions->ptr.gpu +
+      panfrost_sample_positions_offset(pan_sample_pattern(fbinfo->nr_samples));
 }
 
 static void
