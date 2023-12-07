@@ -142,6 +142,125 @@ panvk_per_arch(cmd_close_batch)(struct panvk_cmd_buffer *cmdbuf)
    cmdbuf->state.batch = NULL;
 }
 
+static void
+panvk_cmd_fb_info_set_subpass(struct panvk_cmd_buffer *cmdbuf)
+{
+   const struct panvk_subpass *subpass = cmdbuf->state.subpass;
+   struct pan_fb_info *fbinfo = &cmdbuf->state.fb.info;
+   const struct panvk_framebuffer *fb = cmdbuf->state.framebuffer;
+   const struct panvk_clear_value *clears = cmdbuf->state.clear;
+   struct panvk_image_view *view;
+
+   fbinfo->nr_samples = 1;
+   fbinfo->rt_count = subpass->color_count;
+   memset(&fbinfo->bifrost.pre_post.dcds, 0,
+          sizeof(fbinfo->bifrost.pre_post.dcds));
+
+   for (unsigned cb = 0; cb < subpass->color_count; cb++) {
+      int idx = subpass->color_attachments[cb].idx;
+      view = idx != VK_ATTACHMENT_UNUSED ? fb->attachments[idx].iview : NULL;
+      if (!view)
+         continue;
+      fbinfo->rts[cb].view = &view->pview;
+      fbinfo->rts[cb].clear = subpass->color_attachments[cb].clear;
+      fbinfo->rts[cb].preload = subpass->color_attachments[cb].preload;
+      fbinfo->rts[cb].crc_valid = &cmdbuf->state.fb.crc_valid[cb];
+
+      memcpy(fbinfo->rts[cb].clear_value, clears[idx].color,
+             sizeof(fbinfo->rts[cb].clear_value));
+      fbinfo->nr_samples =
+         MAX2(fbinfo->nr_samples, pan_image_view_get_nr_samples(&view->pview));
+   }
+
+   if (subpass->zs_attachment.idx != VK_ATTACHMENT_UNUSED) {
+      view = fb->attachments[subpass->zs_attachment.idx].iview;
+      const struct util_format_description *fdesc =
+         util_format_description(view->pview.format);
+
+      fbinfo->nr_samples =
+         MAX2(fbinfo->nr_samples, pan_image_view_get_nr_samples(&view->pview));
+
+      if (util_format_has_depth(fdesc)) {
+         fbinfo->zs.clear.z = subpass->zs_attachment.clear;
+         fbinfo->zs.clear_value.depth =
+            clears[subpass->zs_attachment.idx].depth;
+         fbinfo->zs.view.zs = &view->pview;
+      }
+
+      if (util_format_has_stencil(fdesc)) {
+         fbinfo->zs.clear.s = subpass->zs_attachment.clear;
+         fbinfo->zs.clear_value.stencil =
+            clears[subpass->zs_attachment.idx].stencil;
+         if (!fbinfo->zs.view.zs)
+            fbinfo->zs.view.s = &view->pview;
+      }
+   }
+
+   fbinfo->sample_positions =
+      panfrost_sample_positions(&cmdbuf->device->physical_device->pdev,
+                                pan_sample_pattern(fbinfo->nr_samples));
+}
+
+static void
+panvk_cmd_prepare_clear_values(struct panvk_cmd_buffer *cmdbuf,
+                               const VkClearValue *in)
+{
+   for (unsigned i = 0; i < cmdbuf->state.pass->attachment_count; i++) {
+      const struct panvk_render_pass_attachment *attachment =
+         &cmdbuf->state.pass->attachments[i];
+      enum pipe_format fmt = attachment->format;
+
+      if (util_format_is_depth_or_stencil(fmt)) {
+         if (attachment->load_op == VK_ATTACHMENT_LOAD_OP_CLEAR ||
+             attachment->stencil_load_op == VK_ATTACHMENT_LOAD_OP_CLEAR) {
+            cmdbuf->state.clear[i].depth = in[i].depthStencil.depth;
+            cmdbuf->state.clear[i].stencil = in[i].depthStencil.stencil;
+         } else {
+            cmdbuf->state.clear[i].depth = 0;
+            cmdbuf->state.clear[i].stencil = 0;
+         }
+      } else {
+         if (attachment->load_op == VK_ATTACHMENT_LOAD_OP_CLEAR) {
+            union pipe_color_union *col =
+               (union pipe_color_union *)&in[i].color;
+            pan_pack_color(panfrost_blendable_formats_v7,
+                           cmdbuf->state.clear[i].color, col, fmt, false);
+         } else {
+            memset(cmdbuf->state.clear[i].color, 0,
+                   sizeof(cmdbuf->state.clear[0].color));
+         }
+      }
+   }
+}
+
+void
+panvk_per_arch(CmdBeginRenderPass2)(
+   VkCommandBuffer commandBuffer, const VkRenderPassBeginInfo *pRenderPassBegin,
+   const VkSubpassBeginInfo *pSubpassBeginInfo)
+{
+   VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
+   VK_FROM_HANDLE(panvk_render_pass, pass, pRenderPassBegin->renderPass);
+   VK_FROM_HANDLE(panvk_framebuffer, fb, pRenderPassBegin->framebuffer);
+
+   cmdbuf->state.pass = pass;
+   cmdbuf->state.subpass = pass->subpasses;
+   cmdbuf->state.framebuffer = fb;
+   cmdbuf->state.render_area = pRenderPassBegin->renderArea;
+   cmdbuf->state.batch =
+      vk_zalloc(&cmdbuf->vk.pool->alloc, sizeof(*cmdbuf->state.batch), 8,
+                VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+   util_dynarray_init(&cmdbuf->state.batch->jobs, NULL);
+   util_dynarray_init(&cmdbuf->state.batch->event_ops, NULL);
+   assert(pRenderPassBegin->clearValueCount <= pass->attachment_count);
+   cmdbuf->state.clear =
+      vk_zalloc(&cmdbuf->vk.pool->alloc,
+                sizeof(*cmdbuf->state.clear) * pass->attachment_count, 8,
+                VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+   panvk_cmd_prepare_clear_values(cmdbuf, pRenderPassBegin->pClearValues);
+   panvk_cmd_fb_info_init(cmdbuf);
+   panvk_cmd_fb_info_set_subpass(cmdbuf);
+}
+
 void
 panvk_per_arch(CmdNextSubpass2)(VkCommandBuffer commandBuffer,
                                 const VkSubpassBeginInfo *pSubpassBeginInfo,

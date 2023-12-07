@@ -755,8 +755,6 @@ struct panvk_cmd_buffer {
 
 struct panvk_batch *panvk_cmd_open_batch(struct panvk_cmd_buffer *cmdbuf);
 
-void panvk_cmd_fb_info_set_subpass(struct panvk_cmd_buffer *cmdbuf);
-
 void panvk_cmd_fb_info_init(struct panvk_cmd_buffer *cmdbuf);
 
 void panvk_cmd_preload_fb_after_batch_split(struct panvk_cmd_buffer *cmdbuf);

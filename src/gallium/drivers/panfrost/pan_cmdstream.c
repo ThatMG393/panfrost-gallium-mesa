@@ -2479,7 +2479,7 @@ emit_tls(struct panfrost_batch *batch)
 }
 
 static void
-emit_fbd(struct panfrost_batch *batch, const struct pan_fb_info *fb)
+emit_fbd(struct panfrost_batch *batch, struct pan_fb_info *fb)
 {
    struct panfrost_device *dev = pan_device(batch->ctx->base.screen);
    struct panfrost_bo *tls_bo =
@@ -2494,6 +2494,11 @@ emit_fbd(struct panfrost_batch *batch, const struct pan_fb_info *fb)
             .size = batch->stack_size,
          },
    };
+
+#if PAN_ARCH >= 6
+   fb->sample_positions =
+      panfrost_sample_positions(dev, pan_sample_pattern(fb->nr_samples));
+#endif
 
    batch->framebuffer.gpu |= GENX(pan_emit_fbd)(
       dev, fb, &tls, &batch->tiler_ctx, batch->framebuffer.cpu);
