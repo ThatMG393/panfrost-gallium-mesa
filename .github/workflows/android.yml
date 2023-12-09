@@ -58,8 +58,7 @@ jobs:
             -Dosmesa=true \
             -Dvulkan-drivers= \
             -Dgallium-drivers=swrast,panfrost \
-            -Dshared-glapi=false \
-            -Dtools=drm-shim
+            -Dshared-glapi=false
           ninja -C "build-android" install
       - name: Upload libraries
         uses: actions/upload-artifact@v2
