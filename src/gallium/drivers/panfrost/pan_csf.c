@@ -504,7 +504,7 @@ GENX(csf_launch_grid)(struct panfrost_batch *batch,
       /* Load size in workgroups per dimension from memory */
       ceu_index address = ceu_reg64(b, 64);
       ceu_move64_to(b, address,
-                    pan_resource(info->indirect)->image.data.bo->ptr.gpu +
+                    pan_resource(info->indirect)->image.data.base +
                        info->indirect_offset);
 
       ceu_index grid_xyz = ceu_reg_tuple(b, 37, 3);
@@ -697,7 +697,7 @@ GENX(csf_launch_draw)(struct panfrost_batch *batch,
 
    if (ctx->occlusion_query && ctx->active_queries) {
       struct panfrost_resource *rsrc = pan_resource(ctx->occlusion_query->rsrc);
-      ceu_move64_to(b, ceu_reg64(b, 46), rsrc->image.data.bo->ptr.gpu);
+      ceu_move64_to(b, ceu_reg64(b, 46), rsrc->image.data.base);
       panfrost_batch_write_rsrc(ctx->batch, rsrc, PIPE_SHADER_FRAGMENT);
    }
 
