@@ -207,7 +207,7 @@ panvk_cmd_fb_info_set_subpass(struct panvk_cmd_buffer *cmdbuf)
    }
 
    fbinfo->sample_positions =
-      cmdbuf->device->pdev.sample_positions->ptr.gpu +
+      cmdbuf->device->sample_positions->addr.dev +
       panfrost_sample_positions_offset(pan_sample_pattern(fbinfo->nr_samples));
 }
 
