@@ -103,7 +103,7 @@ panvk_per_arch(cmd_close_batch)(struct panvk_cmd_buffer *cmdbuf)
    }
 
    struct panvk_device *dev = cmdbuf->device;
-   struct panfrost_device *pdev = &cmdbuf->device->physical_device->pdev;
+   struct panfrost_device *pdev = &cmdbuf->device->pdev;
 
    list_addtail(&batch->node, &cmdbuf->batches);
 
@@ -207,7 +207,7 @@ panvk_cmd_fb_info_set_subpass(struct panvk_cmd_buffer *cmdbuf)
    }
 
    fbinfo->sample_positions =
-      cmdbuf->device->physical_device->pdev.sample_positions->ptr.gpu +
+      cmdbuf->device->pdev.sample_positions->ptr.gpu +
       panfrost_sample_positions_offset(pan_sample_pattern(fbinfo->nr_samples));
 }
 
@@ -1235,14 +1235,14 @@ panvk_create_cmdbuf(struct vk_command_pool *vk_pool,
 
    cmdbuf->device = device;
 
-   panvk_pool_init(&cmdbuf->desc_pool, &device->physical_device->pdev,
+   panvk_pool_init(&cmdbuf->desc_pool, &device->pdev,
                    &pool->desc_bo_pool, 0, 64 * 1024,
                    "Command buffer descriptor pool", true);
-   panvk_pool_init(&cmdbuf->tls_pool, &device->physical_device->pdev,
+   panvk_pool_init(&cmdbuf->tls_pool, &device->pdev,
                    &pool->tls_bo_pool,
                    panvk_debug_adjust_bo_flags(device, PAN_BO_INVISIBLE),
                    64 * 1024, "TLS pool", false);
-   panvk_pool_init(&cmdbuf->varying_pool, &device->physical_device->pdev,
+   panvk_pool_init(&cmdbuf->varying_pool, &device->pdev,
                    &pool->varying_bo_pool,
                    panvk_debug_adjust_bo_flags(device, PAN_BO_INVISIBLE),
                    64 * 1024, "Varyings pool", false);
