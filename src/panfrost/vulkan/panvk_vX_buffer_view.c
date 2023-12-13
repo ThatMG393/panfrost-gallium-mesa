@@ -32,12 +32,14 @@ panvk_per_arch(CreateBufferView)(VkDevice _device,
    if (!view)
       return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
 
-   view->fmt = vk_format_to_pipe_format(pCreateInfo->format);
+   vk_buffer_view_init(&device->vk, &view->vk, pCreateInfo);
+
+   enum pipe_format pfmt = vk_format_to_pipe_format(view->vk.format);
 
    mali_ptr address = panvk_buffer_gpu_ptr(buffer, pCreateInfo->offset);
    unsigned size =
       panvk_buffer_range(buffer, pCreateInfo->offset, pCreateInfo->range);
-   unsigned blksz = util_format_get_blocksize(view->fmt);
+   unsigned blksz = util_format_get_blocksize(pfmt);
    view->elems = size / blksz;
 
    assert(!(address & 63));
@@ -53,7 +55,7 @@ panvk_per_arch(CreateBufferView)(VkDevice _device,
 
       pan_pack(view->descs.tex, TEXTURE, cfg) {
          cfg.dimension = MALI_TEXTURE_DIMENSION_1D;
-         cfg.format = GENX(panfrost_format_from_pipe_format)(view->fmt)->hw;
+         cfg.format = GENX(panfrost_format_from_pipe_format)(pfmt)->hw;
          cfg.width = view->elems;
          cfg.depth = cfg.height = 1;
          cfg.swizzle = PAN_V6_SWIZZLE(R, G, B, A);
@@ -99,5 +101,6 @@ panvk_per_arch(DestroyBufferView)(VkDevice _device, VkBufferView bufferView,
       return;
 
    panvk_priv_bo_destroy(view->bo, pAllocator);
+   vk_buffer_view_finish(&view->vk);
    vk_object_free(&device->vk, pAllocator, view);
 }
