@@ -390,24 +390,6 @@ panvk_CreateCommandPool(VkDevice _device,
 }
 
 void
-panvk_cmd_fb_info_init(struct panvk_cmd_buffer *cmdbuf)
-{
-   struct pan_fb_info *fbinfo = &cmdbuf->state.fb.info;
-   const struct vk_framebuffer *fb = cmdbuf->state.framebuffer;
-
-   memset(cmdbuf->state.fb.crc_valid, 0, sizeof(cmdbuf->state.fb.crc_valid));
-
-   *fbinfo = (struct pan_fb_info){
-      .tile_buf_budget = panfrost_query_optimal_tib_size(
-         cmdbuf->device->physical_device->model),
-      .width = fb->width,
-      .height = fb->height,
-      .extent.maxx = fb->width - 1,
-      .extent.maxy = fb->height - 1,
-   };
-}
-
-void
 panvk_cmd_preload_fb_after_batch_split(struct panvk_cmd_buffer *cmdbuf)
 {
    for (unsigned i = 0; i < cmdbuf->state.fb.info.rt_count; i++) {
