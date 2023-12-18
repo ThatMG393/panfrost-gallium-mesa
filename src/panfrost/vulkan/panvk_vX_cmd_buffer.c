@@ -41,6 +41,7 @@
 #include "util/rounding.h"
 #include "util/u_pack_color.h"
 #include "vk_format.h"
+#include "vk_framebuffer.h"
 
 static uint32_t
 panvk_debug_adjust_bo_flags(const struct panvk_device *device,
@@ -158,9 +159,8 @@ panvk_cmd_fb_info_set_subpass(struct panvk_cmd_buffer *cmdbuf)
 {
    const struct panvk_subpass *subpass = cmdbuf->state.subpass;
    struct pan_fb_info *fbinfo = &cmdbuf->state.fb.info;
-   const struct panvk_framebuffer *fb = cmdbuf->state.framebuffer;
+   const struct vk_framebuffer *fb = cmdbuf->state.framebuffer;
    const struct panvk_clear_value *clears = cmdbuf->state.clear;
-   struct panvk_image_view *view;
 
    fbinfo->nr_samples = 1;
    fbinfo->rt_count = subpass->color_count;
@@ -169,9 +169,12 @@ panvk_cmd_fb_info_set_subpass(struct panvk_cmd_buffer *cmdbuf)
 
    for (unsigned cb = 0; cb < subpass->color_count; cb++) {
       int idx = subpass->color_attachments[cb].idx;
-      view = idx != VK_ATTACHMENT_UNUSED ? fb->attachments[idx].iview : NULL;
-      if (!view)
+
+      if (idx == VK_ATTACHMENT_UNUSED)
          continue;
+
+      VK_FROM_HANDLE(panvk_image_view, view, fb->attachments[idx]);
+
       fbinfo->rts[cb].view = &view->pview;
       fbinfo->rts[cb].clear = subpass->color_attachments[cb].clear;
       fbinfo->rts[cb].preload = subpass->color_attachments[cb].preload;
@@ -184,7 +187,8 @@ panvk_cmd_fb_info_set_subpass(struct panvk_cmd_buffer *cmdbuf)
    }
 
    if (subpass->zs_attachment.idx != VK_ATTACHMENT_UNUSED) {
-      view = fb->attachments[subpass->zs_attachment.idx].iview;
+      VK_FROM_HANDLE(panvk_image_view, view,
+                     fb->attachments[subpass->zs_attachment.idx]);
       const struct util_format_description *fdesc =
          util_format_description(view->pview.format);
 
@@ -251,7 +255,7 @@ panvk_per_arch(CmdBeginRenderPass2)(
 {
    VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
    VK_FROM_HANDLE(panvk_render_pass, pass, pRenderPassBegin->renderPass);
-   VK_FROM_HANDLE(panvk_framebuffer, fb, pRenderPassBegin->framebuffer);
+   VK_FROM_HANDLE(vk_framebuffer, fb, pRenderPassBegin->framebuffer);
 
    cmdbuf->state.pass = pass;
    cmdbuf->state.subpass = pass->subpasses;

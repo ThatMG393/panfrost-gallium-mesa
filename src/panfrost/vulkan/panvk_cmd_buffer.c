@@ -34,6 +34,7 @@
 
 #include "util/rounding.h"
 #include "vk_format.h"
+#include "vk_framebuffer.h"
 
 VKAPI_ATTR void VKAPI_CALL
 panvk_CmdBindVertexBuffers(VkCommandBuffer commandBuffer, uint32_t firstBinding,
@@ -392,7 +393,7 @@ void
 panvk_cmd_fb_info_init(struct panvk_cmd_buffer *cmdbuf)
 {
    struct pan_fb_info *fbinfo = &cmdbuf->state.fb.info;
-   const struct panvk_framebuffer *fb = cmdbuf->state.framebuffer;
+   const struct vk_framebuffer *fb = cmdbuf->state.framebuffer;
 
    memset(cmdbuf->state.fb.crc_valid, 0, sizeof(cmdbuf->state.fb.crc_valid));
 
