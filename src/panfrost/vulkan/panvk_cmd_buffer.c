@@ -436,7 +436,7 @@ panvk_cmd_open_batch(struct panvk_cmd_buffer *cmdbuf)
    assert(!cmdbuf->state.batch);
    cmdbuf->state.batch =
       vk_zalloc(&cmdbuf->vk.pool->alloc, sizeof(*cmdbuf->state.batch), 8,
-                VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+                VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
    assert(cmdbuf->state.batch);
    return cmdbuf->state.batch;
 }
