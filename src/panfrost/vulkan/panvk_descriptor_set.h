@@ -14,6 +14,18 @@ struct panvk_descriptor_pool;
 struct panvk_descriptor_set_layout;
 struct panvk_priv_bo;
 
+struct panvk_bview_desc {
+   uint32_t elems;
+};
+
+struct panvk_image_desc {
+   uint16_t width;
+   uint16_t height;
+   uint16_t depth;
+   uint8_t levels;
+   uint8_t samples;
+};
+
 struct panvk_buffer_desc {
    struct panvk_buffer *buffer;
    VkDeviceSize offset;
