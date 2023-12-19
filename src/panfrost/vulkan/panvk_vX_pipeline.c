@@ -31,7 +31,6 @@
 #include "panvk_pipeline_layout.h"
 #include "panvk_private.h"
 #include "panvk_shader.h"
-#include "panvk_vX_cs.h"
 
 #include "nir/nir.h"
 #include "nir/nir_builder.h"
