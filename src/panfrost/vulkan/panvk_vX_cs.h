@@ -33,6 +33,7 @@
 #include <vulkan/vulkan.h>
 
 struct panvk_attribs_info;
+struct panvk_dispatch_info;
 
 void panvk_per_arch(emit_varying)(const struct panvk_device *dev,
                                   const struct panvk_varyings_info *varyings,

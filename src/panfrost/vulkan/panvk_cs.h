@@ -55,6 +55,17 @@ struct panvk_descriptor_state;
 struct panvk_subpass;
 struct panvk_clear_value;
 
+struct panvk_dispatch_info {
+   struct pan_compute_dim wg_count;
+   mali_ptr attributes;
+   mali_ptr attribute_bufs;
+   mali_ptr tsd;
+   mali_ptr ubos;
+   mali_ptr push_uniforms;
+   mali_ptr textures;
+   mali_ptr samplers;
+};
+
 #ifdef PAN_ARCH
 static inline enum mali_func
 panvk_per_arch(translate_compare_func)(VkCompareOp comp)

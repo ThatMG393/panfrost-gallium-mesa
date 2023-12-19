@@ -396,17 +396,6 @@ struct panvk_draw_info {
    } jobs;
 };
 
-struct panvk_dispatch_info {
-   struct pan_compute_dim wg_count;
-   mali_ptr attributes;
-   mali_ptr attribute_bufs;
-   mali_ptr tsd;
-   mali_ptr ubos;
-   mali_ptr push_uniforms;
-   mali_ptr textures;
-   mali_ptr samplers;
-};
-
 struct panvk_attrib_buf {
    mali_ptr address;
    unsigned size;
