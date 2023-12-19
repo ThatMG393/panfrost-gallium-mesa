@@ -46,6 +46,7 @@
 
 #include "panvk_buffer.h"
 #include "panvk_cs.h"
+#include "panvk_descriptor_pool.h"
 #include "panvk_descriptor_set.h"
 #include "panvk_descriptor_set_layout.h"
 #include "panvk_sampler.h"

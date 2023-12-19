@@ -322,28 +322,6 @@ struct panvk_cmd_event_op {
    struct panvk_event *event;
 };
 
-struct panvk_desc_pool_counters {
-   unsigned samplers;
-   unsigned combined_image_samplers;
-   unsigned sampled_images;
-   unsigned storage_images;
-   unsigned uniform_texel_bufs;
-   unsigned storage_texel_bufs;
-   unsigned input_attachments;
-   unsigned uniform_bufs;
-   unsigned storage_bufs;
-   unsigned uniform_dyn_bufs;
-   unsigned storage_dyn_bufs;
-   unsigned sets;
-};
-
-struct panvk_descriptor_pool {
-   struct vk_object_base base;
-   struct panvk_desc_pool_counters max;
-   struct panvk_desc_pool_counters cur;
-   struct panvk_descriptor_set *sets;
-};
-
 enum panvk_dynamic_state_bits {
    PANVK_DYNAMIC_VIEWPORT = 1 << 0,
    PANVK_DYNAMIC_SCISSOR = 1 << 1,
@@ -597,8 +575,6 @@ VK_DEFINE_HANDLE_CASTS(panvk_queue, vk.base, VkQueue, VK_OBJECT_TYPE_QUEUE)
 
 VK_DEFINE_NONDISP_HANDLE_CASTS(panvk_cmd_pool, vk.base, VkCommandPool,
                                VK_OBJECT_TYPE_COMMAND_POOL)
-VK_DEFINE_NONDISP_HANDLE_CASTS(panvk_descriptor_pool, base, VkDescriptorPool,
-                               VK_OBJECT_TYPE_DESCRIPTOR_POOL)
 
 #ifdef PAN_ARCH
 #include "panvk_vX_cmd_buffer.h"

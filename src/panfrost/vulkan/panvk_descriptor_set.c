@@ -24,6 +24,8 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
  * DEALINGS IN THE SOFTWARE.
  */
+
+#include "panvk_descriptor_pool.h"
 #include "panvk_private.h"
 #include "panvk_sampler.h"
 
@@ -109,89 +111,6 @@ panvk_GetDescriptorSetLayoutSupport(
       return;
 
    pSupport->supported = true;
-}
-
-VKAPI_ATTR VkResult VKAPI_CALL
-panvk_CreateDescriptorPool(VkDevice _device,
-                           const VkDescriptorPoolCreateInfo *pCreateInfo,
-                           const VkAllocationCallbacks *pAllocator,
-                           VkDescriptorPool *pDescriptorPool)
-{
-   VK_FROM_HANDLE(panvk_device, device, _device);
-   struct panvk_descriptor_pool *pool;
-
-   pool = vk_object_zalloc(&device->vk, pAllocator,
-                           sizeof(struct panvk_descriptor_pool),
-                           VK_OBJECT_TYPE_DESCRIPTOR_POOL);
-   if (!pool)
-      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
-
-   pool->max.sets = pCreateInfo->maxSets;
-
-   for (unsigned i = 0; i < pCreateInfo->poolSizeCount; ++i) {
-      unsigned desc_count = pCreateInfo->pPoolSizes[i].descriptorCount;
-
-      switch (pCreateInfo->pPoolSizes[i].type) {
-      case VK_DESCRIPTOR_TYPE_SAMPLER:
-         pool->max.samplers += desc_count;
-         break;
-      case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-         pool->max.combined_image_samplers += desc_count;
-         break;
-      case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
-         pool->max.sampled_images += desc_count;
-         break;
-      case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-         pool->max.storage_images += desc_count;
-         break;
-      case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
-         pool->max.uniform_texel_bufs += desc_count;
-         break;
-      case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
-         pool->max.storage_texel_bufs += desc_count;
-         break;
-      case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
-         pool->max.input_attachments += desc_count;
-         break;
-      case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
-         pool->max.uniform_bufs += desc_count;
-         break;
-      case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
-         pool->max.storage_bufs += desc_count;
-         break;
-      case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
-         pool->max.uniform_dyn_bufs += desc_count;
-         break;
-      case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
-         pool->max.storage_dyn_bufs += desc_count;
-         break;
-      default:
-         unreachable("Invalid descriptor type");
-      }
-   }
-
-   *pDescriptorPool = panvk_descriptor_pool_to_handle(pool);
-   return VK_SUCCESS;
-}
-
-VKAPI_ATTR void VKAPI_CALL
-panvk_DestroyDescriptorPool(VkDevice _device, VkDescriptorPool _pool,
-                            const VkAllocationCallbacks *pAllocator)
-{
-   VK_FROM_HANDLE(panvk_device, device, _device);
-   VK_FROM_HANDLE(panvk_descriptor_pool, pool, _pool);
-
-   if (pool)
-      vk_object_free(&device->vk, pAllocator, pool);
-}
-
-VKAPI_ATTR VkResult VKAPI_CALL
-panvk_ResetDescriptorPool(VkDevice _device, VkDescriptorPool _pool,
-                          VkDescriptorPoolResetFlags flags)
-{
-   VK_FROM_HANDLE(panvk_descriptor_pool, pool, _pool);
-   memset(&pool->cur, 0, sizeof(pool->cur));
-   return VK_SUCCESS;
 }
 
 static void
