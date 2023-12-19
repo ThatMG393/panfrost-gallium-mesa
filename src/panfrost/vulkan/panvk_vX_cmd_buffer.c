@@ -36,6 +36,7 @@
 #include "panvk_pipeline.h"
 #include "panvk_pipeline_layout.h"
 #include "panvk_private.h"
+#include "panvk_vX_cs.h"
 
 #include "pan_blitter.h"
 #include "pan_desc.h"

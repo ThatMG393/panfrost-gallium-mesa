@@ -40,6 +40,7 @@
 #include "panvk_pipeline_layout.h"
 #include "panvk_private.h"
 #include "panvk_varyings.h"
+#include "panvk_vX_cs.h"
 
 #include "vk_sampler.h"
 

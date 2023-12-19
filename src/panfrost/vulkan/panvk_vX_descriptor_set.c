@@ -31,6 +31,7 @@
 #include "panvk_image.h"
 #include "panvk_image_view.h"
 #include "panvk_private.h"
+#include "panvk_vX_cs.h"
 
 #include <assert.h>
 #include <fcntl.h>
