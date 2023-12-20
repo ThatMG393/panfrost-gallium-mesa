@@ -16,6 +16,7 @@
 #include "vk_drm_syncobj.h"
 #include "vk_util.h"
 
+#include "panvk_instance.h"
 #include "panvk_physical_device.h"
 #include "panvk_private.h"
 
