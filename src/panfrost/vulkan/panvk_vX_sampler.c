@@ -6,6 +6,7 @@
 #include "genxml/gen_macros.h"
 
 #include "panvk_cs.h"
+#include "panvk_device.h"
 #include "panvk_private.h"
 #include "panvk_sampler.h"
 

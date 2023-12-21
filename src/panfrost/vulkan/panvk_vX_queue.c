@@ -14,6 +14,7 @@
 #include "decode.h"
 
 #include "panvk_cs.h"
+#include "panvk_device.h"
 #include "panvk_event.h"
 #include "panvk_instance.h"
 #include "panvk_physical_device.h"

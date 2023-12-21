@@ -27,6 +27,7 @@
  */
 
 #include "panvk_cs.h"
+#include "panvk_device.h"
 #include "panvk_pipeline.h"
 #include "panvk_private.h"
 
