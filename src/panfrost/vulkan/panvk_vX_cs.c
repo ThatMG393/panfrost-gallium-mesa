@@ -35,6 +35,7 @@
 #include "pan_shader.h"
 
 #include "panvk_buffer.h"
+#include "panvk_cmd_buffer.h"
 #include "panvk_cs.h"
 #include "panvk_device.h"
 #include "panvk_pipeline.h"
