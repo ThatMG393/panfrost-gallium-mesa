@@ -34,7 +34,8 @@
 
 #include "vk_util.h"
 
-#include "panvk_private.h"
+#include "panvk_macros.h"
+#include "panvk_shader.h"
 
 struct pan_blend_state;
 struct pan_shader_info;

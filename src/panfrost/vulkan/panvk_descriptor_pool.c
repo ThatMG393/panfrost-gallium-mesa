@@ -10,8 +10,12 @@
 
 #include "panvk_device.h"
 #include "panvk_descriptor_pool.h"
-#include "panvk_private.h"
+#include "panvk_descriptor_set.h"
+#include "panvk_entrypoints.h"
 #include "panvk_priv_bo.h"
+
+#include "vk_alloc.h"
+#include "vk_log.h"
 
 VKAPI_ATTR VkResult VKAPI_CALL
 panvk_CreateDescriptorPool(VkDevice _device,

@@ -27,7 +27,9 @@
 
 #include "panvk_device.h"
 #include "panvk_descriptor_pool.h"
-#include "panvk_private.h"
+#include "panvk_descriptor_set.h"
+#include "panvk_entrypoints.h"
+#include "panvk_pipeline_layout.h"
 #include "panvk_priv_bo.h"
 #include "panvk_sampler.h"
 
@@ -37,7 +39,9 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "vk_alloc.h"
 #include "vk_descriptors.h"
+#include "vk_log.h"
 #include "vk_util.h"
 
 /* FIXME: make sure those values are correct */
