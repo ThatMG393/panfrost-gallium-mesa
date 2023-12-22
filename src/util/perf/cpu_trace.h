@@ -32,8 +32,7 @@
 #else
 
 #define _MESA_TRACE_BEGIN(name)
-#define _MESA_TRACE_E
-ND()
+#define _MESA_TRACE_END()
 
 #endif /* HAVE_PERFETTO */
 
