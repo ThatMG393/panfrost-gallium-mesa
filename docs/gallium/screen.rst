@@ -153,6 +153,7 @@ The integer capabilities:
   the pipe_screen::get_timestamp hook are implemented.
 * ``PIPE_CAP_QUERY_TIMESTAMP_BITS``: How many bits the driver uses for the
   results of GL_TIMESTAMP queries.
+* ``PIPE_CAP_TIMER_RESOLUTION``: The resolution of the timer in nanos.
 * ``PIPE_CAP_TEXTURE_MULTISAMPLE``: Whether all MSAA resources supported
   for rendering are also supported for texturing.
 * ``PIPE_CAP_MIN_MAP_BUFFER_ALIGNMENT``: The minimum alignment that should be
@@ -162,6 +163,12 @@ The integer capabilities:
 * ``PIPE_CAP_TEXTURE_BUFFER_OFFSET_ALIGNMENT``: Describes the required
   alignment for pipe_sampler_view::u.buf.offset, in bytes.
   If a driver does not support offset/size, it should return 0.
+* ``PIPE_CAP_LINEAR_IMAGE_PITCH_ALIGNMENT``: Describes the row pitch alignment
+  size that pipe_sampler_view::u.tex2d_from_buf must be multiple of, in pixels.
+  If a driver does not support images created from buffers, it should return 0.
+* ``PIPE_CAP_LINEAR_IMAGE_BASE_ADDRESS_ALIGNMENT``: Describes the minimum alignment
+  in pixels of the offset of a host pointer for images created from buffers.
+  If a driver does not support images created from buffers, it should return 0.
 * ``PIPE_CAP_BUFFER_SAMPLER_VIEW_RGBA_ONLY``: Whether the driver only
   supports R, RG, RGB and RGBA formats for PIPE_BUFFER sampler views.
   When this is the case it should be assumed that the swizzle parameters
@@ -174,9 +181,6 @@ The integer capabilities:
   TEXCOORD semantic.
   Also, TGSI_SEMANTIC_PCOORD becomes available, which labels a fragment shader
   input that will always be replaced with sprite coordinates.
-* ``PIPE_CAP_TEXTURE_BUFFER_SAMPLER``: Whether a sampler should still
-  be used for PIPE_BUFFER resources (normally a sampler is only used
-  if the texture target is PIPE_TEXTURE_*).
 * ``PIPE_CAP_TEXTURE_TRANSFER_MODES``: The ``pipe_texture_transfer_mode`` modes
   that are supported for implementing a texture transfer which needs format conversions
   and swizzling in gallium frontends. Generally, all hardware drivers with
@@ -320,8 +324,6 @@ The integer capabilities:
 * ``PIPE_CAP_COPY_BETWEEN_COMPRESSED_AND_PLAIN_FORMATS``:
   Whether copying between compressed and plain formats is supported where
   a compressed block is copied to/from a plain pixel of the same size.
-* ``PIPE_CAP_CLEAR_TEXTURE``: Whether ``clear_texture`` will be
-  available in contexts.
 * ``PIPE_CAP_CLEAR_SCISSORED``: Whether ``clear`` can accept a scissored
   bounding box.
 * ``PIPE_CAP_DRAW_PARAMETERS``: Whether ``TGSI_SEMANTIC_BASEVERTEX``,
@@ -361,7 +363,7 @@ The integer capabilities:
 * ``PIPE_CAP_FRAMEBUFFER_NO_ATTACHMENT``:
   If non-zero, rendering to framebuffers with no surface attachments
   is supported. The context->is_format_supported function will be expected
-  to be implemented with PIPE_FORMAT_NONE yeilding the MSAA modes the hardware
+  to be implemented with PIPE_FORMAT_NONE yielding the MSAA modes the hardware
   supports. N.B., The maximum number of layers supported for rasterizing a
   primitive on a layer is obtained from ``PIPE_CAP_MAX_TEXTURE_ARRAY_LAYERS``
   even though it can be larger than the number of layers supported by either
@@ -427,8 +429,6 @@ The integer capabilities:
 * ``PIPE_CAP_DOUBLES``: Whether double precision floating-point operations
   are supported.
 * ``PIPE_CAP_INT64``: Whether 64-bit integer operations are supported.
-* ``PIPE_CAP_INT64_DIVMOD``: Whether 64-bit integer division/modulo
-  operations are supported.
 * ``PIPE_CAP_TGSI_TEX_TXF_LZ``: Whether TEX_LZ and TXF_LZ opcodes are
   supported.
 * ``PIPE_CAP_SHADER_CLOCK``: Whether the CLOCK opcode is supported.
@@ -540,7 +540,6 @@ The integer capabilities:
   enable :ext:`GL_EXT_multisampled_render_to_texture`.
 * ``PIPE_CAP_IMAGE_ATOMIC_FLOAT_ADD``: Atomic floating point adds are
   supported on images, buffers, and shared memory.
-* ``PIPE_CAP_RGB_OVERRIDE_DST_ALPHA_BLEND``: True if the driver needs blend state to use zero/one instead of destination alpha for RGB/XRGB formats.
 * ``PIPE_CAP_GLSL_TESS_LEVELS_AS_INPUTS``: True if the driver wants TESSINNER and TESSOUTER to be inputs (rather than system values) for tessellation evaluation shaders.
 * ``PIPE_CAP_DEST_SURFACE_SRGB_CONTROL``: Indicates whether the drivers
   supports switching the format between sRGB and linear for a surface that is
@@ -559,6 +558,11 @@ The integer capabilities:
   execution. 0 = throttling is disabled.
 * ``PIPE_CAP_DMABUF``: Whether Linux DMABUF handles are supported by
   resource_from_handle and resource_get_handle.
+  Possible bit field values:
+
+    1. ``DRM_PRIME_CAP_IMPORT``: resource_from_handle is supported
+    2. ``DRM_PRIME_CAP_EXPORT``: resource_get_handle is supported
+
 * ``PIPE_CAP_PREFER_COMPUTE_FOR_MULTIMEDIA``: Whether VDPAU, VAAPI, and
   OpenMAX should use a compute-based blit instead of pipe_context::blit and compute pipeline for compositing images.
 * ``PIPE_CAP_FRAGMENT_SHADER_INTERLOCK``: True if fragment shader interlock
@@ -595,10 +599,10 @@ The integer capabilities:
   as opposed to writing gl_PointSize for every point.
 * ``PIPE_CAP_TWO_SIDED_COLOR``: Driver supports two-sided coloring.  Must be 1
     for non-NIR drivers.  If set, pipe_rasterizer_state may be set to indicate
-    that backfacing primitives should use the back-side color as the FS input
+    that back-facing primitives should use the back-side color as the FS input
     color.  If unset, mesa/st will lower it to gl_FrontFacing reads in the
     fragment shader.
-* ``PIPE_CAP_CLIP_PLANES``: Driver supports user-defined clip-planes. 0 denotes none, 1 denotes MAX_CLIP_PLANES. > 1 overrides MAX.
+* ``PIPE_CAP_CLIP_PLANES``: Driver supports user-defined clip-planes. 0 denotes none, 1 denotes MAX_CLIP_PLANES. > 1 overrides MAX. When is 0, pipe_rasterizer_state::clip_plane_enable is unused.
 * ``PIPE_CAP_MAX_VERTEX_BUFFERS``: Number of supported vertex buffers.
 * ``PIPE_CAP_OPENCL_INTEGER_FUNCTIONS``: Driver supports extended OpenCL-style integer functions.  This includes average, saturating addition, saturating subtraction, absolute difference, count leading zeros, and count trailing zeros.
 * ``PIPE_CAP_INTEGER_MULTIPLY_32X16``: Driver supports integer multiplication between a 32-bit integer and a 16-bit integer.  If the second operand is 32-bits, the upper 16-bits are ignored, and the low 16-bits are possibly sign extended as necessary.
@@ -617,14 +621,14 @@ The integer capabilities:
 * ``PIPE_CAP_NO_CLIP_ON_COPY_TEX``: Driver doesn't want x/y/width/height clipped based on src size when doing a copy texture operation (e.g.: may want out-of-bounds reads that produce 0 instead of leaving the texture content undefined)
 * ``PIPE_CAP_MAX_TEXTURE_MB``: Maximum texture size in MB (default is 1024)
 * ``PIPE_CAP_DEVICE_PROTECTED_SURFACE``: Whether the device support protected / encrypted content.
-* ``PIPE_CAP_PREFER_REAL_BUFFER_IN_CONSTBUF0``: The state tracker is encouraged to upload constants into a real buffer and bind it into constant buffer 0 instead of binding a user pointer. This may enable a faster codepath in a gallium frontend for drivers that really prefer a real buffer.
+* ``PIPE_CAP_PREFER_REAL_BUFFER_IN_CONSTBUF0``: The state tracker is encouraged to upload constants into a real buffer and bind it into constant buffer 0 instead of binding a user pointer. This may enable a faster code-path in a gallium frontend for drivers that really prefer a real buffer.
 * ``PIPE_CAP_GL_CLAMP``: Driver natively supports GL_CLAMP.  Required for non-NIR drivers with the GL frontend.  NIR drivers with the cap unavailable will have GL_CLAMP lowered to txd/txl with a saturate on the coordinates.
 * ``PIPE_CAP_TEXRECT``: Driver supports rectangle textures.  Required for OpenGL on ``!prefers_nir`` drivers.  If this cap is not present, st/mesa will lower the NIR to use normal 2D texture sampling by using either ``txs`` or ``nir_intrinsic_load_texture_scaling`` to normalize the texture coordinates.
 * ``PIPE_CAP_SAMPLER_REDUCTION_MINMAX``: Driver supports EXT min/max sampler reduction.
 * ``PIPE_CAP_SAMPLER_REDUCTION_MINMAX_ARB``: Driver supports ARB min/max sampler reduction with format queries.
 * ``PIPE_CAP_EMULATE_NONFIXED_PRIMITIVE_RESTART``: Driver requests all draws using a non-fixed restart index to be rewritten to use a fixed restart index.
-* ``PIPE_CAP_SUPPORTED_PRIM_MODES``: A bitmask of the ``pipe_prim_type`` enum values that the driver can natively support.
-* ``PIPE_CAP_SUPPORTED_PRIM_MODES_WITH_RESTART``: A bitmask of the ``pipe_prim_type`` enum values that the driver can natively support for primitive restart. Only useful if ``PIPE_CAP_PRIMITIVE_RESTART`` is also exported.
+* ``PIPE_CAP_SUPPORTED_PRIM_MODES``: A bitmask of the ``mesa_prim`` enum values that the driver can natively support.
+* ``PIPE_CAP_SUPPORTED_PRIM_MODES_WITH_RESTART``: A bitmask of the ``mesa_prim`` enum values that the driver can natively support for primitive restart. Only useful if ``PIPE_CAP_PRIMITIVE_RESTART`` is also exported.
 * ``PIPE_CAP_PREFER_BACK_BUFFER_REUSE``: Only applies to DRI_PRIME. If 1, the driver prefers that DRI3 tries to use the same back buffer each frame. If 0, this means DRI3 will at least use 2 back buffers and ping-pong between them to allow the tiled->linear copy to run in parallel.
 * ``PIPE_CAP_DRAW_VERTEX_STATE``: Driver supports ``pipe_screen::create_vertex_state/vertex_state_destroy`` and ``pipe_context::draw_vertex_state``. Only used by display lists and designed to serve vbo_save.
 * ``PIPE_CAP_PREFER_POT_ALIGNED_VARYINGS``: Driver prefers varyings to be aligned to power of two in a slot. If this cap is enabled, vec4 varying will be placed in .xyzw components of the varying slot, vec3 in .xyz and vec2 in .xy or .zw
@@ -638,6 +642,13 @@ The integer capabilities:
 * ``PIPE_CAP_MAX_CONSTANT_BUFFER_SIZE_UINT``: Maximum bound constant buffer size in bytes. This is unsigned integer with the maximum of 4GB - 1. This applies to all constant buffers used by UBOs, unlike ``PIPE_SHADER_CAP_MAX_CONST_BUFFER0_SIZE``, which is specifically for GLSL uniforms.
 * ``PIPE_CAP_HARDWARE_GL_SELECT``: Enable hardware accelerated GL_SELECT for this driver.
 * ``PIPE_CAP_DEVICE_PROTECTED_CONTEXT``: Whether the device supports protected / encrypted context which can manipulate protected / encrypted content (some devices might need protected contexts to access protected content, whereas ``PIPE_CAP_DEVICE_PROTECTED_SURFACE`` does not require any particular context to do so).
+* ``PIPE_CAP_ALLOW_GLTHREAD_BUFFER_SUBDATA_OPT``: Whether to allow glthread to convert glBufferSubData to glCopyBufferSubData. This may improve or worsen performance depending on your driver.
+* ``PIPE_CAP_NULL_TEXTURES`` : Whether the driver supports sampling from NULL textures.
+* ``PIPE_CAP_ASTC_VOID_EXTENTS_NEED_DENORM_FLUSH`` : True if the driver/hardware needs denormalized values in ASTC void extent blocks flushed to zero.
+* ``PIPE_CAP_VALIDATE_ALL_DIRTY_STATES`` : Whether state validation must also validate the state changes for resources types used in the previous shader but not in the current shader.
+* ``PIPE_CAP_HAS_CONST_BW``: Whether the driver only supports non-data-dependent layouts (ie. not bandwidth compressed formats like AFBC, UBWC, etc), or supports ``PIPE_BIND_CONST_BW`` to disable data-dependent layouts on requested resources.
+* ``PIPE_CAP_PERFORMANCE_MONITOR``: Whether GL_AMD_performance_monitor should be exposed.
+
 
 .. _pipe_capf:
 
@@ -729,15 +740,8 @@ support different features.
   Note that 16-bit constants are not lowered to uniforms in GLSL.
 * ``PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS``: The maximum number of texture
   samplers.
-* ``PIPE_SHADER_CAP_PREFERRED_IR``: Preferred representation of the
-  program.  It should be one of the ``pipe_shader_ir`` enum values.
 * ``PIPE_SHADER_CAP_MAX_SAMPLER_VIEWS``: The maximum number of texture
   sampler views. Must not be lower than PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS.
-* ``PIPE_SHADER_CAP_DROUND_SUPPORTED``: Whether double precision rounding
-  is supported. If it is, DTRUNC/DCEIL/DFLR/DROUND opcodes may be used.
-* ``PIPE_SHADER_CAP_DFRACEXP_DLDEXP_SUPPORTED``: Whether DFRACEXP and
-  DLDEXP are supported.
-* ``PIPE_SHADER_CAP_LDEXP_SUPPORTED``: Whether LDEXP is supported.
 * ``PIPE_SHADER_CAP_TGSI_ANY_INOUT_DECL_RANGE``: Whether the driver doesn't
   ignore tgsi_declaration_range::Last for shader inputs and outputs.
 * ``PIPE_SHADER_CAP_MAX_SHADER_BUFFERS``: Maximum number of memory buffers
@@ -790,10 +794,15 @@ pipe_screen::get_compute_param.
   clock in MHz. Value type: ``uint32_t``
 * ``PIPE_COMPUTE_CAP_MAX_COMPUTE_UNITS``: Maximum number of compute units
   Value type: ``uint32_t``
+* ``PIPE_COMPUTE_CAP_MAX_SUBGROUPS``: The max amount of subgroups there can be
+  inside a block. Non 0 indicates support for OpenCL subgroups including
+  implementing ``get_compute_state_subgroup_size`` if multiple subgroup sizes
+  are supported.
 * ``PIPE_COMPUTE_CAP_IMAGES_SUPPORTED``: Whether images are supported
   non-zero means yes, zero means no. Value type: ``uint32_t``
-* ``PIPE_COMPUTE_CAP_SUBGROUP_SIZE``: The size of a basic execution unit in
-  threads. Also known as wavefront size, warp size or SIMD width.
+* ``PIPE_COMPUTE_CAP_SUBGROUP_SIZES``: Ored power of two sizes of a basic execution
+  unit in threads. Also known as wavefront size, warp size or SIMD width.
+  E.g. `64 | 32`.
 * ``PIPE_COMPUTE_CAP_ADDRESS_BITS``: The default compute device address space
   size specified as an unsigned integer value in bits.
 * ``PIPE_COMPUTE_CAP_MAX_VARIABLE_THREADS_PER_BLOCK``: Maximum variable number

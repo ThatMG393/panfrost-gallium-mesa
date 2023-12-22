@@ -26,12 +26,12 @@
 #ifndef __PAN_JOB_H__
 #define __PAN_JOB_H__
 
-#include "util/u_dynarray.h"
 #include "pipe/p_state.h"
-#include "pan_cs.h"
+#include "util/u_dynarray.h"
+#include "pan_desc.h"
+#include "pan_jm.h"
 #include "pan_mempool.h"
 #include "pan_resource.h"
-#include "pan_scoreboard.h"
 
 /* Simple tri-state data structure. In the default "don't care" state, the value
  * may be set to true or false. However, once the value is set, it must not be

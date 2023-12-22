@@ -23,31 +23,28 @@
  * SOFTWARE.
  */
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <assert.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 
-#include "decode.h"
 #include "util/macros.h"
 #include "util/u_debug.h"
-#include "util/u_dynarray.h"
-#include "util/simple_mtx.h"
+#include "util/u_hexdump.h"
+#include "decode.h"
 
-FILE *pandecode_dump_stream;
+#include "compiler/bifrost/disassemble.h"
+#include "compiler/valhall/disassemble.h"
+#include "midgard/disassemble.h"
 
-/* Memory handling */
+/* Used to distiguish dumped files, otherwise we would have to print the ctx
+ * pointer, which is annoying for the user since it changes with every run */
+static int num_ctxs = 0;
 
-static struct rb_tree mmap_tree;
-
-static struct util_dynarray ro_mappings;
-
-static simple_mtx_t pandecode_lock = SIMPLE_MTX_INITIALIZER;
-
-#define to_mapped_memory(x) \
-	rb_node_data(struct pandecode_mapped_memory, x, node)
+#define to_mapped_memory(x)                                                    \
+   rb_node_data(struct pandecode_mapped_memory, x, node)
 
 /*
  * Compare a GPU VA to a node, considering a GPU VA to be equal to a node if it

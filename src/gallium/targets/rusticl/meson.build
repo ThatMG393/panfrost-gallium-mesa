@@ -20,6 +20,14 @@
 
 opencl_version = '1'
 
+rusticl_ld_args = []
+rusticl_ld_depends = []
+
+if with_ld_version_script
+  rusticl_ld_args += ['-Wl,--version-script', join_paths(meson.current_source_dir(), 'rusticl.sym')]
+  rusticl_ld_depends += files('rusticl.sym')
+endif
+
 librusticl = shared_library(
   'RusticlOpenCL',
   'target.c',
@@ -34,7 +42,6 @@ librusticl = shared_library(
   ],
   link_whole : librusticl,
   link_with : [
-    libgalliumvl,
     libpipe_loader_static,
     libswdri,
     libswkmsdri,
@@ -61,13 +68,12 @@ configure_file(
   input : 'rusticl.icd.in',
   output : 'rusticl.icd',
   install : true,
+  install_tag : 'runtime',
   install_dir : join_paths(get_option('sysconfdir'), 'OpenCL', 'vendors'),
 )
 
-if meson.version().version_compare('>= 0.58')
-  # .so is hardcoded in the icd as well
-  devenv.prepend(
-    'OCL_ICD_VENDORS',
-    meson.current_build_dir() / 'libRusticlOpenCL.so.@0@'.format(opencl_version)
-  )
-endif
+# .so is hardcoded in the icd as well
+devenv.prepend(
+  'OCL_ICD_VENDORS',
+  meson.current_build_dir() / 'libRusticlOpenCL.so.@0@'.format(opencl_version)
+)

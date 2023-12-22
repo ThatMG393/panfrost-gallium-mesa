@@ -790,29 +790,29 @@ panfrost_create_stream_output_target(struct pipe_context *pctx,
                                      unsigned buffer_offset,
                                      unsigned buffer_size)
 {
-        struct pipe_stream_output_target *target;
+   struct pipe_stream_output_target *target;
 
-        target = &rzalloc(pctx, struct panfrost_streamout_target)->base;
+   target = &rzalloc(pctx, struct panfrost_streamout_target)->base;
 
-        if (!target)
-                return NULL;
+   if (!target)
+      return NULL;
 
-        pipe_reference_init(&target->reference, 1);
-        pipe_resource_reference(&target->buffer, prsc);
+   pipe_reference_init(&target->reference, 1);
+   pipe_resource_reference(&target->buffer, prsc);
 
-        target->context = pctx;
-        target->buffer_offset = buffer_offset;
-        target->buffer_size = buffer_size;
+   target->context = pctx;
+   target->buffer_offset = buffer_offset;
+   target->buffer_size = buffer_size;
 
-        return target;
+   return target;
 }
 
 static void
 panfrost_stream_output_target_destroy(struct pipe_context *pctx,
                                       struct pipe_stream_output_target *target)
 {
-        pipe_resource_reference(&target->buffer, NULL);
-        ralloc_free(target);
+   pipe_resource_reference(&target->buffer, NULL);
+   ralloc_free(target);
 }
 
 static void

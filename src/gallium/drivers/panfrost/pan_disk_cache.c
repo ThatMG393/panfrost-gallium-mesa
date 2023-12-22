@@ -21,9 +21,9 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#include <stdio.h>
-#include <stdint.h>
 #include <assert.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "compiler/nir/nir.h"
@@ -45,17 +45,17 @@ extern int bifrost_debug;
  * Compute a disk cache key for the given uncompiled shader and shader key.
  */
 static void
-panfrost_disk_cache_compute_key(struct disk_cache *cache,
-                                const struct panfrost_uncompiled_shader *uncompiled,
-                                const struct panfrost_shader_key *shader_key,
-                                cache_key cache_key)
+panfrost_disk_cache_compute_key(
+   struct disk_cache *cache,
+   const struct panfrost_uncompiled_shader *uncompiled,
+   const struct panfrost_shader_key *shader_key, cache_key cache_key)
 {
-        uint8_t data[sizeof(uncompiled->nir_sha1) + sizeof(*shader_key)];
+   uint8_t data[sizeof(uncompiled->nir_sha1) + sizeof(*shader_key)];
 
-        memcpy(data, uncompiled->nir_sha1, sizeof(uncompiled->nir_sha1));
-        memcpy(data + sizeof(uncompiled->nir_sha1), shader_key, sizeof(*shader_key));
+   memcpy(data, uncompiled->nir_sha1, sizeof(uncompiled->nir_sha1));
+   memcpy(data + sizeof(uncompiled->nir_sha1), shader_key, sizeof(*shader_key));
 
-        disk_cache_compute_key(cache, data, sizeof(data), cache_key);
+   disk_cache_compute_key(cache, data, sizeof(data), cache_key);
 }
 
 /**
@@ -71,33 +71,35 @@ panfrost_disk_cache_store(struct disk_cache *cache,
                           const struct panfrost_shader_binary *binary)
 {
 #ifdef ENABLE_SHADER_CACHE
-        if (!cache)
-                return;
+   if (!cache)
+      return;
 
-        cache_key cache_key;
-        panfrost_disk_cache_compute_key(cache, uncompiled, key, cache_key);
+   cache_key cache_key;
+   panfrost_disk_cache_compute_key(cache, uncompiled, key, cache_key);
 
-        if (debug) {
-                char sha1[41];
-                _mesa_sha1_format(sha1, cache_key);
-                fprintf(stderr, "[mesa disk cache] storing %s\n", sha1);
-        }
+   if (debug) {
+      char sha1[41];
+      _mesa_sha1_format(sha1, cache_key);
+      fprintf(stderr, "[mesa disk cache] storing %s\n", sha1);
+   }
 
-        struct blob blob;
-        blob_init(&blob);
+   struct blob blob;
+   blob_init(&blob);
 
-        /* We write the following data to the cache blob:
-         *
-         * 1. Size of program binary
-         * 2. Program binary
-         * 3. Shader info
-         */
-        blob_write_uint32(&blob, binary->binary.size);
-        blob_write_bytes(&blob, binary->binary.data, binary->binary.size);
-        blob_write_bytes(&blob, &binary->info, sizeof(binary->info));
+   /* We write the following data to the cache blob:
+    *
+    * 1. Size of program binary
+    * 2. Program binary
+    * 3. Shader info
+    * 4. System values
+    */
+   blob_write_uint32(&blob, binary->binary.size);
+   blob_write_bytes(&blob, binary->binary.data, binary->binary.size);
+   blob_write_bytes(&blob, &binary->info, sizeof(binary->info));
+   blob_write_bytes(&blob, &binary->sysvals, sizeof(binary->sysvals));
 
-        disk_cache_put(cache, cache_key, blob.data, blob.size, NULL);
-        blob_finish(&blob);
+   disk_cache_put(cache, cache_key, blob.data, blob.size, NULL);
+   blob_finish(&blob);
 #endif
 }
 

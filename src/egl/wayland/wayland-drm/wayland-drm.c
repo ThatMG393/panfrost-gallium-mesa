@@ -266,33 +266,32 @@ wayland_drm_init(struct wl_display *display, char *device_name,
                  const struct wayland_drm_callbacks *callbacks, void *user_data,
                  uint32_t flags)
 {
-	struct wl_drm *drm;
+   struct wl_drm *drm;
 
-	drm = malloc(sizeof *drm);
-	if (!drm)
-		return NULL;
+   drm = malloc(sizeof *drm);
+   if (!drm)
+      return NULL;
 
-	drm->display = display;
-	drm->device_name = strdup(device_name);
-	drm->callbacks = *callbacks;
-	drm->user_data = user_data;
-        drm->flags = flags;
+   drm->display = display;
+   drm->device_name = strdup(device_name);
+   drm->callbacks = *callbacks;
+   drm->user_data = user_data;
+   drm->flags = flags;
 
-        drm->buffer_interface.destroy = buffer_destroy;
+   drm->buffer_interface.destroy = buffer_destroy;
 
-	drm->wl_drm_global =
-		wl_global_create(display, &wl_drm_interface, 2,
-				 drm, bind_drm);
+   drm->wl_drm_global =
+      wl_global_create(display, &wl_drm_interface, 2, drm, bind_drm);
 
-	return drm;
+   return drm;
 }
 
 void
 wayland_drm_uninit(struct wl_drm *drm)
 {
-	free(drm->device_name);
+   free(drm->device_name);
 
-	wl_global_destroy(drm->wl_drm_global);
+   wl_global_destroy(drm->wl_drm_global);
 
-	free(drm);
+   free(drm);
 }

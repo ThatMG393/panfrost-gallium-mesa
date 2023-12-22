@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <tuple>
 #ifdef HAVE_VALGRIND
 #include <memcheck.h>
 #include <valgrind.h>
@@ -118,8 +119,44 @@
 #define A6XX_TEX_CONST_DWORDS 16
 #define A6XX_TEX_SAMP_DWORDS 4
 
+/* We sample the fragment density map on the CPU, so technically the
+ * minimum/maximum texel size is arbitrary. However sizes smaller than the
+ * minimum tile width alignment of 32 are likely pointless, so we use that as
+ * the minimum value. For the maximum just pick a value larger than anyone
+ * would reasonably need.
+ */
+#define MIN_FDM_TEXEL_SIZE_LOG2 5
+#define MIN_FDM_TEXEL_SIZE (1u << MIN_FDM_TEXEL_SIZE_LOG2)
+#define MAX_FDM_TEXEL_SIZE_LOG2 10
+#define MAX_FDM_TEXEL_SIZE (1u << MAX_FDM_TEXEL_SIZE_LOG2)
+
 #define TU_FROM_HANDLE(__tu_type, __name, __handle)                          \
    VK_FROM_HANDLE(__tu_type, __name, __handle)
+
+#define TU_GPU_GENS A6XX, A7XX
+#define TU_GENX(FUNC_NAME)                                                   \
+   template <chip... CHIPs> constexpr auto FUNC_NAME##instantiate()          \
+   {                                                                         \
+      return std::tuple_cat(std::make_tuple(FUNC_NAME<CHIPs>)...);           \
+   }                                                                         \
+   static constexpr auto FUNC_NAME##tmpl __attribute__((used)) =             \
+      FUNC_NAME##instantiate<TU_GPU_GENS>();
+
+#define TU_CALLX(device, thing)                                              \
+   ({                                                                        \
+      decltype(&thing<A6XX>) genX_thing;                                     \
+      switch ((device)->physical_device->info->chip) {                       \
+      case 6:                                                                \
+         genX_thing = &thing<A6XX>;                                          \
+         break;                                                              \
+      case 7:                                                                \
+         genX_thing = &thing<A7XX>;                                          \
+         break;                                                              \
+      default:                                                               \
+         unreachable("Unknown hardware generation");                         \
+      }                                                                      \
+      genX_thing;                                                            \
+   })
 
 /* vk object types */
 struct tu_buffer;

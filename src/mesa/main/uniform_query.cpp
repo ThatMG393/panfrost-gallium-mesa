@@ -742,7 +742,7 @@ log_uniform(const void *values, enum glsl_base_type basicType,
 
    printf("Mesa: set program %u %s \"%s\" (loc %d, type \"%s\", "
 	  "transpose = %s) to: ",
-	  shProg->Name, extra, uni->name.string, location, uni->type->name,
+	  shProg->Name, extra, uni->name.string, location, glsl_get_type_name(uni->type),
 	  transpose ? "true" : "false");
    for (unsigned i = 0; i < elems; i++) {
       if (i != 0 && ((i % rows) == 0))
@@ -1011,7 +1011,7 @@ associate_uniform_storage(struct gl_context *ctx,
          case GLSL_TYPE_STRUCT:
          case GLSL_TYPE_ERROR:
          case GLSL_TYPE_INTERFACE:
-         case GLSL_TYPE_FUNCTION:
+         case GLSL_TYPE_COOPERATIVE_MATRIX:
             assert(!"Should not get here.");
             break;
          }
@@ -1551,7 +1551,7 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
                 */
                if (sampler->unit != value || !sampler->bound) {
                   if (!flushed) {
-                     FLUSH_VERTICES(ctx, _NEW_TEXTURE_OBJECT | _NEW_PROGRAM, 0);
+                     FLUSH_VERTICES(ctx, _NEW_TEXTURE_OBJECT, 0);
                      flushed = true;
                   }
                   sampler->unit = value;
@@ -1562,7 +1562,7 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
             } else {
                if (sh->Program->SamplerUnits[unit] != value) {
                   if (!flushed) {
-                     FLUSH_VERTICES(ctx, _NEW_TEXTURE_OBJECT | _NEW_PROGRAM, 0);
+                     FLUSH_VERTICES(ctx, _NEW_TEXTURE_OBJECT, 0);
                      flushed = true;
                   }
                   sh->Program->SamplerUnits[unit] = value;
@@ -1854,7 +1854,7 @@ _mesa_uniform_matrix(GLint location, GLsizei count,
     * http://www.khronos.org/opengles/sdk/docs/man/xhtml/glUniform.xml
     */
    if (transpose) {
-      if (ctx->API == API_OPENGLES2 && ctx->Version < 30) {
+      if (_mesa_is_gles2(ctx) && ctx->Version < 30) {
          _mesa_error(ctx, GL_INVALID_VALUE,
                      "glUniformMatrix(matrix transpose is not GL_FALSE)");
          return;

@@ -27,11 +27,11 @@
 #ifndef __PAN_DECODE_PUBLIC_H__
 #define __PAN_DECODE_PUBLIC_H__
 
+#include <inttypes.h>
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stddef.h>
-#include <stdbool.h>
-#include <inttypes.h>
 
 /* Public entrypoints for the tracing infrastructure. This API should be kept
  * more or less stable. Don't feel bad if you have to change it; just feel

@@ -1,0 +1,679 @@
+diff a/src/panfrost/lib/pan_blitter.c b/src/panfrost/lib/pan_blitter.c	(rejected hunks)
+@@ -1005,214 +1040,211 @@ pan_preload_emit_textures(struct pan_pool *pool,
+ static mali_ptr
+ pan_blitter_emit_zs(struct pan_pool *pool, bool z, bool s)
+ {
+-        struct panfrost_ptr zsd = pan_pool_alloc_desc(pool, DEPTH_STENCIL);
++   struct panfrost_ptr zsd = pan_pool_alloc_desc(pool, DEPTH_STENCIL);
+ 
+-        pan_pack(zsd.cpu, DEPTH_STENCIL, cfg) {
+-                cfg.depth_function = MALI_FUNC_ALWAYS;
+-                cfg.depth_write_enable = z;
++   pan_pack(zsd.cpu, DEPTH_STENCIL, cfg) {
++      cfg.depth_function = MALI_FUNC_ALWAYS;
++      cfg.depth_write_enable = z;
+ 
+-                if (z)
+-                        cfg.depth_source = MALI_DEPTH_SOURCE_SHADER;
++      if (z)
++         cfg.depth_source = MALI_DEPTH_SOURCE_SHADER;
+ 
+-                cfg.stencil_test_enable = s;
+-                cfg.stencil_from_shader = s;
++      cfg.stencil_test_enable = s;
++      cfg.stencil_from_shader = s;
+ 
+-                cfg.front_compare_function = MALI_FUNC_ALWAYS;
+-                cfg.front_stencil_fail = MALI_STENCIL_OP_REPLACE;
+-                cfg.front_depth_fail = MALI_STENCIL_OP_REPLACE;
+-                cfg.front_depth_pass = MALI_STENCIL_OP_REPLACE;
+-                cfg.front_write_mask = 0xFF;
+-                cfg.front_value_mask = 0xFF;
++      cfg.front_compare_function = MALI_FUNC_ALWAYS;
++      cfg.front_stencil_fail = MALI_STENCIL_OP_REPLACE;
++      cfg.front_depth_fail = MALI_STENCIL_OP_REPLACE;
++      cfg.front_depth_pass = MALI_STENCIL_OP_REPLACE;
++      cfg.front_write_mask = 0xFF;
++      cfg.front_value_mask = 0xFF;
+ 
+-                cfg.back_compare_function = MALI_FUNC_ALWAYS;
+-                cfg.back_stencil_fail = MALI_STENCIL_OP_REPLACE;
+-                cfg.back_depth_fail = MALI_STENCIL_OP_REPLACE;
+-                cfg.back_depth_pass = MALI_STENCIL_OP_REPLACE;
+-                cfg.back_write_mask = 0xFF;
+-                cfg.back_value_mask = 0xFF;
++      cfg.back_compare_function = MALI_FUNC_ALWAYS;
++      cfg.back_stencil_fail = MALI_STENCIL_OP_REPLACE;
++      cfg.back_depth_fail = MALI_STENCIL_OP_REPLACE;
++      cfg.back_depth_pass = MALI_STENCIL_OP_REPLACE;
++      cfg.back_write_mask = 0xFF;
++      cfg.back_value_mask = 0xFF;
+ 
+-                cfg.depth_cull_enable = false;
+-        }
++      cfg.depth_cull_enable = false;
++   }
+ 
+-        return zsd.gpu;
++   return zsd.gpu;
+ }
+ #else
+ static mali_ptr
+-pan_blitter_emit_viewport(struct pan_pool *pool,
+-                          uint16_t minx, uint16_t miny,
++pan_blitter_emit_viewport(struct pan_pool *pool, uint16_t minx, uint16_t miny,
+                           uint16_t maxx, uint16_t maxy)
+ {
+-        struct panfrost_ptr vp = pan_pool_alloc_desc(pool, VIEWPORT);
++   struct panfrost_ptr vp = pan_pool_alloc_desc(pool, VIEWPORT);
+ 
+-        pan_pack(vp.cpu, VIEWPORT, cfg) {
+-                cfg.scissor_minimum_x = minx;
+-                cfg.scissor_minimum_y = miny;
+-                cfg.scissor_maximum_x = maxx;
+-                cfg.scissor_maximum_y = maxy;
+-        }
++   pan_pack(vp.cpu, VIEWPORT, cfg) {
++      cfg.scissor_minimum_x = minx;
++      cfg.scissor_minimum_y = miny;
++      cfg.scissor_maximum_x = maxx;
++      cfg.scissor_maximum_y = maxy;
++   }
+ 
+-        return vp.gpu;
++   return vp.gpu;
+ }
+ #endif
+ 
+ static void
+-pan_preload_emit_dcd(struct pan_pool *pool,
+-                     struct pan_fb_info *fb, bool zs,
+-                     mali_ptr coordinates,
+-                     mali_ptr tsd, void *out, bool always_write)
++pan_preload_emit_dcd(struct pan_pool *pool, struct pan_fb_info *fb, bool zs,
++                     mali_ptr coordinates, mali_ptr tsd, void *out,
++                     bool always_write)
+ {
+-        unsigned tex_count = 0;
+-        mali_ptr textures = pan_preload_emit_textures(pool, fb, zs, &tex_count);
+-        mali_ptr samplers = pan_blitter_emit_sampler(pool, true);
+-        mali_ptr varyings = pan_blitter_emit_varying(pool);
+-        mali_ptr varying_buffers = pan_blitter_emit_varying_buffer(pool, coordinates);
++   unsigned tex_count = 0;
++   mali_ptr textures = pan_preload_emit_textures(pool, fb, zs, &tex_count);
++   mali_ptr samplers = pan_blitter_emit_sampler(pool, true);
++   mali_ptr varyings = pan_blitter_emit_varying(pool);
++   mali_ptr varying_buffers =
++      pan_blitter_emit_varying_buffer(pool, coordinates);
+ 
+-        /* Tiles updated by blit shaders are still considered clean (separate
+-         * for colour and Z/S), allowing us to suppress unnecessary writeback
+-         */
+-        UNUSED bool clean_fragment_write = !always_write;
++   /* Tiles updated by blit shaders are still considered clean (separate
++    * for colour and Z/S), allowing us to suppress unnecessary writeback
++    */
++   UNUSED bool clean_fragment_write = !always_write;
+ 
+-        /* Image view used when patching stencil formats for combined
+-         * depth/stencil preloads.
+-         */
+-        struct pan_image_view patched_s;
++   /* Image view used when patching stencil formats for combined
++    * depth/stencil preloads.
++    */
++   struct pan_image_view patched_s;
+ 
+-        struct pan_blitter_views views = pan_preload_get_views(fb, zs, &patched_s);
++   struct pan_blitter_views views = pan_preload_get_views(fb, zs, &patched_s);
+ 
+ #if PAN_ARCH <= 7
+-        pan_pack(out, DRAW, cfg) {
+-                uint16_t minx = 0, miny = 0, maxx, maxy;
+-
+-                if (PAN_ARCH == 4) {
+-                        maxx = fb->width - 1;
+-                        maxy = fb->height - 1;
+-                } else {
+-                        /* Align on 32x32 tiles */
+-                        minx = fb->extent.minx & ~31;
+-                        miny = fb->extent.miny & ~31;
+-                        maxx = MIN2(ALIGN_POT(fb->extent.maxx + 1, 32), fb->width) - 1;
+-                        maxy = MIN2(ALIGN_POT(fb->extent.maxy + 1, 32), fb->height) - 1;
+-                }
+-
+-                cfg.thread_storage = tsd;
+-                cfg.state = pan_blitter_get_rsd(pool->dev, &views);
+-
+-                cfg.position = coordinates;
+-                cfg.viewport =
+-                        pan_blitter_emit_viewport(pool, minx, miny, maxx, maxy);
+-
+-                cfg.varyings = varyings;
+-                cfg.varying_buffers = varying_buffers;
+-                cfg.textures = textures;
+-                cfg.samplers = samplers;
++   pan_pack(out, DRAW, cfg) {
++      uint16_t minx = 0, miny = 0, maxx, maxy;
++
++      if (PAN_ARCH == 4) {
++         maxx = fb->width - 1;
++         maxy = fb->height - 1;
++      } else {
++         /* Align on 32x32 tiles */
++         minx = fb->extent.minx & ~31;
++         miny = fb->extent.miny & ~31;
++         maxx = MIN2(ALIGN_POT(fb->extent.maxx + 1, 32), fb->width) - 1;
++         maxy = MIN2(ALIGN_POT(fb->extent.maxy + 1, 32), fb->height) - 1;
++      }
++
++      cfg.thread_storage = tsd;
++      cfg.state = pan_blitter_get_rsd(pool->dev, &views);
++
++      cfg.position = coordinates;
++      cfg.viewport = pan_blitter_emit_viewport(pool, minx, miny, maxx, maxy);
++
++      cfg.varyings = varyings;
++      cfg.varying_buffers = varying_buffers;
++      cfg.textures = textures;
++      cfg.samplers = samplers;
+ 
+ #if PAN_ARCH >= 6
+-                cfg.clean_fragment_write = clean_fragment_write;
++      cfg.clean_fragment_write = clean_fragment_write;
+ #endif
+-        }
++   }
+ #else
+-        struct panfrost_ptr T;
+-        unsigned nr_tables = 12;
+-
+-        /* Although individual resources need only 16 byte alignment, the
+-         * resource table as a whole must be 64-byte aligned.
+-         */
+-        T = pan_pool_alloc_aligned(pool, nr_tables * pan_size(RESOURCE), 64);
+-        memset(T.cpu, 0, nr_tables * pan_size(RESOURCE));
+-
+-        panfrost_make_resource_table(T, PAN_TABLE_TEXTURE, textures, tex_count);
+-        panfrost_make_resource_table(T, PAN_TABLE_SAMPLER, samplers, 1);
+-        panfrost_make_resource_table(T, PAN_TABLE_ATTRIBUTE, varyings, 1);
+-        panfrost_make_resource_table(T, PAN_TABLE_ATTRIBUTE_BUFFER, varying_buffers, 1);
+-
+-        struct pan_blit_shader_key key = pan_blitter_get_key(&views);
+-        const struct pan_blit_shader_data *blit_shader =
+-                pan_blitter_get_blit_shader(pool->dev, &key);
+-
+-        bool z = fb->zs.preload.z;
+-        bool s = fb->zs.preload.s;
+-        bool ms = pan_blitter_is_ms(&views);
+-
+-        struct panfrost_ptr spd = pan_pool_alloc_desc(pool, SHADER_PROGRAM);
+-        pan_pack(spd.cpu, SHADER_PROGRAM, cfg) {
+-                cfg.stage = MALI_SHADER_STAGE_FRAGMENT;
+-                cfg.primary_shader = true;
+-                cfg.register_allocation = MALI_SHADER_REGISTER_ALLOCATION_32_PER_THREAD;
+-                cfg.binary = blit_shader->address;
+-                cfg.preload.r48_r63 = blit_shader->info.preload >> 48;
+-        }
+-
+-        unsigned bd_count = views.rt_count;
+-        struct panfrost_ptr blend = pan_pool_alloc_desc_array(pool, bd_count, BLEND);
+-
+-        if (!zs) {
+-                pan_blitter_emit_blends(pool->dev, blit_shader, &views, NULL,
+-                                        blend.cpu);
+-        }
+-
+-        pan_pack(out, DRAW, cfg) {
+-                if (zs) {
+-                        /* ZS_EMIT requires late update/kill */
+-                        cfg.zs_update_operation = MALI_PIXEL_KILL_FORCE_LATE;
+-                        cfg.pixel_kill_operation = MALI_PIXEL_KILL_FORCE_LATE;
+-                        cfg.blend_count = 0;
+-                } else {
+-                        /* Skipping ATEST requires forcing Z/S */
+-                        cfg.zs_update_operation = MALI_PIXEL_KILL_STRONG_EARLY;
+-                        cfg.pixel_kill_operation = MALI_PIXEL_KILL_FORCE_EARLY;
+-
+-                        cfg.blend = blend.gpu;
+-                        cfg.blend_count = bd_count;
+-                        cfg.render_target_mask = 0x1;
+-                }
+-
+-                cfg.allow_forward_pixel_to_kill = !zs;
+-                cfg.allow_forward_pixel_to_be_killed = true;
+-                cfg.depth_stencil = pan_blitter_emit_zs(pool, z, s);
+-                cfg.sample_mask = 0xFFFF;
+-                cfg.multisample_enable = ms;
+-                cfg.evaluate_per_sample = ms;
+-                cfg.maximum_z = 1.0;
+-                cfg.clean_fragment_write = clean_fragment_write;
+-                cfg.shader.resources = T.gpu | nr_tables;
+-                cfg.shader.shader = spd.gpu;
+-                cfg.shader.thread_storage = tsd;
+-        }
++   struct panfrost_ptr T;
++   unsigned nr_tables = 12;
++
++   /* Although individual resources need only 16 byte alignment, the
++    * resource table as a whole must be 64-byte aligned.
++    */
++   T = pan_pool_alloc_aligned(pool, nr_tables * pan_size(RESOURCE), 64);
++   memset(T.cpu, 0, nr_tables * pan_size(RESOURCE));
++
++   panfrost_make_resource_table(T, PAN_TABLE_TEXTURE, textures, tex_count);
++   panfrost_make_resource_table(T, PAN_TABLE_SAMPLER, samplers, 1);
++   panfrost_make_resource_table(T, PAN_TABLE_ATTRIBUTE, varyings, 1);
++   panfrost_make_resource_table(T, PAN_TABLE_ATTRIBUTE_BUFFER, varying_buffers,
++                                1);
++
++   struct pan_blit_shader_key key = pan_blitter_get_key(&views);
++   const struct pan_blit_shader_data *blit_shader =
++      pan_blitter_get_blit_shader(pool->dev, &key);
++
++   bool z = fb->zs.preload.z;
++   bool s = fb->zs.preload.s;
++   bool ms = pan_blitter_is_ms(&views);
++
++   struct panfrost_ptr spd = pan_pool_alloc_desc(pool, SHADER_PROGRAM);
++   pan_pack(spd.cpu, SHADER_PROGRAM, cfg) {
++      cfg.stage = MALI_SHADER_STAGE_FRAGMENT;
++      cfg.fragment_coverage_bitmask_type = MALI_COVERAGE_BITMASK_TYPE_GL;
++      cfg.register_allocation = MALI_SHADER_REGISTER_ALLOCATION_32_PER_THREAD;
++      cfg.binary = blit_shader->address;
++      cfg.preload.r48_r63 = blit_shader->info.preload >> 48;
++   }
++
++   unsigned bd_count = views.rt_count;
++   struct panfrost_ptr blend = pan_pool_alloc_desc_array(pool, bd_count, BLEND);
++
++   if (!zs) {
++      pan_blitter_emit_blends(pool->dev, blit_shader, &views, NULL, blend.cpu);
++   }
++
++   pan_pack(out, DRAW, cfg) {
++      if (zs) {
++         /* ZS_EMIT requires late update/kill */
++         cfg.zs_update_operation = MALI_PIXEL_KILL_FORCE_LATE;
++         cfg.pixel_kill_operation = MALI_PIXEL_KILL_FORCE_LATE;
++         cfg.blend_count = 0;
++      } else {
++         /* Skipping ATEST requires forcing Z/S */
++         cfg.zs_update_operation = MALI_PIXEL_KILL_STRONG_EARLY;
++         cfg.pixel_kill_operation = MALI_PIXEL_KILL_FORCE_EARLY;
++
++         cfg.blend = blend.gpu;
++         cfg.blend_count = bd_count;
++         cfg.render_target_mask = 0x1;
++      }
++
++      cfg.allow_forward_pixel_to_kill = !zs;
++      cfg.allow_forward_pixel_to_be_killed = true;
++      cfg.depth_stencil = pan_blitter_emit_zs(pool, z, s);
++      cfg.sample_mask = 0xFFFF;
++      cfg.multisample_enable = ms;
++      cfg.evaluate_per_sample = ms;
++      cfg.maximum_z = 1.0;
++      cfg.clean_fragment_write = clean_fragment_write;
++      cfg.shader.resources = T.gpu | nr_tables;
++      cfg.shader.shader = spd.gpu;
++      cfg.shader.thread_storage = tsd;
++   }
+ #endif
+ }
+ 
+ #if PAN_ARCH <= 7
+ static void *
+-pan_blit_emit_tiler_job(struct pan_pool *pool,
+-                        struct pan_scoreboard *scoreboard,
+-                        mali_ptr tiler,
+-                        struct panfrost_ptr *job)
++pan_blit_emit_tiler_job(struct pan_pool *pool, struct pan_jc *jc,
++                        mali_ptr tiler, struct panfrost_ptr *job)
+ {
+-        *job = pan_pool_alloc_desc(pool, TILER_JOB);
++   *job = pan_pool_alloc_desc(pool, TILER_JOB);
+ 
+-        pan_section_pack(job->cpu, TILER_JOB, PRIMITIVE, cfg) {
+-                cfg.draw_mode = MALI_DRAW_MODE_TRIANGLE_STRIP;
+-                cfg.index_count = 4;
+-                cfg.job_task_split = 6;
+-        }
++   pan_section_pack(job->cpu, TILER_JOB, PRIMITIVE, cfg) {
++      cfg.draw_mode = MALI_DRAW_MODE_TRIANGLE_STRIP;
++      cfg.index_count = 4;
++      cfg.job_task_split = 6;
++   }
+ 
+-        pan_section_pack(job->cpu, TILER_JOB, PRIMITIVE_SIZE, cfg) {
+-                cfg.constant = 1.0f;
+-        }
++   pan_section_pack(job->cpu, TILER_JOB, PRIMITIVE_SIZE, cfg) {
++      cfg.constant = 1.0f;
++   }
+ 
+-        void *invoc = pan_section_ptr(job->cpu, TILER_JOB, INVOCATION);
+-        panfrost_pack_work_groups_compute(invoc, 1, 4, 1, 1, 1, 1, true, false);
++   void *invoc = pan_section_ptr(job->cpu, TILER_JOB, INVOCATION);
++   panfrost_pack_work_groups_compute(invoc, 1, 4, 1, 1, 1, 1, true, false);
+ 
+ #if PAN_ARCH >= 6
+-        pan_section_pack(job->cpu, TILER_JOB, PADDING, cfg);
+-        pan_section_pack(job->cpu, TILER_JOB, TILER, cfg) {
+-                cfg.address = tiler;
+-        }
++   pan_section_pack(job->cpu, TILER_JOB, PADDING, cfg)
++      ;
++   pan_section_pack(job->cpu, TILER_JOB, TILER, cfg) {
++      cfg.address = tiler;
++   }
+ #endif
+ 
+-        panfrost_add_job(pool, scoreboard, MALI_JOB_TYPE_TILER,
+-                         false, false, 0, 0, job, false);
+-        return pan_section_ptr(job->cpu, TILER_JOB, DRAW);
++   pan_jc_add_job(pool, jc, MALI_JOB_TYPE_TILER, false, false, 0, 0, job,
++                  false);
++   return pan_section_ptr(job->cpu, TILER_JOB, DRAW);
+ }
+ #endif
+ 
+@@ -1221,172 +1253,156 @@ static void
+ pan_preload_fb_alloc_pre_post_dcds(struct pan_pool *desc_pool,
+                                    struct pan_fb_info *fb)
+ {
+-        if (fb->bifrost.pre_post.dcds.gpu)
+-                return;
++   if (fb->bifrost.pre_post.dcds.gpu)
++      return;
+ 
+-        fb->bifrost.pre_post.dcds =
+-                pan_pool_alloc_desc_array(desc_pool, 3, DRAW);
++   fb->bifrost.pre_post.dcds = pan_pool_alloc_desc_array(desc_pool, 3, DRAW);
+ }
+ 
+ static void
+ pan_preload_emit_pre_frame_dcd(struct pan_pool *desc_pool,
+-                               struct pan_fb_info *fb, bool zs,
+-                               mali_ptr coords, mali_ptr tsd)
++                               struct pan_fb_info *fb, bool zs, mali_ptr coords,
++                               mali_ptr tsd)
+ {
+-        unsigned dcd_idx = zs ? 1 : 0;
+-        pan_preload_fb_alloc_pre_post_dcds(desc_pool, fb);
+-        assert(fb->bifrost.pre_post.dcds.cpu);
+-        void *dcd = fb->bifrost.pre_post.dcds.cpu +
+-                    (dcd_idx * pan_size(DRAW));
+-
+-        /* We only use crc_rt to determine whether to force writes for updating
+-         * the CRCs, so use a conservative tile size (16x16).
+-         */
+-        int crc_rt = GENX(pan_select_crc_rt)(fb, 16 * 16);
+-
+-        bool always_write = false;
+-
+-        /* If CRC data is currently invalid and this batch will make it valid,
+-         * write even clean tiles to make sure CRC data is updated. */
+-        if (crc_rt >= 0) {
+-                bool *valid = fb->rts[crc_rt].crc_valid;
+-                bool full = !fb->extent.minx && !fb->extent.miny &&
+-                        fb->extent.maxx == (fb->width - 1) &&
+-                        fb->extent.maxy == (fb->height - 1);
+-
+-                if (full && !(*valid))
+-                        always_write = true;
+-        }
+-
+-        pan_preload_emit_dcd(desc_pool, fb, zs, coords, tsd, dcd, always_write);
+-        if (zs) {
+-                enum pipe_format fmt = fb->zs.view.zs ?
+-                                       fb->zs.view.zs->image->layout.format :
+-                                       fb->zs.view.s->image->layout.format;
+-                bool always = false;
+-
+-                /* If we're dealing with a combined ZS resource and only one
+-                 * component is cleared, we need to reload the whole surface
+-                 * because the zs_clean_pixel_write_enable flag is set in that
+-                 * case.
+-                 */
+-                if (util_format_is_depth_and_stencil(fmt) &&
+-                    fb->zs.clear.z != fb->zs.clear.s)
+-                        always = true;
+-
+-                /* We could use INTERSECT on Bifrost v7 too, but
+-                 * EARLY_ZS_ALWAYS has the advantage of reloading the ZS tile
+-                 * buffer one or more tiles ahead, making ZS data immediately
+-                 * available for any ZS tests taking place in other shaders.
+-                 * Thing's haven't been benchmarked to determine what's
+-                 * preferable (saving bandwidth vs having ZS preloaded
+-                 * earlier), so let's leave it like that for now.
+-                 */
+-                fb->bifrost.pre_post.modes[dcd_idx] =
+-                        desc_pool->dev->arch > 6 ?
+-                        MALI_PRE_POST_FRAME_SHADER_MODE_EARLY_ZS_ALWAYS :
+-                        always ? MALI_PRE_POST_FRAME_SHADER_MODE_ALWAYS :
+-                        MALI_PRE_POST_FRAME_SHADER_MODE_INTERSECT;
+-        } else {
+-                fb->bifrost.pre_post.modes[dcd_idx] =
+-                        always_write ? MALI_PRE_POST_FRAME_SHADER_MODE_ALWAYS :
+-                        MALI_PRE_POST_FRAME_SHADER_MODE_INTERSECT;
+-        }
++   unsigned dcd_idx = zs ? 1 : 0;
++   pan_preload_fb_alloc_pre_post_dcds(desc_pool, fb);
++   assert(fb->bifrost.pre_post.dcds.cpu);
++   void *dcd = fb->bifrost.pre_post.dcds.cpu + (dcd_idx * pan_size(DRAW));
++
++   /* We only use crc_rt to determine whether to force writes for updating
++    * the CRCs, so use a conservative tile size (16x16).
++    */
++   int crc_rt = GENX(pan_select_crc_rt)(fb, 16 * 16);
++
++   bool always_write = false;
++
++   /* If CRC data is currently invalid and this batch will make it valid,
++    * write even clean tiles to make sure CRC data is updated. */
++   if (crc_rt >= 0) {
++      bool *valid = fb->rts[crc_rt].crc_valid;
++      bool full = !fb->extent.minx && !fb->extent.miny &&
++                  fb->extent.maxx == (fb->width - 1) &&
++                  fb->extent.maxy == (fb->height - 1);
++
++      if (full && !(*valid))
++         always_write = true;
++   }
++
++   pan_preload_emit_dcd(desc_pool, fb, zs, coords, tsd, dcd, always_write);
++   if (zs) {
++      enum pipe_format fmt = fb->zs.view.zs
++                                ? fb->zs.view.zs->planes[0]->layout.format
++                                : fb->zs.view.s->planes[0]->layout.format;
++      bool always = false;
++
++      /* If we're dealing with a combined ZS resource and only one
++       * component is cleared, we need to reload the whole surface
++       * because the zs_clean_pixel_write_enable flag is set in that
++       * case.
++       */
++      if (util_format_is_depth_and_stencil(fmt) &&
++          fb->zs.clear.z != fb->zs.clear.s)
++         always = true;
++
++      /* We could use INTERSECT on Bifrost v7 too, but
++       * EARLY_ZS_ALWAYS has the advantage of reloading the ZS tile
++       * buffer one or more tiles ahead, making ZS data immediately
++       * available for any ZS tests taking place in other shaders.
++       * Thing's haven't been benchmarked to determine what's
++       * preferable (saving bandwidth vs having ZS preloaded
++       * earlier), so let's leave it like that for now.
++       */
++      fb->bifrost.pre_post.modes[dcd_idx] =
++         desc_pool->dev->arch > 6
++            ? MALI_PRE_POST_FRAME_SHADER_MODE_EARLY_ZS_ALWAYS
++         : always ? MALI_PRE_POST_FRAME_SHADER_MODE_ALWAYS
++                  : MALI_PRE_POST_FRAME_SHADER_MODE_INTERSECT;
++   } else {
++      fb->bifrost.pre_post.modes[dcd_idx] =
++         always_write ? MALI_PRE_POST_FRAME_SHADER_MODE_ALWAYS
++                      : MALI_PRE_POST_FRAME_SHADER_MODE_INTERSECT;
++   }
+ }
+ #else
+ static struct panfrost_ptr
+-pan_preload_emit_tiler_job(struct pan_pool *desc_pool,
+-                           struct pan_scoreboard *scoreboard,
+-                           struct pan_fb_info *fb, bool zs,
+-                           mali_ptr coords, mali_ptr tsd)
++pan_preload_emit_tiler_job(struct pan_pool *desc_pool, struct pan_jc *jc,
++                           struct pan_fb_info *fb, bool zs, mali_ptr coords,
++                           mali_ptr tsd)
+ {
+-        struct panfrost_ptr job =
+-                pan_pool_alloc_desc(desc_pool, TILER_JOB);
+-
+-        pan_preload_emit_dcd(desc_pool, fb, zs, coords, tsd,
+-                             pan_section_ptr(job.cpu, TILER_JOB, DRAW),
+-                             false);
+-
+-        pan_section_pack(job.cpu, TILER_JOB, PRIMITIVE, cfg) {
+-                cfg.draw_mode = MALI_DRAW_MODE_TRIANGLE_STRIP;
+-                cfg.index_count = 4;
+-                cfg.job_task_split = 6;
+-        }
+-
+-        pan_section_pack(job.cpu, TILER_JOB, PRIMITIVE_SIZE, cfg) {
+-                cfg.constant = 1.0f;
+-        }
+-
+-        void *invoc = pan_section_ptr(job.cpu,
+-                                      TILER_JOB,
+-                                      INVOCATION);
+-        panfrost_pack_work_groups_compute(invoc, 1, 4,
+-                                          1, 1, 1, 1, true, false);
+-
+-        panfrost_add_job(desc_pool, scoreboard, MALI_JOB_TYPE_TILER,
+-                         false, false, 0, 0, &job, true);
+-        return job;
++   struct panfrost_ptr job = pan_pool_alloc_desc(desc_pool, TILER_JOB);
++
++   pan_preload_emit_dcd(desc_pool, fb, zs, coords, tsd,
++                        pan_section_ptr(job.cpu, TILER_JOB, DRAW), false);
++
++   pan_section_pack(job.cpu, TILER_JOB, PRIMITIVE, cfg) {
++      cfg.draw_mode = MALI_DRAW_MODE_TRIANGLE_STRIP;
++      cfg.index_count = 4;
++      cfg.job_task_split = 6;
++   }
++
++   pan_section_pack(job.cpu, TILER_JOB, PRIMITIVE_SIZE, cfg) {
++      cfg.constant = 1.0f;
++   }
++
++   void *invoc = pan_section_ptr(job.cpu, TILER_JOB, INVOCATION);
++   panfrost_pack_work_groups_compute(invoc, 1, 4, 1, 1, 1, 1, true, false);
++
++   pan_jc_add_job(desc_pool, jc, MALI_JOB_TYPE_TILER, false, false, 0, 0, &job,
++                  true);
++   return job;
+ }
+ #endif
+ 
+ static struct panfrost_ptr
+-pan_preload_fb_part(struct pan_pool *pool,
+-                    struct pan_scoreboard *scoreboard,
+-                    struct pan_fb_info *fb, bool zs,
+-                    mali_ptr coords, mali_ptr tsd, mali_ptr tiler)
++pan_preload_fb_part(struct pan_pool *pool, struct pan_jc *jc,
++                    struct pan_fb_info *fb, bool zs, mali_ptr coords,
++                    mali_ptr tsd, mali_ptr tiler)
+ {
+-        struct panfrost_ptr job = { 0 };
++   struct panfrost_ptr job = {0};
+ 
+ #if PAN_ARCH >= 6
+-        pan_preload_emit_pre_frame_dcd(pool, fb, zs, coords, tsd);
++   pan_preload_emit_pre_frame_dcd(pool, fb, zs, coords, tsd);
+ #else
+-        job = pan_preload_emit_tiler_job(pool, scoreboard, fb, zs, coords, tsd);
++   job = pan_preload_emit_tiler_job(pool, jc, fb, zs, coords, tsd);
+ #endif
+-        return job;
++   return job;
+ }
+ 
+ unsigned
+-GENX(pan_preload_fb)(struct pan_pool *pool,
+-                     struct pan_scoreboard *scoreboard,
+-                     struct pan_fb_info *fb,
+-                     mali_ptr tsd, mali_ptr tiler,
++GENX(pan_preload_fb)(struct pan_pool *pool, struct pan_jc *jc,
++                     struct pan_fb_info *fb, mali_ptr tsd, mali_ptr tiler,
+                      struct panfrost_ptr *jobs)
+ {
+-        bool preload_zs = pan_preload_needed(fb, true);
+-        bool preload_rts = pan_preload_needed(fb, false);
+-        mali_ptr coords;
+-
+-        if (!preload_zs && !preload_rts)
+-                return 0;
+-
+-        float rect[] = {
+-                0.0, 0.0, 0.0, 1.0,
+-                fb->width, 0.0, 0.0, 1.0,
+-                0.0, fb->height, 0.0, 1.0,
+-                fb->width, fb->height, 0.0, 1.0,
+-        };
+-
+-        coords = pan_pool_upload_aligned(pool, rect,
+-                                         sizeof(rect), 64);
+-
+-        unsigned njobs = 0;
+-        if (preload_zs) {
+-                struct panfrost_ptr job =
+-                        pan_preload_fb_part(pool, scoreboard, fb, true,
+-                                            coords, tsd, tiler);
+-                if (jobs && job.cpu)
+-                        jobs[njobs++] = job;
+-        }
+-
+-        if (preload_rts) {
+-                struct panfrost_ptr job =
+-                        pan_preload_fb_part(pool, scoreboard, fb, false,
+-                                            coords, tsd, tiler);
+-                if (jobs && job.cpu)
+-                        jobs[njobs++] = job;
+-        }
+-
+-        return njobs;
++   bool preload_zs = pan_preload_needed(fb, true);
++   bool preload_rts = pan_preload_needed(fb, false);
++   mali_ptr coords;
++
++   if (!preload_zs && !preload_rts)
++      return 0;
++
++   float rect[] = {
++      0.0, 0.0,        0.0, 1.0, fb->width, 0.0,        0.0, 1.0,
++      0.0, fb->height, 0.0, 1.0, fb->width, fb->height, 0.0, 1.0,
++   };
++
++   coords = pan_pool_upload_aligned(pool, rect, sizeof(rect), 64);
++
++   unsigned njobs = 0;
++   if (preload_zs) {
++      struct panfrost_ptr job =
++         pan_preload_fb_part(pool, jc, fb, true, coords, tsd, tiler);
++      if (jobs && job.cpu)
++         jobs[njobs++] = job;
++   }
++
++   if (preload_rts) {
++      struct panfrost_ptr job =
++         pan_preload_fb_part(pool, jc, fb, false, coords, tsd, tiler);
++      if (jobs && job.cpu)
++         jobs[njobs++] = job;
++   }
++
++   return njobs;
+ }
+ 
+ #if PAN_ARCH <= 7

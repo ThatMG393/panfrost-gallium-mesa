@@ -26,8 +26,8 @@
  * SOFTWARE.
  */
 
-#include "pan_context.h"
 #include "pan_fence.h"
+#include "pan_context.h"
 #include "pan_screen.h"
 
 #include "util/os_time.h"

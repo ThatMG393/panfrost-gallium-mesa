@@ -1,0 +1,15 @@
+diff a/src/mesa/main/shaderapi.c b/src/mesa/main/shaderapi.c	(rejected hunks)
+@@ -63,11 +63,13 @@
+ #include "util/crc32.h"
+ #include "util/os_file.h"
+ #include "util/list.h"
++#include "util/perf/cpu_trace.h"
+ #include "util/u_process.h"
+ #include "util/u_string.h"
+ #include "api_exec_decl.h"
+ 
+ #include "state_tracker/st_context.h"
++#include "state_tracker/st_glsl_to_nir.h"
+ #include "state_tracker/st_program.h"
+ 
+ #ifdef ENABLE_SHADER_CACHE

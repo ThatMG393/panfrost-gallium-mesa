@@ -24,11 +24,10 @@
  *   Alyssa Rosenzweig <alyssa.rosenzweig@collabora.com>
  */
 #include <errno.h>
-#include <stdio.h>
 #include <fcntl.h>
-#include <xf86drm.h>
 #include <pthread.h>
-#include "drm-uapi/panfrost_drm.h"
+#include <stdio.h>
+#include <xf86drm.h>
 
 #include "pan_bo.h"
 #include "pan_device.h"
@@ -310,24 +309,23 @@ panfrost_bo_mem_clean(struct panfrost_bo *bo, size_t offset, size_t length)
 static unsigned
 pan_bucket_index(unsigned size)
 {
-        /* Round down to POT to compute a bucket index */
+   /* Round down to POT to compute a bucket index */
 
-        unsigned bucket_index = util_logbase2(size);
+   unsigned bucket_index = util_logbase2(size);
 
-        /* Clamp the bucket index; all huge allocations will be
-         * sorted into the largest bucket */
+   /* Clamp the bucket index; all huge allocations will be
+    * sorted into the largest bucket */
 
-        bucket_index = CLAMP(bucket_index, MIN_BO_CACHE_BUCKET,
-                             MAX_BO_CACHE_BUCKET);
+   bucket_index = CLAMP(bucket_index, MIN_BO_CACHE_BUCKET, MAX_BO_CACHE_BUCKET);
 
-        /* Reindex from 0 */
-        return (bucket_index - MIN_BO_CACHE_BUCKET);
+   /* Reindex from 0 */
+   return (bucket_index - MIN_BO_CACHE_BUCKET);
 }
 
 static struct list_head *
 pan_bucket(struct panfrost_device *dev, unsigned size)
 {
-        return &dev->bo_cache.buckets[pan_bucket_index(size)];
+   return &dev->bo_cache.buckets[pan_bucket_index(size)];
 }
 
 /* Tries to fetch a BO of sufficient size with the appropriate flags from the

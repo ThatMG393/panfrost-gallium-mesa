@@ -282,6 +282,8 @@ alloc_variant(struct ir3_shader *shader, const struct ir3_shader_key *key,
    case MESA_SHADER_FRAGMENT:
       v->fs.early_fragment_tests = info->fs.early_fragment_tests;
       v->fs.color_is_dual_source = info->fs.color_is_dual_source;
+      v->fs.uses_fbfetch_output  = info->fs.uses_fbfetch_output;
+      v->fs.fbfetch_coherent     = info->fs.fbfetch_coherent;
       break;
 
    case MESA_SHADER_COMPUTE:
@@ -296,13 +298,11 @@ alloc_variant(struct ir3_shader *shader, const struct ir3_shader_key *key,
 
    v->num_ssbos = info->num_ssbos;
    v->num_ibos = info->num_ssbos + info->num_images;
-   v->num_reserved_user_consts = shader->num_reserved_user_consts;
-   v->api_wavesize = shader->api_wavesize;
-   v->real_wavesize = shader->real_wavesize;
+   v->shader_options = shader->options;
 
    if (!v->binning_pass) {
       v->const_state = rzalloc_size(v, sizeof(*v->const_state));
-      v->const_state->shared_consts_enable = shader->shared_consts_enable;
+      v->const_state->push_consts_type = shader->options.push_consts_type;
    }
 
    return v;
@@ -392,6 +392,8 @@ ir3_shader_get_variant(struct ir3_shader *shader,
                        const struct ir3_shader_key *key, bool binning_pass,
                        bool write_disasm, bool *created)
 {
+   MESA_TRACE_FUNC();
+
    mtx_lock(&shader->variants_lock);
    struct ir3_shader_variant *v = shader_variant(shader, key);
 
@@ -574,7 +576,7 @@ trim_constlens(unsigned *constlens, unsigned first_stage, unsigned last_stage,
  * order to satisfy all shared constlen limits.
  */
 uint32_t
-ir3_trim_constlen(struct ir3_shader_variant **variants,
+ir3_trim_constlen(const struct ir3_shader_variant **variants,
                   const struct ir3_compiler *compiler)
 {
    unsigned constlens[MESA_SHADER_STAGES] = {};
@@ -585,7 +587,7 @@ ir3_trim_constlen(struct ir3_shader_variant **variants,
       if (variants[i]) {
          constlens[i] = variants[i]->constlen;
          shared_consts_enable =
-            ir3_const_state(variants[i])->shared_consts_enable;
+            ir3_const_state(variants[i])->push_consts_type == IR3_PUSH_CONSTS_SHARED;
       }
    }
 
@@ -637,10 +639,7 @@ ir3_shader_from_nir(struct ir3_compiler *compiler, nir_shader *nir,
    if (stream_output)
       memcpy(&shader->stream_output, stream_output,
              sizeof(shader->stream_output));
-   shader->num_reserved_user_consts = options->reserved_user_consts;
-   shader->api_wavesize = options->api_wavesize;
-   shader->real_wavesize = options->real_wavesize;
-   shader->shared_consts_enable = options->shared_consts_enable;
+   shader->options = *options;
    shader->nir = nir;
 
    ir3_disk_cache_init_shader_key(compiler, shader);
@@ -743,6 +742,51 @@ dump_const_state(struct ir3_shader_variant *so, FILE *out)
    }
 }
 
+static uint8_t
+find_input_reg_id(struct ir3_shader_variant *so, uint32_t input_idx)
+{
+   uint8_t reg = so->inputs[input_idx].regid;
+   if (so->type != MESA_SHADER_FRAGMENT || !so->ir || VALIDREG(reg))
+      return reg;
+
+   reg = INVALID_REG;
+
+   /* In FS we don't know into which register the input is loaded
+    * until the shader is scanned for the input load instructions.
+    */
+   foreach_block (block, &so->ir->block_list) {
+      foreach_instr_safe (instr, &block->instr_list) {
+         if (instr->opc == OPC_FLAT_B || instr->opc == OPC_BARY_F ||
+             instr->opc == OPC_LDLV) {
+            if (instr->srcs[0]->flags & IR3_REG_IMMED) {
+               unsigned inloc = so->inputs[input_idx].inloc;
+               unsigned instr_inloc = instr->srcs[0]->uim_val;
+               unsigned size = util_bitcount(so->inputs[input_idx].compmask);
+
+               if (instr_inloc == inloc) {
+                  return instr->dsts[0]->num;
+               }
+
+               if (instr_inloc > inloc && instr_inloc < (inloc + size)) {
+                  reg = MIN2(reg, instr->dsts[0]->num);
+               }
+
+               if (instr->dsts[0]->flags & IR3_REG_EI) {
+                  return reg;
+               }
+            }
+         }
+      }
+   }
+
+   return reg;
+}
+
+void
+print_raw(FILE *out, const BITSET_WORD *data, size_t size) {
+   fprintf(out, "raw 0x%X%X\n", data[0], data[1]);
+}
+
 void
 ir3_shader_disasm(struct ir3_shader_variant *so, uint32_t *bin, FILE *out)
 {
@@ -787,11 +831,12 @@ ir3_shader_disasm(struct ir3_shader_variant *so, uint32_t *bin, FILE *out)
               const_state->immediates[i * 4 + 3]);
    }
 
-   isa_decode(bin, so->info.sizedwords * 4, out,
+   isa_disasm(bin, so->info.sizedwords * 4, out,
               &(struct isa_decode_options){
-                 .gpu_id = fd_dev_gpu_id(ir->compiler->dev_id),
+                 .gpu_id = ir->compiler->gen * 100,
                  .show_errors = true,
                  .branch_labels = true,
+                 .no_match_cb = print_raw,
               });
 
    fprintf(out, "; %s: outputs:", type);
@@ -805,7 +850,8 @@ ir3_shader_disasm(struct ir3_shader_variant *so, uint32_t *bin, FILE *out)
 
    fprintf(out, "; %s: inputs:", type);
    for (i = 0; i < so->inputs_count; i++) {
-      uint8_t regid = so->inputs[i].regid;
+      uint8_t regid = find_input_reg_id(so, i);
+
       fprintf(out, " r%d.%c (%s slot=%d cm=%x,il=%u,b=%u)", (regid >> 2),
               "xyzw"[regid & 0x3], input_name(so, i), so -> inputs[i].slot,
               so->inputs[i].compmask, so->inputs[i].inloc, so->inputs[i].bary);
@@ -821,9 +867,10 @@ ir3_shader_disasm(struct ir3_shader_variant *so, uint32_t *bin, FILE *out)
       so->info.cov_count, so->info.sizedwords);
 
    fprintf(out,
-           "; %s prog %d/%d: %u last-baryf, %d half, %d full, %u constlen\n",
+           "; %s prog %d/%d: %u last-baryf, %u last-helper, %d half, %d full, %u constlen\n",
            type, so->shader_id, so->id, so->info.last_baryf,
-           so->info.max_half_reg + 1, so->info.max_reg + 1, so->constlen);
+           so->info.last_helper, so->info.max_half_reg + 1,
+           so->info.max_reg + 1, so->constlen);
 
    fprintf(
       out,

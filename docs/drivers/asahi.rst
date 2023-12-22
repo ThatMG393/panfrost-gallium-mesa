@@ -3,34 +3,14 @@ Asahi
 
 The Asahi driver aims to provide an OpenGL implementation for the Apple M1.
 
-Testing on macOS
------------------
-
-On macOS, the experimental Asahi driver may built with options:
-
-    -Dosmesa=true -Dglx=xlib -Dgallium-drivers=asahi,swrast
-
-To use, set the ``DYLD_LIBRARY_PATH`` environment variable:
-
-.. code-block:: console
-
-   DYLD_LIBRARY_PATH=/Users/nobody/mesa/build/src/gallium/targets/libgl-xlib/ glmark2 --reuse-context
-
-Only X11 apps are supported. XQuartz must be setup separately.
-
 Wrap (macOS only)
 -----------------
 
 Mesa includes a library that wraps the key IOKit entrypoints used in the macOS
 UABI for AGX. The wrapped routines print information about the kernel calls made
-and dump work submitted to the GPU using agxdecode.
-
-This library allows debugging Mesa, particularly around the undocumented macOS
-user-kernel interface. Logs from Mesa may compared to Metal to check that the
-UABI is being used correctly.
-
-Furthermore, it allows reverse-engineering the hardware, as glue to get at the
-"interesting" GPU memory.
+and dump work submitted to the GPU using agxdecode. This facilitates
+reverse-engineering the hardware, as glue to get at the "interesting" GPU
+memory.
 
 The library is only built if ``-Dtools=asahi`` is passed. It builds a single
 ``wrap.dylib`` file, which should be inserted into a process with the
@@ -52,38 +32,74 @@ below.
 Vertex shader
 `````````````
 
-A vertex shader (running on the Unified Shader Cores) outputs varyings with the
+A vertex shader (running on the :term:`Unified Shader Cores`) outputs varyings with the
 ``st_var`` instruction. ``st_var`` takes a *vertex output index* and a 32-bit
 value. The maximum number of *vertex outputs* is specified as the "output count"
 of the shader in the "Bind Vertex Pipeline" packet. The value may be interpreted
 consist of a single 32-bit value or an aligned 16-bit register pair, depending
 on whether interpolation should happen at 32-bit or 16-bit. Vertex outputs are
 indexed starting from 0, with the *vertex position* always coming first, the
-32-bit user varyings coming next, then 16-bit user varyings, and finally *point
-size* at the end if present.
+32-bit user varyings coming next with perspective, flat, and linear interpolated
+varyings grouped in that order, then 16-bit user varyings with the same groupings,
+and finally *point size* and *clip distances* at the end if present. Note that
+*clip distances* are not accessible from the fragment shader; if the fragment
+shader needs to read the interpolated clip distance, the vertex shader must
+*also* write the clip distance values to a user varying for the fragment shader
+to interpolate. Also note there is no clip plane enable mask anywhere; that must
+lowered for APIs that require this (OpenGL but not Vulkan).
 
 .. list-table:: Ordering of vertex outputs with all outputs used
    :widths: 25 75
    :header-rows: 1
 
-   * - Index
+   * - Size (words)
      - Value
-   * - 0
-     - Vertex position
    * - 4
-     - 32-bit varying 0
+     - Vertex position
+   * - 1
+     - 32-bit smooth varying 0
    * -
      - ...
-   * - 4 + m
-     - 32-bit varying m
-   * - 4 + m + 1
-     - Packed pair of 16-bit varyings 0
+   * - 1
+     - 32-bit smooth varying m
+   * - 1
+     - 32-bit flat varying 0
    * -
      - ...
-   * - 4 + m + 1 + n
-     - Packed pair of 16-bit varyings n
-   * - 4 + m + 1 + n + 1
+   * - 1
+     - 32-bit flat varying n
+   * - 1
+     - 32-bit linear varying 0
+   * -
+     - ...
+   * - 1
+     - 32-bit linear varying o
+   * - 1
+     - Packed pair of 16-bit smooth varyings 0
+   * -
+     - ...
+   * - 1
+     - Packed pair of 16-bit smooth varyings p
+   * - 1
+     - Packed pair of 16-bit flat varyings 0
+   * -
+     - ...
+   * - 1
+     - Packed pair of 16-bit flat varyings q
+   * - 1
+     - Packed pair of 16-bit linear varyings 0
+   * -
+     - ...
+   * - 1
+     - Packed pair of 16-bit linear varyings r
+   * - 1
      - Point size
+   * - 1
+     - Clip distance for plane 0
+   * -
+     - ...
+   * - 1
+     - Clip distance for plane 15
 
 Remapping
 `````````
@@ -92,7 +108,7 @@ Vertex outputs are remapped to varying slots to be interpolated.
 The output of remapping consists of the following items: the *W* fragment
 coordinate, the *Z* fragment coordinate, user varyings in the vertex
 output order. *Z* may be omitted, but *W* may not be. This remapping is
-configured by the "Linkage" packet.
+configured by the "Output select" word.
 
 .. list-table:: Ordering of remapped slots
    :widths: 25 75
@@ -304,3 +320,45 @@ with the IR:
 
 The drm-shim implementation for Asahi is located in ``src/asahi/drm-shim``. The
 drm-shim implementation there should be updated as new UABI is added.
+
+Hardware glossary
+-----------------
+
+AGX is a tiled renderer descended from the PowerVR architecture. Some hardware
+concepts used in PowerVR GPUs appear in AGX.
+
+.. glossary:: :sorted:
+
+   VDM
+   Vertex Data Master
+      Dispatches vertex shaders.
+
+   PDM
+   Pixel Data Master
+      Dispatches pixel shaders.
+
+   CDM
+   Compute Data Master
+      Dispatches compute kernels.
+
+   USC
+   Unified Shader Cores
+      A unified shader core is a small cpu that runs shader code. The core is
+      unified because a single ISA is used for vertex, pixel and compute
+      shaders. This differs from older GPUs where the vertex, fragment and
+      compute have separate ISAs for shader stages.
+
+   PPP
+   Primitive Processing Pipeline
+      The Primitive Processing Pipeline is a hardware unit that does primitive
+      assembly. The PPP is between the :term:`VDM` and :term:`ISP`.
+
+   ISP
+   Image Synthesis Processor
+      The Image Synthesis Processor is responsible for the rasterization stage
+      of the rendering pipeline.
+
+   PBE
+   Pixel BackEnd
+      Hardware unit which writes to color attachements and images. Also the
+      name for a descriptor passed to :term:`PBE` instructions.

@@ -59,6 +59,7 @@
 #include "main/shaderobj.h"
 #include "ir.h"
 #include "ir_builder.h"
+#include "linker_util.h"
 #include "builtin_functions.h"
 
 using namespace ir_builder;
@@ -360,7 +361,7 @@ arithmetic_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
    if (!type_a->is_numeric() || !type_b->is_numeric()) {
       _mesa_glsl_error(loc, state,
                        "operands to arithmetic operators must be numeric");
-      return glsl_type::error_type;
+      return &glsl_type_builtin_error;
    }
 
 
@@ -373,7 +374,7 @@ arithmetic_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
       _mesa_glsl_error(loc, state,
                        "could not implicitly convert operands to "
                        "arithmetic operator");
-      return glsl_type::error_type;
+      return &glsl_type_builtin_error;
    }
    type_a = value_a->type;
    type_b = value_b->type;
@@ -390,7 +391,7 @@ arithmetic_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
    if (type_a->base_type != type_b->base_type) {
       _mesa_glsl_error(loc, state,
                        "base type mismatch for arithmetic operator");
-      return glsl_type::error_type;
+      return &glsl_type_builtin_error;
    }
 
    /*    "All arithmetic binary operators result in the same fundamental type
@@ -433,7 +434,7 @@ arithmetic_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
       } else {
          _mesa_glsl_error(loc, state,
                           "vector size mismatch for arithmetic operator");
-         return glsl_type::error_type;
+         return &glsl_type_builtin_error;
       }
    }
 
@@ -468,7 +469,7 @@ arithmetic_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
    } else {
       const glsl_type *type = glsl_type::get_mul_type(type_a, type_b);
 
-      if (type == glsl_type::error_type) {
+      if (type == &glsl_type_builtin_error) {
          _mesa_glsl_error(loc, state,
                           "size mismatch for matrix multiplication");
       }
@@ -480,7 +481,7 @@ arithmetic_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
    /*    "All other cases are illegal."
     */
    _mesa_glsl_error(loc, state, "type mismatch");
-   return glsl_type::error_type;
+   return &glsl_type_builtin_error;
 }
 
 
@@ -499,7 +500,7 @@ unary_arithmetic_result_type(const struct glsl_type *type,
    if (!type->is_numeric()) {
       _mesa_glsl_error(loc, state,
                        "operands to arithmetic operators must be numeric");
-      return glsl_type::error_type;
+      return &glsl_type_builtin_error;
    }
 
    return type;
@@ -509,7 +510,7 @@ unary_arithmetic_result_type(const struct glsl_type *type,
  * \brief Return the result type of a bit-logic operation.
  *
  * If the given types to the bit-logic operator are invalid, return
- * glsl_type::error_type.
+ * &glsl_type_builtin_error.
  *
  * \param value_a LHS of bit-logic op
  * \param value_b RHS of bit-logic op
@@ -523,7 +524,7 @@ bit_logic_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
    const glsl_type *type_b = value_b->type;
 
    if (!state->check_bitwise_operations_allowed(loc)) {
-      return glsl_type::error_type;
+      return &glsl_type_builtin_error;
    }
 
    /* From page 50 (page 56 of PDF) of GLSL 1.30 spec:
@@ -535,12 +536,12 @@ bit_logic_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
    if (!type_a->is_integer_32_64()) {
       _mesa_glsl_error(loc, state, "LHS of `%s' must be an integer",
                         ast_expression::operator_string(op));
-      return glsl_type::error_type;
+      return &glsl_type_builtin_error;
    }
    if (!type_b->is_integer_32_64()) {
       _mesa_glsl_error(loc, state, "RHS of `%s' must be an integer",
                        ast_expression::operator_string(op));
-      return glsl_type::error_type;
+      return &glsl_type_builtin_error;
    }
 
    /* Prior to GLSL 4.0 / GL_ARB_gpu_shader5, implicit conversions didn't
@@ -561,7 +562,7 @@ bit_logic_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
                           "could not implicitly convert operands to "
                           "`%s` operator",
                           ast_expression::operator_string(op));
-         return glsl_type::error_type;
+         return &glsl_type_builtin_error;
       } else {
          _mesa_glsl_warning(loc, state,
                             "some implementations may not support implicit "
@@ -579,7 +580,7 @@ bit_logic_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
    if (type_a->base_type != type_b->base_type) {
       _mesa_glsl_error(loc, state, "operands of `%s' must have the same "
                        "base type", ast_expression::operator_string(op));
-      return glsl_type::error_type;
+      return &glsl_type_builtin_error;
    }
 
    /*     "The operands cannot be vectors of differing size." */
@@ -588,7 +589,7 @@ bit_logic_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
        type_a->vector_elements != type_b->vector_elements) {
       _mesa_glsl_error(loc, state, "operands of `%s' cannot be vectors of "
                        "different sizes", ast_expression::operator_string(op));
-      return glsl_type::error_type;
+      return &glsl_type_builtin_error;
    }
 
    /*     "If one operand is a scalar and the other a vector, the scalar is
@@ -611,7 +612,7 @@ modulus_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
 
    if (!state->EXT_gpu_shader4_enable &&
        !state->check_version(130, 300, loc, "operator '%%' is reserved")) {
-      return glsl_type::error_type;
+      return &glsl_type_builtin_error;
    }
 
    /* Section 5.9 (Expressions) of the GLSL 4.00 specification says:
@@ -621,11 +622,11 @@ modulus_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
     */
    if (!type_a->is_integer_32_64()) {
       _mesa_glsl_error(loc, state, "LHS of operator %% must be an integer");
-      return glsl_type::error_type;
+      return &glsl_type_builtin_error;
    }
    if (!type_b->is_integer_32_64()) {
       _mesa_glsl_error(loc, state, "RHS of operator %% must be an integer");
-      return glsl_type::error_type;
+      return &glsl_type_builtin_error;
    }
 
    /*    "If the fundamental types in the operands do not match, then the
@@ -645,7 +646,7 @@ modulus_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
       _mesa_glsl_error(loc, state,
                        "could not implicitly convert operands to "
                        "modulus (%%) operator");
-      return glsl_type::error_type;
+      return &glsl_type_builtin_error;
    }
    type_a = value_a->type;
    type_b = value_b->type;
@@ -666,7 +667,7 @@ modulus_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
     *    (non-integer types)."
     */
    _mesa_glsl_error(loc, state, "type mismatch");
-   return glsl_type::error_type;
+   return &glsl_type_builtin_error;
 }
 
 
@@ -689,7 +690,7 @@ relational_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
       _mesa_glsl_error(loc, state,
                        "operands to relational operators must be scalar and "
                        "numeric");
-      return glsl_type::error_type;
+      return &glsl_type_builtin_error;
    }
 
    /*    "Either the operands' types must match, or the conversions from
@@ -701,26 +702,26 @@ relational_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
       _mesa_glsl_error(loc, state,
                        "could not implicitly convert operands to "
                        "relational operator");
-      return glsl_type::error_type;
+      return &glsl_type_builtin_error;
    }
    type_a = value_a->type;
    type_b = value_b->type;
 
    if (type_a->base_type != type_b->base_type) {
       _mesa_glsl_error(loc, state, "base type mismatch");
-      return glsl_type::error_type;
+      return &glsl_type_builtin_error;
    }
 
    /*    "The result is scalar Boolean."
     */
-   return glsl_type::bool_type;
+   return &glsl_type_builtin_bool;
 }
 
 /**
  * \brief Return the result type of a bit-shift operation.
  *
  * If the given types to the bit-shift operator are invalid, return
- * glsl_type::error_type.
+ * &glsl_type_builtin_error.
  *
  * \param type_a Type of LHS of bit-shift op
  * \param type_b Type of RHS of bit-shift op
@@ -732,7 +733,7 @@ shift_result_type(const struct glsl_type *type_a,
                   struct _mesa_glsl_parse_state *state, YYLTYPE *loc)
 {
    if (!state->check_bitwise_operations_allowed(loc)) {
-      return glsl_type::error_type;
+      return &glsl_type_builtin_error;
    }
 
    /* From page 50 (page 56 of the PDF) of the GLSL 1.30 spec:
@@ -744,13 +745,13 @@ shift_result_type(const struct glsl_type *type_a,
    if (!type_a->is_integer_32_64()) {
       _mesa_glsl_error(loc, state, "LHS of operator %s must be an integer or "
                        "integer vector", ast_expression::operator_string(op));
-     return glsl_type::error_type;
+     return &glsl_type_builtin_error;
 
    }
-   if (!type_b->is_integer_32()) {
+   if (!type_b->is_integer_32_64()) {
       _mesa_glsl_error(loc, state, "RHS of operator %s must be an integer or "
                        "integer vector", ast_expression::operator_string(op));
-     return glsl_type::error_type;
+     return &glsl_type_builtin_error;
    }
 
    /*     "If the first operand is a scalar, the second operand has to be
@@ -760,7 +761,7 @@ shift_result_type(const struct glsl_type *type_a,
       _mesa_glsl_error(loc, state, "if the first operand of %s is scalar, the "
                        "second must be scalar as well",
                        ast_expression::operator_string(op));
-     return glsl_type::error_type;
+     return &glsl_type_builtin_error;
    }
 
    /* If both operands are vectors, check that they have same number of
@@ -772,7 +773,7 @@ shift_result_type(const struct glsl_type *type_a,
       _mesa_glsl_error(loc, state, "vector operands to operator %s must "
                        "have same number of elements",
                        ast_expression::operator_string(op));
-     return glsl_type::error_type;
+     return &glsl_type_builtin_error;
    }
 
    /*     "In all cases, the resulting type will be the same type as the left
@@ -911,7 +912,7 @@ validate_assignment(struct _mesa_glsl_parse_state *state,
                     "%s of type %s cannot be assigned to "
                     "variable of type %s",
                     is_initializer ? "initializer" : "value",
-                    rhs->type->name, lhs->type->name);
+                    glsl_get_type_name(rhs->type), glsl_get_type_name(lhs->type));
 
    return NULL;
 }
@@ -1187,11 +1188,13 @@ do_comparison(void *mem_ctx, int operation, ir_rvalue *op0, ir_rvalue *op1)
    case GLSL_TYPE_INTERFACE:
    case GLSL_TYPE_ATOMIC_UINT:
    case GLSL_TYPE_SUBROUTINE:
-   case GLSL_TYPE_FUNCTION:
       /* I assume a comparison of a struct containing a sampler just
        * ignores the sampler present in the type.
        */
       break;
+
+   case GLSL_TYPE_COOPERATIVE_MATRIX:
+      unreachable("unsupported base type cooperative matrix");
    }
 
    if (cmp == NULL)
@@ -1537,9 +1540,9 @@ ast_expression::do_hir(exec_list *instructions,
        *    case this conversion is done."
        */
 
-      if (op[0]->type == glsl_type::void_type || op[1]->type == glsl_type::void_type) {
-         _mesa_glsl_error(& loc, state, "`%s':  wrong operand types: "
-                         "no operation `%1$s' exists that takes a left-hand "
+      if (op[0]->type == &glsl_type_builtin_void || op[1]->type == &glsl_type_builtin_void) {
+         _mesa_glsl_error(& loc, state, "wrong operand types: "
+                         "no operation `%s' exists that takes a left-hand "
                          "operand of type 'void' or a right operand of type "
                          "'void'", (this->oper == ast_equal) ? "==" : "!=");
          error_emitted = true;
@@ -1567,7 +1570,7 @@ ast_expression::do_hir(exec_list *instructions,
          result = new(ctx) ir_constant(false);
       } else {
          result = do_comparison(ctx, operations[this->oper], op[0], op[1]);
-         assert(result->type == glsl_type::bool_type);
+         assert(result->type == &glsl_type_builtin_bool);
       }
       break;
 
@@ -1594,7 +1597,7 @@ ast_expression::do_hir(exec_list *instructions,
          error_emitted = true;
       }
 
-      type = error_emitted ? glsl_type::error_type : op[0]->type;
+      type = error_emitted ? &glsl_type_builtin_error : op[0]->type;
       result = new(ctx) ir_expression(ir_unop_bit_not, type, op[0], NULL);
       break;
 
@@ -1608,7 +1611,7 @@ ast_expression::do_hir(exec_list *instructions,
       if (rhs_instructions.is_empty()) {
          result = new(ctx) ir_expression(ir_binop_logic_and, op[0], op[1]);
       } else {
-         ir_variable *const tmp = new(ctx) ir_variable(glsl_type::bool_type,
+         ir_variable *const tmp = new(ctx) ir_variable(&glsl_type_builtin_bool,
                                                        "and_tmp",
                                                        ir_var_temporary);
          instructions->push_tail(tmp);
@@ -1642,7 +1645,7 @@ ast_expression::do_hir(exec_list *instructions,
       if (rhs_instructions.is_empty()) {
          result = new(ctx) ir_expression(ir_binop_logic_or, op[0], op[1]);
       } else {
-         ir_variable *const tmp = new(ctx) ir_variable(glsl_type::bool_type,
+         ir_variable *const tmp = new(ctx) ir_variable(&glsl_type_builtin_bool,
                                                        "or_tmp",
                                                        ir_var_temporary);
          instructions->push_tail(tmp);
@@ -1678,7 +1681,7 @@ ast_expression::do_hir(exec_list *instructions,
       op[1] = get_scalar_boolean_operand(instructions, state, this, 1, "RHS",
                                          &error_emitted);
 
-      result = new(ctx) ir_expression(operations[this->oper], glsl_type::bool_type,
+      result = new(ctx) ir_expression(operations[this->oper], &glsl_type_builtin_bool,
                                       op[0], op[1]);
       break;
 
@@ -1686,7 +1689,7 @@ ast_expression::do_hir(exec_list *instructions,
       op[0] = get_scalar_boolean_operand(instructions, state, this, 0,
                                          "operand", &error_emitted);
 
-      result = new(ctx) ir_expression(operations[this->oper], glsl_type::bool_type,
+      result = new(ctx) ir_expression(operations[this->oper], &glsl_type_builtin_bool,
                                       op[0], NULL);
       break;
 
@@ -1701,8 +1704,8 @@ ast_expression::do_hir(exec_list *instructions,
       orig_type = op[0]->type;
 
       /* Break out if operand types were not parsed successfully. */
-      if ((op[0]->type == glsl_type::error_type ||
-           op[1]->type == glsl_type::error_type)) {
+      if ((op[0]->type == &glsl_type_builtin_error ||
+           op[1]->type == &glsl_type_builtin_error)) {
          error_emitted = true;
          result = ir_rvalue::error_value(ctx);
          break;
@@ -1715,8 +1718,8 @@ ast_expression::do_hir(exec_list *instructions,
       if (type != orig_type) {
          _mesa_glsl_error(& loc, state,
                           "could not implicitly convert "
-                          "%s to %s", type->name, orig_type->name);
-         type = glsl_type::error_type;
+                          "%s to %s", glsl_get_type_name(type), glsl_get_type_name(orig_type));
+         type = &glsl_type_builtin_error;
       }
 
       ir_rvalue *temp_rhs = new(ctx) ir_expression(operations[this->oper], type,
@@ -1743,8 +1746,8 @@ ast_expression::do_hir(exec_list *instructions,
       op[1] = this->subexpressions[1]->hir(instructions, state);
 
       /* Break out if operand types were not parsed successfully. */
-      if ((op[0]->type == glsl_type::error_type ||
-           op[1]->type == glsl_type::error_type)) {
+      if ((op[0]->type == &glsl_type_builtin_error ||
+           op[1]->type == &glsl_type_builtin_error)) {
          error_emitted = true;
          result = ir_rvalue::error_value(ctx);
          break;
@@ -1756,8 +1759,8 @@ ast_expression::do_hir(exec_list *instructions,
       if (type != orig_type) {
          _mesa_glsl_error(& loc, state,
                           "could not implicitly convert "
-                          "%s to %s", type->name, orig_type->name);
-         type = glsl_type::error_type;
+                          "%s to %s", glsl_get_type_name(type), glsl_get_type_name(orig_type));
+         type = &glsl_type_builtin_error;
       }
 
       assert(operations[this->oper] == ir_binop_mod);
@@ -1782,8 +1785,8 @@ ast_expression::do_hir(exec_list *instructions,
       op[1] = this->subexpressions[1]->hir(instructions, state);
 
       /* Break out if operand types were not parsed successfully. */
-      if ((op[0]->type == glsl_type::error_type ||
-           op[1]->type == glsl_type::error_type)) {
+      if ((op[0]->type == &glsl_type_builtin_error ||
+           op[1]->type == &glsl_type_builtin_error)) {
          error_emitted = true;
          result = ir_rvalue::error_value(ctx);
          break;
@@ -1810,8 +1813,8 @@ ast_expression::do_hir(exec_list *instructions,
       op[1] = this->subexpressions[1]->hir(instructions, state);
 
       /* Break out if operand types were not parsed successfully. */
-      if ((op[0]->type == glsl_type::error_type ||
-           op[1]->type == glsl_type::error_type)) {
+      if ((op[0]->type == &glsl_type_builtin_error ||
+           op[1]->type == &glsl_type_builtin_error)) {
          error_emitted = true;
          result = ir_rvalue::error_value(ctx);
          break;
@@ -1823,8 +1826,8 @@ ast_expression::do_hir(exec_list *instructions,
       if (type != orig_type) {
          _mesa_glsl_error(& loc, state,
                           "could not implicitly convert "
-                          "%s to %s", type->name, orig_type->name);
-         type = glsl_type::error_type;
+                          "%s to %s", glsl_get_type_name(type), glsl_get_type_name(orig_type));
+         type = &glsl_type_builtin_error;
       }
 
       ir_rvalue *temp_rhs = new(ctx) ir_expression(operations[this->oper],
@@ -1876,7 +1879,7 @@ ast_expression::do_hir(exec_list *instructions,
          _mesa_glsl_error(& loc, state, "second and third operands of ?: "
                           "operator must have matching types");
          error_emitted = true;
-         type = glsl_type::error_type;
+         type = &glsl_type_builtin_error;
       } else {
          type = op[1]->type;
       }
@@ -1902,7 +1905,7 @@ ast_expression::do_hir(exec_list *instructions,
       if (type->contains_opaque()) {
          if (!(state->has_bindless() && (type->is_image() || type->is_sampler()))) {
             _mesa_glsl_error(&loc, state, "variables of type %s cannot be "
-                             "operands of the ?: operator", type->name);
+                             "operands of the ?: operator", glsl_get_type_name(type));
             error_emitted = true;
          }
       }
@@ -2397,7 +2400,7 @@ process_array_type(YYLTYPE *loc, const glsl_type *base,
           * "Only one-dimensional arrays may be declared."
           */
          if (!state->check_arrays_of_arrays_allowed(loc)) {
-            return glsl_type::error_type;
+            return &glsl_type_builtin_error;
          }
       }
 
@@ -2718,7 +2721,7 @@ select_gles_precision(unsigned qual_precision,
       if (precision == ast_precision_none) {
          _mesa_glsl_error(loc, state,
                           "No precision specified in this scope for type `%s'",
-                          type->name);
+                          glsl_get_type_name(type));
       }
    }
 
@@ -2773,6 +2776,42 @@ is_allowed_invariant(ir_variable *var, struct _mesa_glsl_parse_state *state)
 {
    if (is_varying_var(var, state->stage))
       return true;
+
+   /* ES2 says:
+    *
+    * "For the built-in special variables, gl_FragCoord can only be declared
+    *  invariant if and only if gl_Position is declared invariant. Similarly
+    *  gl_PointCoord can only be declared invariant if and only if gl_PointSize
+    *  is declared invariant. It is an error to declare gl_FrontFacing as
+    *  invariant. The invariance of gl_FrontFacing is the same as the invariance
+    *  of gl_Position."
+    *
+    * ES3.1 says about invariance:
+    *
+    * "How does this rule apply to the built-in special variables?
+    *
+    *  Option 1: It should be the same as for varyings. But gl_Position is used
+    *  internally by the rasterizer as well as for gl_FragCoord so there may be
+    *  cases where rasterization is required to be invariant but gl_FragCoord is
+    *  not.
+    *
+    *  RESOLUTION: Option 1."
+    *
+    * and the ES3 spec has similar text but the "RESOLUTION" is missing.
+    *
+    * Any system values should be from built-in special variables.
+    */
+   if (var->data.mode == ir_var_system_value) {
+      if (state->is_version(0, 300)) {
+         return true;
+      } else {
+         /* Note: We don't actually have a check that the VS's PointSize is
+          * invariant, even when it's treated as a varying.
+          */
+         if (var->data.location == SYSTEM_VALUE_POINT_COORD)
+            return true;
+      }
+   }
 
    /* From Section 4.6.1 ("The Invariant Qualifier") GLSL 1.20 spec:
     * "Only variables output from a vertex shader can be candidates
@@ -3641,14 +3680,15 @@ static inline void
 validate_array_dimensions(const glsl_type *t,
                           struct _mesa_glsl_parse_state *state,
                           YYLTYPE *loc) {
+   const glsl_type *top = t;
    if (t->is_array()) {
       t = t->fields.array;
       while (t->is_array()) {
          if (t->is_unsized_array()) {
             _mesa_glsl_error(loc, state,
                              "only the outermost array dimension can "
-                             "be unsized",
-                             t->name);
+                             "be unsized, but got %s",
+                             glsl_get_type_name(top));
             break;
          }
          t = t->fields.array;
@@ -3716,6 +3756,22 @@ apply_bindless_qualifier_to_variable(const struct ast_type_qualifier *qual,
                         qual->flags.q.bound_image ||
                         state->bound_sampler_specified ||
                         state->bound_image_specified;
+   }
+
+   /* ARB_bindless_texture spec says:
+    *
+    *    "When used as shader inputs, outputs, uniform block members,
+    *     or temporaries, the value of the sampler is a 64-bit unsigned
+    *     integer handle and never refers to a texture image unit."
+    *
+    * The spec doesn't reference images defined inside structs but it was
+    * clarified with the authors that bindless images are allowed in structs.
+    * So we treat these images as implicitly bindless just like the types
+    * in the spec quote above.
+    */
+   if (!var->data.bindless && var->type->is_struct() &&
+       var->type->contains_image()) {
+      var->data.bindless = true;
    }
 }
 
@@ -4084,7 +4140,7 @@ apply_type_qualifier_to_variable(const struct ast_type_qualifier *qual,
       var->data.patch = 1;
 
    if (qual->flags.q.attribute && state->stage != MESA_SHADER_VERTEX) {
-      var->type = glsl_type::error_type;
+      var->type = &glsl_type_builtin_error;
       _mesa_glsl_error(loc, state,
                        "`attribute' variables may not be declared in the "
                        "%s shader",
@@ -4453,8 +4509,8 @@ get_variable_being_redeclared(ir_variable **var_ptr, YYLTYPE loc,
                              "gl_FragDepth: depth layout is declared here "
                              "as '%s, but it was previously declared as "
                              "'%s'",
-                             depth_layout_string(var->data.depth_layout),
-                             depth_layout_string(earlier->data.depth_layout));
+                             depth_layout_string((ir_depth_layout)var->data.depth_layout),
+                             depth_layout_string((ir_depth_layout)earlier->data.depth_layout));
       }
 
       earlier->data.depth_layout = var->data.depth_layout;
@@ -4898,7 +4954,8 @@ handle_geometry_shader_input_decl(struct _mesa_glsl_parse_state *state,
    unsigned num_vertices = 0;
 
    if (state->gs_input_prim_type_specified) {
-      num_vertices = vertices_per_prim(state->in_qualifier->prim_type);
+      GLenum in_prim_type = state->in_qualifier->prim_type;
+      num_vertices = mesa_vertices_per_prim(gl_to_mesa_prim(in_prim_type));
    }
 
    /* Geometry shader input variables must be arrays.  Caller should have
@@ -5473,7 +5530,7 @@ ast_declarator_list::hir(exec_list *instructions,
                                 "vertex shader input / attribute cannot have "
                                 "type %s`%s'",
                                 var->type->is_array() ? "array of " : "",
-                                check_type->name);
+                                glsl_get_type_name(check_type));
             } else if (var->type->is_array() &&
                 !state->check_version(150, 0, &loc,
                                       "vertex shader input / attribute "
@@ -5513,7 +5570,7 @@ ast_declarator_list::hir(exec_list *instructions,
                    check_type->contains_opaque()) {
                   _mesa_glsl_error(&loc, state,
                                    "fragment shader input cannot have type %s",
-                                   check_type->name);
+                                   glsl_get_type_name(check_type));
                }
                if (var->type->is_array() &&
                    var->type->fields.array->is_array()) {
@@ -5570,7 +5627,7 @@ ast_declarator_list::hir(exec_list *instructions,
             default:
                _mesa_glsl_error(&loc, state,
                                 "fragment shader output cannot have "
-                                "type %s", check_type->name);
+                                "type %s", glsl_get_type_name(check_type));
             }
          }
 
@@ -5902,7 +5959,7 @@ ast_parameter_declarator::hir(exec_list *instructions,
                           this->identifier);
       }
 
-      type = glsl_type::error_type;
+      type = &glsl_type_builtin_error;
    }
 
    /* From page 62 (page 68 of the PDF) of the GLSL 1.50 spec:
@@ -5939,7 +5996,7 @@ ast_parameter_declarator::hir(exec_list *instructions,
    if (!type->is_error() && type->is_unsized_array()) {
       _mesa_glsl_error(&loc, state, "arrays passed as parameters must have "
                        "a declared size");
-      type = glsl_type::error_type;
+      type = &glsl_type_builtin_error;
    }
 
    is_void = false;
@@ -5982,7 +6039,7 @@ ast_parameter_declarator::hir(exec_list *instructions,
       _mesa_glsl_error(&loc, state, "out and inout parameters cannot "
                        "contain %s variables",
                        state->has_bindless() ? "atomic" : "opaque");
-      type = glsl_type::error_type;
+      type = &glsl_type_builtin_error;
    }
 
    /* From page 39 (page 45 of the PDF) of the GLSL 1.10 spec:
@@ -6003,7 +6060,7 @@ ast_parameter_declarator::hir(exec_list *instructions,
        && type->is_array()
        && !state->check_version(120, 100, &loc,
                                 "arrays cannot be out or inout parameters")) {
-      type = glsl_type::error_type;
+      type = &glsl_type_builtin_error;
    }
 
    instructions->push_tail(var);
@@ -6113,7 +6170,7 @@ ast_function::hir(exec_list *instructions,
       _mesa_glsl_error(&loc, state,
                        "function `%s' has undeclared return type `%s'",
                        name, return_type_name);
-      return_type = glsl_type::error_type;
+      return_type = &glsl_type_builtin_error;
    }
 
    /* ARB_shader_subroutine states:
@@ -6459,7 +6516,7 @@ ast_function_definition::hir(exec_list *instructions,
       _mesa_glsl_error(& loc, state, "function `%s' has non-void return type "
                        "%s, but no return statement",
                        signature->function_name(),
-                       signature->return_type->name);
+                       glsl_get_type_name(signature->return_type));
    }
 
    /* Function definitions do not have r-values.
@@ -6490,7 +6547,7 @@ ast_jump_statement::hir(exec_list *instructions,
           * also void, then this should compile without error.  Seriously.
           */
          const glsl_type *const ret_type =
-            (ret == NULL) ? glsl_type::void_type : ret->type;
+            (ret == NULL) ? &glsl_type_builtin_void : ret->type;
 
          /* Implicit conversions are not allowed for return values prior to
           * ARB_shading_language_420pack.
@@ -6505,16 +6562,16 @@ ast_jump_statement::hir(exec_list *instructions,
                   _mesa_glsl_error(& loc, state,
                                    "could not implicitly convert return value "
                                    "to %s, in function `%s'",
-                                   state->current_function->return_type->name,
+                                   glsl_get_type_name(state->current_function->return_type),
                                    state->current_function->function_name());
                }
             } else {
                _mesa_glsl_error(& loc, state,
                                 "`return' with wrong type %s, in function `%s' "
                                 "returning %s",
-                                ret_type->name,
+                                glsl_get_type_name(ret_type),
                                 state->current_function->function_name(),
-                                state->current_function->return_type->name);
+                                glsl_get_type_name(state->current_function->return_type));
             }
          } else if (state->current_function->return_type->base_type ==
                     GLSL_TYPE_VOID) {
@@ -6780,7 +6837,7 @@ ast_switch_statement::hir(exec_list *instructions,
     */
    ir_rvalue *const is_fallthru_val = new (ctx) ir_constant(false);
    state->switch_state.is_fallthru_var =
-      new(ctx) ir_variable(glsl_type::bool_type,
+      new(ctx) ir_variable(&glsl_type_builtin_bool,
                            "switch_is_fallthru_tmp",
                            ir_var_temporary);
    instructions->push_tail(state->switch_state.is_fallthru_var);
@@ -6793,7 +6850,7 @@ ast_switch_statement::hir(exec_list *instructions,
    /* Initialize continue_inside state to false.
     */
    state->switch_state.continue_inside =
-      new(ctx) ir_variable(glsl_type::bool_type,
+      new(ctx) ir_variable(&glsl_type_builtin_bool,
                            "continue_inside_tmp",
                            ir_var_temporary);
    instructions->push_tail(state->switch_state.continue_inside);
@@ -6805,7 +6862,7 @@ ast_switch_statement::hir(exec_list *instructions,
                                                   false_val));
 
    state->switch_state.run_default =
-      new(ctx) ir_variable(glsl_type::bool_type,
+      new(ctx) ir_variable(&glsl_type_builtin_bool,
                              "run_default_tmp",
                              ir_var_temporary);
    instructions->push_tail(state->switch_state.run_default);
@@ -7074,23 +7131,22 @@ ast_case_label::hir(exec_list *instructions,
 
          /* Check if int->uint implicit conversion is supported. */
          bool integer_conversion_supported =
-            glsl_type::int_type->can_implicitly_convert_to(glsl_type::uint_type,
-                                                           state);
+            _mesa_glsl_can_implicitly_convert(&glsl_type_builtin_int, &glsl_type_builtin_uint, state);
 
          if ((!type_a->is_integer_32() || !type_b->is_integer_32()) ||
               !integer_conversion_supported) {
             _mesa_glsl_error(&loc, state, "type mismatch with switch "
                              "init-expression and case label (%s != %s)",
-                             type_a->name, type_b->name);
+                             glsl_get_type_name(type_a), glsl_get_type_name(type_b));
          } else {
             /* Conversion of the case label. */
             if (type_a->base_type == GLSL_TYPE_INT) {
-               if (!apply_implicit_conversion(glsl_type::uint_type,
+               if (!apply_implicit_conversion(&glsl_type_builtin_uint,
                                               label, state))
                   _mesa_glsl_error(&loc, state, "implicit type conversion error");
             } else {
                /* Conversion of the init-expression value. */
-               if (!apply_implicit_conversion(glsl_type::uint_type,
+               if (!apply_implicit_conversion(&glsl_type_builtin_uint,
                                               deref_test_var, state))
                   _mesa_glsl_error(&loc, state, "implicit type conversion error");
             }
@@ -7665,7 +7721,7 @@ ast_process_struct_or_iface_block_members(exec_list *instructions,
          /* Offset can only be used with std430 and std140 layouts an initial
           * value of 0 is used for error detection.
           */
-         unsigned align = 0;
+         unsigned base_alignment = 0;
          unsigned size = 0;
          if (layout) {
             bool row_major;
@@ -7677,10 +7733,10 @@ ast_process_struct_or_iface_block_members(exec_list *instructions,
             }
 
             if(layout->flags.q.std140) {
-               align = field_type->std140_base_alignment(row_major);
+               base_alignment = field_type->std140_base_alignment(row_major);
                size = field_type->std140_size(row_major);
             } else if (layout->flags.q.std430) {
-               align = field_type->std430_base_alignment(row_major);
+               base_alignment = field_type->std430_base_alignment(row_major);
                size = field_type->std430_size(row_major);
             }
          }
@@ -7689,15 +7745,15 @@ ast_process_struct_or_iface_block_members(exec_list *instructions,
             unsigned qual_offset;
             if (process_qualifier_constant(state, &loc, "offset",
                                            qual->offset, &qual_offset)) {
-               if (align != 0 && size != 0) {
+               if (base_alignment != 0 && size != 0) {
                    if (next_offset > qual_offset)
                       _mesa_glsl_error(&loc, state, "layout qualifier "
                                        "offset overlaps previous member");
 
-                  if (qual_offset % align) {
+                  if (qual_offset % base_alignment) {
                      _mesa_glsl_error(&loc, state, "layout qualifier offset "
                                       "must be a multiple of the base "
-                                      "alignment of %s", field_type->name);
+                                      "alignment of %s", glsl_get_type_name(field_type));
                   }
                   fields[i].offset = qual_offset;
                   next_offset = qual_offset + size;
@@ -7711,7 +7767,7 @@ ast_process_struct_or_iface_block_members(exec_list *instructions,
          if (qual->flags.q.explicit_align || expl_align != 0) {
             unsigned offset = fields[i].offset != -1 ? fields[i].offset :
                next_offset;
-            if (align == 0 || size == 0) {
+            if (base_alignment == 0 || size == 0) {
                _mesa_glsl_error(&loc, state, "align can only be used with "
                                 "std430 and std140 layouts");
             } else if (qual->flags.q.explicit_align) {
@@ -7723,17 +7779,17 @@ ast_process_struct_or_iface_block_members(exec_list *instructions,
                      _mesa_glsl_error(&loc, state, "align layout qualifier "
                                       "is not a power of 2");
                   } else {
-                     fields[i].offset = glsl_align(offset, member_align);
+                     fields[i].offset = align(offset, member_align);
                      next_offset = fields[i].offset + size;
                   }
                }
             } else {
-               fields[i].offset = glsl_align(offset, expl_align);
+               fields[i].offset = align(offset, expl_align);
                next_offset = fields[i].offset + size;
             }
          } else if (!qual->flags.q.explicit_offset) {
-            if (align != 0 && size != 0)
-               next_offset = glsl_align(next_offset, align) + size;
+            if (base_alignment != 0 && size != 0)
+               next_offset = align(next_offset, base_alignment) + size;
          }
 
          /* From the ARB_enhanced_layouts spec:
@@ -7755,8 +7811,8 @@ ast_process_struct_or_iface_block_members(exec_list *instructions,
             }
          } else {
             if (layout && layout->flags.q.explicit_xfb_offset) {
-               unsigned align = field_type->is_64bit() ? 8 : 4;
-               fields[i].offset = glsl_align(block_xfb_offset, align);
+               unsigned base_alignment = field_type->is_64bit() ? 8 : 4;
+               fields[i].offset = align(block_xfb_offset, base_alignment);
                block_xfb_offset += 4 * field_type->component_slots();
             }
          }
@@ -7856,6 +7912,12 @@ ast_process_struct_or_iface_block_members(exec_list *instructions,
    return decl_count;
 }
 
+static bool
+is_anonymous(const glsl_type *t)
+{
+   /* See handling for struct_specifier in glsl_parser.yy. */
+   return !strncmp(glsl_get_type_name(t), "#anon", 5);
+}
 
 ir_rvalue *
 ast_struct_specifier::hir(exec_list *instructions,
@@ -7894,7 +7956,7 @@ ast_struct_specifier::hir(exec_list *instructions,
 
    type = glsl_type::get_struct_instance(fields, decl_count, this->name);
 
-   if (!type->is_anonymous() && !state->symbols->add_type(name, type)) {
+   if (!is_anonymous(type) && !state->symbols->add_type(name, type)) {
       const glsl_type *match = state->symbols->get_type(name);
       /* allow struct matching for desktop GL - older UE4 does this */
       if (match != NULL && state->is_version(130, 0) && match->record_compare(type, true, false))
@@ -8345,7 +8407,7 @@ ast_interface_block::hir(exec_list *instructions,
    validate_xfb_offset_qualifier(&loc, state, xfb_offset, block_type,
                                  component_size);
 
-   if (!state->symbols->add_interface(block_type->name, block_type, var_mode)) {
+   if (!state->symbols->add_interface(glsl_get_type_name(block_type), block_type, var_mode)) {
       YYLTYPE loc = this->get_location();
       _mesa_glsl_error(&loc, state, "interface block `%s' with type `%s' "
                        "already taken in the current scope",
@@ -8814,7 +8876,8 @@ ast_gs_input_layout::hir(exec_list *instructions,
     * array size, make sure the size they specified is consistent with the
     * primitive type.
     */
-   unsigned num_vertices = vertices_per_prim(this->prim_type);
+   unsigned num_vertices =
+      mesa_vertices_per_prim(gl_to_mesa_prim(this->prim_type));
    if (state->gs_input_size != 0 && state->gs_input_size != num_vertices) {
       _mesa_glsl_error(&loc, state,
                        "this geometry shader input layout implies %u vertices"
@@ -8944,7 +9007,7 @@ ast_cs_input_layout::hir(exec_list *instructions,
     * declare it earlier).
     */
    ir_variable *var = new(state->symbols)
-      ir_variable(glsl_type::uvec3_type, "gl_WorkGroupSize", ir_var_auto);
+      ir_variable(&glsl_type_builtin_uvec3, "gl_WorkGroupSize", ir_var_auto);
    var->data.how_declared = ir_var_declared_implicitly;
    var->data.read_only = true;
    instructions->push_tail(var);
@@ -8953,9 +9016,9 @@ ast_cs_input_layout::hir(exec_list *instructions,
    memset(&data, 0, sizeof(data));
    for (int i = 0; i < 3; i++)
       data.u[i] = qual_local_size[i];
-   var->constant_value = new(var) ir_constant(glsl_type::uvec3_type, &data);
+   var->constant_value = new(var) ir_constant(&glsl_type_builtin_uvec3, &data);
    var->constant_initializer =
-      new(var) ir_constant(glsl_type::uvec3_type, &data);
+      new(var) ir_constant(&glsl_type_builtin_uvec3, &data);
    var->data.has_initializer = true;
    var->data.is_implicit_initializer = false;
 

@@ -27,6 +27,8 @@
 
 #include "brw_ir_fs.h"
 #include "brw_shader.h"
+#include "brw_eu.h"
+#include "brw_fs.h"
 
 namespace brw {
    /**
@@ -52,7 +54,7 @@ namespace brw {
        * Construct an fs_builder that inserts instructions into \p shader.
        * \p dispatch_width gives the native execution width of the program.
        */
-      fs_builder(backend_shader *shader,
+      fs_builder(fs_visitor *shader,
                  unsigned dispatch_width) :
          shader(shader), block(NULL), cursor(NULL),
          _dispatch_width(dispatch_width),
@@ -62,13 +64,15 @@ namespace brw {
       {
       }
 
+      explicit fs_builder(fs_visitor *s) : fs_builder(s, s->dispatch_width) {}
+
       /**
        * Construct an fs_builder that inserts instructions into \p shader
        * before instruction \p inst in basic block \p block.  The default
        * execution controls and debug annotation are initialized from the
        * instruction passed as argument.
        */
-      fs_builder(backend_shader *shader, bblock_t *block, fs_inst *inst) :
+      fs_builder(fs_visitor *shader, bblock_t *block, fs_inst *inst) :
          shader(shader), block(block), cursor(inst),
          _dispatch_width(inst->exec_size),
          _group(inst->group),
@@ -198,12 +202,13 @@ namespace brw {
       dst_reg
       vgrf(enum brw_reg_type type, unsigned n = 1) const
       {
+         const unsigned unit = reg_unit(shader->devinfo);
          assert(dispatch_width() <= 32);
 
          if (n > 0)
             return dst_reg(VGRF, shader->alloc.allocate(
                               DIV_ROUND_UP(n * type_sz(type) * dispatch_width(),
-                                           REG_SIZE)),
+                                           unit * REG_SIZE) * unit),
                            type);
          else
             return retype(null_reg_ud(), type);
@@ -627,8 +632,6 @@ namespace brw {
       ALU2(DP3)
       ALU2(DP4)
       ALU2(DPH)
-      ALU1(F16TO32)
-      ALU1(F32TO16)
       ALU1(FBH)
       ALU1(FBL)
       ALU1(FRC)
@@ -661,6 +664,36 @@ namespace brw {
 #undef ALU2_ACC
 #undef ALU2
 #undef ALU1
+
+      instruction *
+      F32TO16(const dst_reg &dst, const src_reg &src) const
+      {
+         assert(dst.type == BRW_REGISTER_TYPE_HF);
+         assert(src.type == BRW_REGISTER_TYPE_F);
+
+         if (shader->devinfo->ver >= 8) {
+            return MOV(dst, src);
+         } else {
+            assert(shader->devinfo->ver == 7);
+            return emit(BRW_OPCODE_F32TO16,
+                        retype(dst, BRW_REGISTER_TYPE_W), src);
+         }
+      }
+
+      instruction *
+      F16TO32(const dst_reg &dst, const src_reg &src) const
+      {
+         assert(dst.type == BRW_REGISTER_TYPE_F);
+         assert(src.type == BRW_REGISTER_TYPE_HF);
+
+         if (shader->devinfo->ver >= 8) {
+            return MOV(dst, src);
+         } else {
+            assert(shader->devinfo->ver == 7);
+            return emit(BRW_OPCODE_F16TO32,
+                        dst, retype(src, BRW_REGISTER_TYPE_W));
+         }
+      }
       /** @} */
 
       /**
@@ -801,7 +834,14 @@ namespace brw {
          return inst;
       }
 
-      backend_shader *shader;
+      fs_visitor *shader;
+
+      fs_inst *BREAK()    { return emit(BRW_OPCODE_BREAK); }
+      fs_inst *DO()       { return emit(BRW_OPCODE_DO); }
+      fs_inst *ENDIF()    { return emit(BRW_OPCODE_ENDIF); }
+      fs_inst *NOP()      { return emit(BRW_OPCODE_NOP); }
+      fs_inst *WHILE()    { return emit(BRW_OPCODE_WHILE); }
+      fs_inst *CONTINUE() { return emit(BRW_OPCODE_CONTINUE); }
 
    private:
       /**
@@ -893,6 +933,12 @@ namespace brw {
          const void *ir;
       } annotation;
    };
+}
+
+static inline fs_reg
+offset(const fs_reg &reg, const brw::fs_builder &bld, unsigned delta)
+{
+   return offset(reg, bld.dispatch_width(), delta);
 }
 
 #endif

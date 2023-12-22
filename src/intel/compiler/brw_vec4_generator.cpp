@@ -1513,7 +1513,7 @@ generate_zero_oob_push_regs(struct brw_codegen *p,
 static void
 generate_code(struct brw_codegen *p,
               const struct brw_compiler *compiler,
-              void *log_data,
+              const struct brw_compile_params *params,
               const nir_shader *nir,
               struct brw_vue_prog_data *prog_data,
               const struct cfg_t *cfg,
@@ -2179,6 +2179,18 @@ generate_code(struct brw_codegen *p,
          brw_DIM(p, dst, retype(src[0], BRW_REGISTER_TYPE_F));
          break;
 
+      case SHADER_OPCODE_RND_MODE: {
+         assert(src[0].file == BRW_IMMEDIATE_VALUE);
+         /*
+          * Changes the floating point rounding mode updating the control
+          * register field defined at cr0.0[5-6] bits.
+          */
+         enum brw_rnd_mode mode =
+            (enum brw_rnd_mode) (src[0].d << BRW_CR0_RND_MODE_SHIFT);
+         brw_float_controls_mode(p, mode, BRW_CR0_RND_MODE_MASK);
+      }
+         break;
+
       default:
          unreachable("Unsupported opcode");
       }
@@ -2226,10 +2238,10 @@ generate_code(struct brw_codegen *p,
       _mesa_sha1_compute(p->store, p->next_insn_offset, sha1);
       _mesa_sha1_format(sha1buf, sha1);
 
-      fprintf(stderr, "Native code for %s %s shader %s (sha1 %s):\n",
+      fprintf(stderr, "Native code for %s %s shader %s (src_hash 0x%08x) (sha1 %s):\n",
             nir->info.label ? nir->info.label : "unnamed",
             _mesa_shader_stage_to_string(nir->info.stage), nir->info.name,
-            sha1buf);
+            params->source_hash, sha1buf);
 
       fprintf(stderr, "%s vec4 shader: %d instructions. %d loops. %u cycles. %d:%d "
                      "spills:fills, %u sends. Compacted %d to %d bytes (%.0f%%)\n",
@@ -2248,7 +2260,7 @@ generate_code(struct brw_codegen *p,
    ralloc_free(disasm_info);
    assert(validated);
 
-   brw_shader_debug_log(compiler, log_data,
+   brw_shader_debug_log(compiler, params->log_data,
                         "%s vec4 shader: %d inst, %d loops, %u cycles, "
                         "%d:%d spills:fills, %u sends, "
                         "compacted %d to %d bytes.\n",
@@ -2257,6 +2269,7 @@ generate_code(struct brw_codegen *p,
                         fill_count, send_count, before_size, after_size);
    if (stats) {
       stats->dispatch_width = 0;
+      stats->max_dispatch_width = 0;
       stats->instructions = before_size / 16;
       stats->sends = send_count;
       stats->loops = loop_count;
@@ -2268,21 +2281,20 @@ generate_code(struct brw_codegen *p,
 
 extern "C" const unsigned *
 brw_vec4_generate_assembly(const struct brw_compiler *compiler,
-                           void *log_data,
-                           void *mem_ctx,
+                           const struct brw_compile_params *params,
                            const nir_shader *nir,
                            struct brw_vue_prog_data *prog_data,
                            const struct cfg_t *cfg,
                            const performance &perf,
-                           struct brw_compile_stats *stats,
                            bool debug_enabled)
 {
-   struct brw_codegen *p = rzalloc(mem_ctx, struct brw_codegen);
-   brw_init_codegen(&compiler->isa, p, mem_ctx);
+   struct brw_codegen *p = rzalloc(params->mem_ctx, struct brw_codegen);
+   brw_init_codegen(&compiler->isa, p, params->mem_ctx);
    brw_set_default_access_mode(p, BRW_ALIGN_16);
 
-   generate_code(p, compiler, log_data, nir, prog_data, cfg, perf, stats,
-                 debug_enabled);
+   generate_code(p, compiler, params,
+                 nir, prog_data, cfg, perf,
+                 params->stats, debug_enabled);
 
    assert(prog_data->base.const_data_size == 0);
    if (nir->constant_data_size > 0) {

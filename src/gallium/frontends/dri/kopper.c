@@ -31,7 +31,6 @@
 #include "pipe/p_context.h"
 #include "pipe-loader/pipe_loader.h"
 #include "state_tracker/st_context.h"
-#include "os/os_process.h"
 #include "zink/zink_public.h"
 #include "zink/zink_kopper.h"
 #include "driver_trace/tr_screen.h"
@@ -59,7 +58,7 @@ extern const __DRIimageExtension driVkImageExtensionSw;
 
 static struct dri_drawable *
 kopper_create_drawable(struct dri_screen *screen, const struct gl_config *visual,
-                       boolean isPixmap, void *loaderPrivate);
+                       bool isPixmap, void *loaderPrivate);
 
 static inline void
 kopper_invalidate_drawable(__DRIdrawable *dPriv)
@@ -127,20 +126,20 @@ kopper_init_screen(struct dri_screen *screen)
 
    bool success;
    if (screen->fd != -1)
-      success = pipe_loader_drm_probe_fd(&screen->dev, screen->fd);
+      success = pipe_loader_drm_probe_fd(&screen->dev, screen->fd, false);
    else
       success = pipe_loader_vk_probe_dri(&screen->dev, NULL);
-   if (success) {
+
+   if (success)
       pscreen = pipe_loader_create_screen(screen->dev);
-      dri_init_options(screen);
-   }
 
    if (!pscreen)
       goto fail;
 
+   dri_init_options(screen);
    screen->unwrapped_screen = trace_screen_unwrap(pscreen);
 
-   configs = dri_init_screen_helper(screen, pscreen);
+   configs = dri_init_screen(screen, pscreen);
    if (!configs)
       goto fail;
 
@@ -168,10 +167,7 @@ kopper_init_screen(struct dri_screen *screen)
 
    return configs;
 fail:
-   dri_destroy_screen_helper(screen);
-   if (screen->dev)
-      pipe_loader_release(&screen->dev, 1);
-   FREE(screen);
+   dri_release_screen(screen);
    return NULL;
 }
 
@@ -195,11 +191,20 @@ get_dri_format(enum pipe_format pf)
    case PIPE_FORMAT_R16G16B16X16_FLOAT:
       image_format = __DRI_IMAGE_FORMAT_XBGR16161616F;
       break;
+   case PIPE_FORMAT_B5G6R5_UNORM:
+      image_format = __DRI_IMAGE_FORMAT_RGB565;
+      break;
    case PIPE_FORMAT_B5G5R5A1_UNORM:
       image_format = __DRI_IMAGE_FORMAT_ARGB1555;
       break;
-   case PIPE_FORMAT_B5G6R5_UNORM:
-      image_format = __DRI_IMAGE_FORMAT_RGB565;
+   case PIPE_FORMAT_R5G5B5A1_UNORM:
+      image_format = __DRI_IMAGE_FORMAT_ABGR1555;
+      break;
+   case PIPE_FORMAT_B4G4R4A4_UNORM:
+      image_format = __DRI_IMAGE_FORMAT_ARGB4444;
+      break;
+   case PIPE_FORMAT_R4G4B4A4_UNORM:
+      image_format = __DRI_IMAGE_FORMAT_ABGR4444;
       break;
    case PIPE_FORMAT_BGRX8888_UNORM:
       image_format = __DRI_IMAGE_FORMAT_XRGB8888;
@@ -257,6 +262,10 @@ image_format_to_fourcc(int format)
    case __DRI_IMAGE_FORMAT_ABGR2101010: return DRM_FORMAT_ABGR2101010;
    case __DRI_IMAGE_FORMAT_XBGR16161616F: return DRM_FORMAT_XBGR16161616F;
    case __DRI_IMAGE_FORMAT_ABGR16161616F: return DRM_FORMAT_ABGR16161616F;
+   case __DRI_IMAGE_FORMAT_ARGB1555: return DRM_FORMAT_ARGB1555;
+   case __DRI_IMAGE_FORMAT_ABGR1555: return DRM_FORMAT_ABGR1555;
+   case __DRI_IMAGE_FORMAT_ARGB4444: return DRM_FORMAT_ARGB4444;
+   case __DRI_IMAGE_FORMAT_ABGR4444: return DRM_FORMAT_ABGR4444;
    }
    return 0;
 }
@@ -399,7 +408,7 @@ kopper_get_pixmap_buffer(struct dri_drawable *drawable,
    struct dri_screen *screen = drawable->screen;
 
 #ifdef HAVE_DRI3_MODIFIERS
-   if (screen->has_modifiers) {
+   if (drawable->has_modifiers) {
       xcb_dri3_buffers_from_pixmap_cookie_t bps_cookie;
       xcb_dri3_buffers_from_pixmap_reply_t *bps_reply;
       xcb_generic_error_t *error;
@@ -414,6 +423,8 @@ kopper_get_pixmap_buffer(struct dri_drawable *drawable,
          dri3_create_image_from_buffers(conn, bps_reply, format,
                                         screen, &driVkImageExtension,
                                         drawable);
+      if (!drawable->image)
+         return NULL;
       width = bps_reply->width;
       height = bps_reply->height;
       free(bps_reply);
@@ -434,6 +445,8 @@ kopper_get_pixmap_buffer(struct dri_drawable *drawable,
       drawable->image = dri3_create_image(conn, bp_reply, format,
                                        screen, &driVkImageExtension,
                                        drawable);
+      if (!drawable->image)
+         return NULL;
       width = bp_reply->width;
       height = bp_reply->height;
       free(bp_reply);
@@ -455,7 +468,7 @@ kopper_allocate_textures(struct dri_context *ctx,
    struct dri_screen *screen = drawable->screen;
    struct pipe_resource templ;
    unsigned width, height;
-   boolean resized;
+   bool resized;
    unsigned i;
    struct __DRIimageList images;
    const __DRIimageLoaderExtension *image = screen->image.loader;
@@ -472,8 +485,7 @@ kopper_allocate_textures(struct dri_context *ctx,
    /* Wait for glthread to finish because we can't use pipe_context from
     * multiple threads.
     */
-   if (ctx->st->thread_finish)
-      ctx->st->thread_finish(ctx->st);
+   _mesa_glthread_finish(ctx->st->ctx);
 
    /* First get the buffers from the loader */
    if (image) {
@@ -555,8 +567,7 @@ XXX do this once swapinterval is hooked up
    /* pixmaps always have front buffers.
     * Exchange swaps also mandate fake front buffers.
     */
-   if (draw->type != LOADER_DRI3_DRAWABLE_WINDOW ||
-       draw->swap_method == __DRI_ATTRIB_SWAP_EXCHANGE)
+   if (draw->type != LOADER_DRI3_DRAWABLE_WINDOW)
       buffer_mask |= __DRI_IMAGE_BUFFER_FRONT;
 #endif
 
@@ -570,6 +581,7 @@ XXX do this once swapinterval is hooked up
       unsigned bind;
 
       dri_drawable_get_format(drawable, statts[i], &format, &bind);
+      templ.format = format;
 
       /* the texture already exists or not requested */
       if (!drawable->textures[statts[i]]) {
@@ -581,7 +593,6 @@ XXX do this once swapinterval is hooked up
          if (format == PIPE_FORMAT_NONE)
             continue;
 
-         templ.format = format;
          templ.bind = bind;
          templ.nr_samples = 0;
          templ.nr_storage_samples = 0;
@@ -599,16 +610,16 @@ XXX do this once swapinterval is hooked up
 #ifdef VK_USE_PLATFORM_XCB_KHR
          else if (is_pixmap && statts[i] == ST_ATTACHMENT_FRONT_LEFT && !screen->is_sw) {
             drawable->textures[statts[i]] = kopper_get_pixmap_buffer(drawable, format);
-            handle_in_fence(ctx, drawable->image);
+            if (drawable->textures[statts[i]])
+               handle_in_fence(ctx, drawable->image);
          }
 #endif
-         else {
+         if (!drawable->textures[statts[i]])
             drawable->textures[statts[i]] =
                screen->base.screen->resource_create(screen->base.screen, &templ);
-         }
       }
       if (drawable->stvis.samples > 1 && !drawable->msaa_textures[statts[i]]) {
-         templ.bind = templ.bind &
+         templ.bind = bind &
             ~(PIPE_BIND_SCANOUT | PIPE_BIND_SHARED | PIPE_BIND_DISPLAY_TARGET);
          templ.nr_samples = drawable->stvis.samples;
          templ.nr_storage_samples = drawable->stvis.samples;
@@ -683,8 +694,7 @@ kopper_flush_frontbuffer(struct dri_context *ctx,
    /* Wait for glthread to finish because we can't use pipe_context from
     * multiple threads.
     */
-   if (ctx->st->thread_finish)
-      ctx->st->thread_finish(ctx->st);
+   _mesa_glthread_finish(ctx->st->ctx);
 
    if (drawable) {
       /* prevent recursion */
@@ -705,19 +715,18 @@ kopper_flush_frontbuffer(struct dri_context *ctx,
    if (ptex) {
       ctx->st->pipe->flush_resource(ctx->st->pipe, drawable->textures[ST_ATTACHMENT_FRONT_LEFT]);
       struct pipe_screen *screen = drawable->screen->base.screen;
-      struct st_context_iface *st;
+      struct st_context *st;
       struct pipe_fence_handle *new_fence = NULL;
-      st = ctx->st;
-      if (st->thread_finish)
-         st->thread_finish(st);
 
-      st->flush(st, ST_FLUSH_FRONT, &new_fence, NULL, NULL);
+      st = ctx->st;
+
+      st_context_flush(st, ST_FLUSH_FRONT, &new_fence, NULL, NULL);
       if (drawable) {
          drawable->flushing = false;
       }
       /* throttle on the previous fence */
       if (drawable->throttle_fence) {
-         screen->fence_finish(screen, NULL, drawable->throttle_fence, PIPE_TIMEOUT_INFINITE);
+         screen->fence_finish(screen, NULL, drawable->throttle_fence, OS_TIMEOUT_INFINITE);
          screen->fence_reference(screen, &drawable->throttle_fence, NULL);
       }
       drawable->throttle_fence = new_fence;
@@ -747,16 +756,16 @@ get_image_shm(struct dri_drawable *drawable, int x, int y, int width, int height
    whandle.type = WINSYS_HANDLE_TYPE_SHMID;
 
    if (loader->base.version < 4 || !loader->getImageShm)
-      return FALSE;
+      return false;
 
    if (!res->screen->resource_get_handle(res->screen, NULL, res, &whandle, PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE))
-      return FALSE;
+      return false;
 
    if (loader->base.version > 5 && loader->getImageShm2)
       return loader->getImageShm2(opaque_dri_drawable(drawable), x, y, width, height, whandle.handle, drawable->loaderPrivate);
 
    loader->getImageShm(opaque_dri_drawable(drawable), x, y, width, height, whandle.handle, drawable->loaderPrivate);
-   return TRUE;
+   return true;
 }
 
 static void
@@ -778,8 +787,7 @@ kopper_update_tex_buffer(struct dri_drawable *drawable,
    /* Wait for glthread to finish because we can't use pipe_context from
     * multiple threads.
     */
-   if (ctx->st->thread_finish)
-      ctx->st->thread_finish(ctx->st);
+   _mesa_glthread_finish(ctx->st->ctx);
 
    get_drawable_info(drawable, &x, &y, &w, &h);
 
@@ -816,7 +824,7 @@ kopper_swap_buffers(struct dri_drawable *drawable);
 
 static struct dri_drawable *
 kopper_create_drawable(struct dri_screen *screen, const struct gl_config *visual,
-                       boolean isPixmap, void *loaderPrivate)
+                       bool isPixmap, void *loaderPrivate)
 {
    /* always pass !pixmap because it isn't "handled" or relevant */
    struct dri_drawable *drawable = dri_create_drawable(screen, visual, false,
@@ -826,7 +834,6 @@ kopper_create_drawable(struct dri_screen *screen, const struct gl_config *visual
 
    // relocate references to the old struct
    drawable->base.visual = &drawable->stvis;
-   drawable->base.st_manager_private = (void *) drawable;
 
    // and fill in the vtable
    drawable->allocate_textures = kopper_allocate_textures;
@@ -846,7 +853,7 @@ kopper_create_drawable(struct dri_screen *screen, const struct gl_config *visual
 }
 
 static int64_t
-kopperSwapBuffers(__DRIdrawable *dPriv)
+kopperSwapBuffers(__DRIdrawable *dPriv, uint32_t flush_flags)
 {
    struct dri_drawable *drawable = dri_drawable(dPriv);
    struct dri_context *ctx = dri_get_current();
@@ -859,16 +866,19 @@ kopperSwapBuffers(__DRIdrawable *dPriv)
    if (!ptex)
       return 0;
 
+   /* ensure invalidation is applied before renderpass ends */
+   if (flush_flags & __DRI2_FLUSH_INVALIDATE_ANCILLARY)
+      _mesa_glthread_invalidate_zsbuf(ctx->st->ctx);
+
    /* Wait for glthread to finish because we can't use pipe_context from
     * multiple threads.
     */
-   if (ctx->st->thread_finish)
-      ctx->st->thread_finish(ctx->st);
+   _mesa_glthread_finish(ctx->st->ctx);
 
    drawable->texture_stamp = drawable->lastStamp - 1;
 
    dri_flush(opaque_dri_context(ctx), opaque_dri_drawable(drawable),
-             __DRI2_FLUSH_DRAWABLE | __DRI2_FLUSH_CONTEXT,
+             __DRI2_FLUSH_DRAWABLE | __DRI2_FLUSH_CONTEXT | flush_flags,
              __DRI2_THROTTLE_SWAPBUFFER);
 
    kopper_copy_to_front(ctx->st->pipe, drawable, ptex);
@@ -888,20 +898,22 @@ kopperSwapBuffers(__DRIdrawable *dPriv)
 static void
 kopper_swap_buffers(struct dri_drawable *drawable)
 {
-   kopperSwapBuffers(opaque_dri_drawable(drawable));
+   kopperSwapBuffers(opaque_dri_drawable(drawable), 0);
 }
 
 static __DRIdrawable *
 kopperCreateNewDrawable(__DRIscreen *psp,
                         const __DRIconfig *config,
                         void *data,
-                        int is_pixmap)
+                        __DRIkopperDrawableInfo *info)
 {
     assert(data != NULL);
 
     struct dri_screen *screen = dri_screen(psp);
     struct dri_drawable *drawable =
-       screen->create_drawable(screen, &config->modes, is_pixmap, data);
+       screen->create_drawable(screen, &config->modes, info->is_pixmap, data);
+   if (drawable)
+      drawable->has_modifiers = screen->has_modifiers && info->multiplanes_available;
 
     return opaque_dri_drawable(drawable);
 }
@@ -937,8 +949,7 @@ kopperQueryBufferAge(__DRIdrawable *dPriv)
    /* Wait for glthread to finish because we can't use pipe_context from
     * multiple threads.
     */
-   if (ctx->st->thread_finish)
-      ctx->st->thread_finish(ctx->st);
+   _mesa_glthread_finish(ctx->st->ctx);
 
    return zink_kopper_query_buffer_age(ctx->st->pipe, ptex);
 }

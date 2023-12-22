@@ -43,7 +43,7 @@
 #include "dri_helpers.h"
 #include "dri_query_renderer.h"
 
-DEBUG_GET_ONCE_BOOL_OPTION(swrast_no_present, "SWRAST_NO_PRESENT", FALSE);
+DEBUG_GET_ONCE_BOOL_OPTION(swrast_no_present, "SWRAST_NO_PRESENT", false);
 
 static inline void
 get_drawable_info(struct dri_drawable *drawable, int *x, int *y, int *w, int *h)
@@ -128,16 +128,16 @@ get_image_shm(struct dri_drawable *drawable, int x, int y, int width, int height
    whandle.type = WINSYS_HANDLE_TYPE_SHMID;
 
    if (loader->base.version < 4 || !loader->getImageShm)
-      return FALSE;
+      return false;
 
    if (!res->screen->resource_get_handle(res->screen, NULL, res, &whandle, PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE))
-      return FALSE;
+      return false;
 
    if (loader->base.version > 5 && loader->getImageShm2)
       return loader->getImageShm2(opaque_dri_drawable(drawable), x, y, width, height, whandle.handle, drawable->loaderPrivate);
 
    loader->getImageShm(opaque_dri_drawable(drawable), x, y, width, height, whandle.handle, drawable->loaderPrivate);
-   return TRUE;
+   return true;
 }
 
 static void
@@ -215,7 +215,7 @@ drisw_copy_to_front(struct pipe_context *pipe,
 }
 
 /*
- * Backend functions for st_framebuffer interface and swap_buffers.
+ * Backend functions for pipe_frontend_drawable and swap_buffers.
  */
 
 static void
@@ -231,8 +231,7 @@ drisw_swap_buffers(struct dri_drawable *drawable)
    /* Wait for glthread to finish because we can't use pipe_context from
     * multiple threads.
     */
-   if (ctx->st->thread_finish)
-      ctx->st->thread_finish(ctx->st);
+   _mesa_glthread_finish(ctx->st->ctx);
 
    ptex = drawable->textures[ST_ATTACHMENT_BACK_LEFT];
 
@@ -244,7 +243,7 @@ drisw_swap_buffers(struct dri_drawable *drawable)
       if (ctx->hud)
          hud_run(ctx->hud, ctx->st->cso_context, ptex);
 
-      ctx->st->flush(ctx->st, ST_FLUSH_FRONT, &fence, NULL, NULL);
+      st_context_flush(ctx->st, ST_FLUSH_FRONT, &fence, NULL, NULL);
 
       if (drawable->stvis.samples > 1) {
          /* Resolve the back buffer. */
@@ -254,12 +253,12 @@ drisw_swap_buffers(struct dri_drawable *drawable)
       }
 
       screen->base.screen->fence_finish(screen->base.screen, ctx->st->pipe,
-                                        fence, PIPE_TIMEOUT_INFINITE);
+                                        fence, OS_TIMEOUT_INFINITE);
       screen->base.screen->fence_reference(screen->base.screen, &fence, NULL);
       drisw_copy_to_front(ctx->st->pipe, drawable, ptex);
 
       /* TODO: remove this if the framebuffer state doesn't change. */
-      ctx->st->invalidate_state(ctx->st, ST_INVALIDATE_FB_STATE);
+      st_context_invalidate_state(ctx->st, ST_INVALIDATE_FB_STATE);
    }
 }
 
@@ -280,17 +279,16 @@ drisw_copy_sub_buffer(struct dri_drawable *drawable, int x, int y,
       /* Wait for glthread to finish because we can't use pipe_context from
        * multiple threads.
        */
-      if (ctx->st->thread_finish)
-         ctx->st->thread_finish(ctx->st);
+      _mesa_glthread_finish(ctx->st->ctx);
 
       struct pipe_fence_handle *fence = NULL;
       if (ctx->pp && drawable->textures[ST_ATTACHMENT_DEPTH_STENCIL])
          pp_run(ctx->pp, ptex, ptex, drawable->textures[ST_ATTACHMENT_DEPTH_STENCIL]);
 
-      ctx->st->flush(ctx->st, ST_FLUSH_FRONT, &fence, NULL, NULL);
+      st_context_flush(ctx->st, ST_FLUSH_FRONT, &fence, NULL, NULL);
 
       screen->base.screen->fence_finish(screen->base.screen, ctx->st->pipe,
-                                        fence, PIPE_TIMEOUT_INFINITE);
+                                        fence, OS_TIMEOUT_INFINITE);
       screen->base.screen->fence_reference(screen->base.screen, &fence, NULL);
 
       if (drawable->stvis.samples > 1) {
@@ -318,8 +316,7 @@ drisw_flush_frontbuffer(struct dri_context *ctx,
    /* Wait for glthread to finish because we can't use pipe_context from
     * multiple threads.
     */
-   if (ctx->st->thread_finish)
-      ctx->st->thread_finish(ctx->st);
+   _mesa_glthread_finish(ctx->st->ctx);
 
    if (drawable->stvis.samples > 1) {
       /* Resolve the front buffer. */
@@ -353,14 +350,13 @@ drisw_allocate_textures(struct dri_context *stctx,
    const __DRIswrastLoaderExtension *loader = drawable->screen->swrast_loader;
    struct pipe_resource templ;
    unsigned width, height;
-   boolean resized;
+   bool resized;
    unsigned i;
 
    /* Wait for glthread to finish because we can't use pipe_context from
     * multiple threads.
     */
-   if (stctx->st->thread_finish)
-      stctx->st->thread_finish(stctx->st);
+   _mesa_glthread_finish(stctx->st->ctx);
 
    width  = drawable->w;
    height = drawable->h;
@@ -449,8 +445,7 @@ drisw_update_tex_buffer(struct dri_drawable *drawable,
    /* Wait for glthread to finish because we can't use pipe_context from
     * multiple threads.
     */
-   if (ctx->st->thread_finish)
-      ctx->st->thread_finish(ctx->st);
+   _mesa_glthread_finish(ctx->st->ctx);
 
    get_drawable_info(drawable, &x, &y, &w, &h);
 
@@ -527,7 +522,7 @@ static const struct drisw_loader_funcs drisw_shm_lf = {
 
 static struct dri_drawable *
 drisw_create_drawable(struct dri_screen *screen, const struct gl_config * visual,
-                      boolean isPixmap, void *loaderPrivate)
+                      bool isPixmap, void *loaderPrivate)
 {
    struct dri_drawable *drawable = dri_create_drawable(screen, visual, isPixmap,
                                                        loaderPrivate);
@@ -565,15 +560,15 @@ drisw_init_screen(struct dri_screen *screen)
 #endif
    if (!success)
       success = pipe_loader_sw_probe_dri(&screen->dev, lf);
-   if (success) {
+
+   if (success)
       pscreen = pipe_loader_create_screen(screen->dev);
-      dri_init_options(screen);
-   }
 
    if (!pscreen)
       goto fail;
 
-   configs = dri_init_screen_helper(screen, pscreen);
+   dri_init_options(screen);
+   configs = dri_init_screen(screen, pscreen);
    if (!configs)
       goto fail;
 
@@ -598,10 +593,7 @@ drisw_init_screen(struct dri_screen *screen)
 
    return configs;
 fail:
-   dri_destroy_screen_helper(screen);
-   if (screen->dev)
-      pipe_loader_release(&screen->dev, 1);
-   FREE(screen);
+   dri_release_screen(screen);
    return NULL;
 }
 

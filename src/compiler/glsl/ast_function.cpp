@@ -25,6 +25,7 @@
 #include "ast.h"
 #include "compiler/glsl_types.h"
 #include "ir.h"
+#include "linker_util.h"
 #include "main/shader_types.h"
 #include "main/consts_exts.h"
 #include "main/shaderobj.h"
@@ -91,13 +92,13 @@ prototype_string(const glsl_type *return_type, const char *name,
    char *str = NULL;
 
    if (return_type != NULL)
-      str = ralloc_asprintf(NULL, "%s ", return_type->name);
+      str = ralloc_asprintf(NULL, "%s ", glsl_get_type_name(return_type));
 
    ralloc_asprintf_append(&str, "%s(", name);
 
    const char *comma = "";
    foreach_in_list(const ir_variable, param, parameters) {
-      ralloc_asprintf_append(&str, "%s%s", comma, param->type->name);
+      ralloc_asprintf_append(&str, "%s%s", comma, glsl_get_type_name(param->type));
       comma = ", ";
    }
 
@@ -651,6 +652,7 @@ generate_call(exec_list *instructions, ir_function_signature *sig,
       ir_variable *var;
 
       var = new(ctx) ir_variable(sig->return_type, name, ir_var_temporary);
+      var->data.precision = sig->return_precision;
       instructions->push_tail(var);
 
       ralloc_free(name);
@@ -740,7 +742,7 @@ match_subroutine_by_name(const char *name,
 
    for (int i = 0; i < state->num_subroutine_types; i++) {
       f = state->subroutine_types[i];
-      if (strcmp(f->name, var->type->without_array()->name))
+      if (strcmp(f->name, glsl_get_type_name(var->type->without_array())))
          continue;
       found = f;
       break;
@@ -1111,7 +1113,7 @@ implicitly_convert_component(ir_rvalue * &from, const glsl_base_type to,
                                  from->type->vector_elements,
                                  from->type->matrix_columns);
 
-      if (from->type->can_implicitly_convert_to(desired_type, state)) {
+      if (_mesa_glsl_can_implicitly_convert(from->type, desired_type, state)) {
          /* Even though convert_component() implements the constructor
           * conversion rules (not the implicit conversion rules), its safe
           * to use it here because we already checked that the implicit
@@ -1231,15 +1233,15 @@ process_vec_mat_constructor(exec_list *instructions,
          if (ir->type != constructor_type->column_type()) {
             _mesa_glsl_error(loc, state, "type error in matrix constructor: "
                              "expected: %s, found %s",
-                             constructor_type->column_type()->name,
-                             ir->type->name);
+                             glsl_get_type_name(constructor_type->column_type()),
+                             glsl_get_type_name(ir->type));
             return ir_rvalue::error_value(ctx);
          }
       } else if (ir->type != constructor_type->get_scalar_type()) {
          _mesa_glsl_error(loc, state, "type error in vector constructor: "
                           "expected: %s, found %s",
-                          constructor_type->get_scalar_type()->name,
-                          ir->type->name);
+                          glsl_get_type_name(constructor_type->get_scalar_type()),
+                          glsl_get_type_name(ir->type));
          return ir_rvalue::error_value(ctx);
       }
    }
@@ -1359,15 +1361,15 @@ process_array_constructor(exec_list *instructions,
          } else if (element_type != ir->type) {
             _mesa_glsl_error(loc, state, "type error in array constructor: "
                              "expected: %s, found %s",
-                             element_type->name,
-                             ir->type->name);
+                             glsl_get_type_name(element_type),
+                             glsl_get_type_name(ir->type));
             return ir_rvalue::error_value(ctx);
          }
       } else if (ir->type != constructor_type->fields.array) {
          _mesa_glsl_error(loc, state, "type error in array constructor: "
                           "expected: %s, found %s",
-                          constructor_type->fields.array->name,
-                          ir->type->name);
+                          glsl_get_type_name(constructor_type->fields.array),
+                          glsl_get_type_name(ir->type));
          return ir_rvalue::error_value(ctx);
       } else {
          element_type = ir->type;
@@ -1455,15 +1457,7 @@ emit_inline_vector_constructor(const glsl_type *type,
    const unsigned lhs_components = type->components();
    if (single_scalar_parameter(parameters)) {
       ir_rvalue *first_param = (ir_rvalue *)parameters->get_head_raw();
-      ir_rvalue *rhs = new(ctx) ir_swizzle(first_param, 0, 0, 0, 0,
-                                           lhs_components);
-      ir_dereference_variable *lhs = new(ctx) ir_dereference_variable(var);
-      const unsigned mask = (1U << lhs_components) - 1;
-
-      assert(rhs->type == lhs->type);
-
-      ir_instruction *inst = new(ctx) ir_assignment(lhs, rhs, mask);
-      instructions->push_tail(inst);
+      return new(ctx) ir_swizzle(first_param, 0, 0, 0, 0, lhs_components);
    } else {
       unsigned base_component = 0;
       unsigned base_lhs_component = 0;
@@ -1969,7 +1963,7 @@ process_record_constructor(exec_list *instructions,
                        "%s parameters in constructor for `%s'",
                        parameter_count > constructor_type->length
                        ? "too many": "insufficient",
-                       constructor_type->name);
+                       glsl_get_type_name(constructor_type));
       return ir_rvalue::error_value(ctx);
    }
 
@@ -1996,10 +1990,10 @@ process_record_constructor(exec_list *instructions,
          _mesa_glsl_error(loc, state,
                           "parameter type mismatch in constructor for `%s.%s' "
                           "(%s vs %s)",
-                          constructor_type->name,
+                          glsl_get_type_name(constructor_type),
                           struct_field->name,
-                          ir->type->name,
-                          struct_field->type->name);
+                          glsl_get_type_name(ir->type),
+                          glsl_get_type_name(struct_field->type));
          return ir_rvalue::error_value(ctx);
       }
 
@@ -2147,14 +2141,14 @@ ast_function_expression::hir(exec_list *instructions,
           (!state->has_bindless() && constructor_type->contains_opaque())) {
          _mesa_glsl_error(& loc, state, "cannot construct %s type `%s'",
                           state->has_bindless() ? "atomic" : "opaque",
-                          constructor_type->name);
+                          glsl_get_type_name(constructor_type));
          return ir_rvalue::error_value(ctx);
       }
 
       if (constructor_type->is_subroutine()) {
          _mesa_glsl_error(& loc, state,
                           "subroutine name cannot be a constructor `%s'",
-                          constructor_type->name);
+                          glsl_get_type_name(constructor_type));
          return ir_rvalue::error_value(ctx);
       }
 
@@ -2215,14 +2209,14 @@ ast_function_expression::hir(exec_list *instructions,
          if (components_used >= type_components) {
             _mesa_glsl_error(& loc, state, "too many parameters to `%s' "
                              "constructor",
-                             constructor_type->name);
+                             glsl_get_type_name(constructor_type));
             return ir_rvalue::error_value(ctx);
          }
 
          if (!is_valid_constructor(result->type, state)) {
             _mesa_glsl_error(& loc, state, "cannot construct `%s' from a "
                              "non-numeric data type",
-                             constructor_type->name);
+                             glsl_get_type_name(constructor_type));
             return ir_rvalue::error_value(ctx);
          }
 
@@ -2247,7 +2241,7 @@ ast_function_expression::hir(exec_list *instructions,
           && constructor_type->is_matrix()
           && !state->check_version(120, 100, &loc,
                                    "cannot construct `%s' from a matrix",
-                                   constructor_type->name)) {
+                                   glsl_get_type_name(constructor_type))) {
          return ir_rvalue::error_value(ctx);
       }
 
@@ -2261,7 +2255,7 @@ ast_function_expression::hir(exec_list *instructions,
           && constructor_type->is_matrix()) {
          _mesa_glsl_error(& loc, state, "for matrix `%s' constructor, "
                           "matrix must be only parameter",
-                          constructor_type->name);
+                          glsl_get_type_name(constructor_type));
          return ir_rvalue::error_value(ctx);
       }
 
@@ -2275,7 +2269,7 @@ ast_function_expression::hir(exec_list *instructions,
           && matrix_parameters == 0) {
          _mesa_glsl_error(& loc, state, "too few components to construct "
                           "`%s'",
-                          constructor_type->name);
+                          glsl_get_type_name(constructor_type));
          return ir_rvalue::error_value(ctx);
       }
 
@@ -2332,18 +2326,18 @@ ast_function_expression::hir(exec_list *instructions,
             /* Convert a sampler/image type to a pair of 32-bit unsigned
              * integers as defined by ARB_bindless_texture.
              */
-            if (constructor_type != glsl_type::uvec2_type) {
+            if (constructor_type != &glsl_type_builtin_uvec2) {
                _mesa_glsl_error(&loc, state, "sampler and image types can only "
                                 "be converted to a pair of 32-bit unsigned "
                                 "integers");
             }
-            desired_type = glsl_type::uvec2_type;
+            desired_type = &glsl_type_builtin_uvec2;
          } else if (constructor_type->is_sampler() ||
                     constructor_type->is_image()) {
             /* Convert a pair of 32-bit unsigned integers to a sampler or image
              * type as defined by ARB_bindless_texture.
              */
-            if (ir->type != glsl_type::uvec2_type) {
+            if (ir->type != &glsl_type_builtin_uvec2) {
                _mesa_glsl_error(&loc, state, "sampler and image types can only "
                                 "be converted from a pair of 32-bit unsigned "
                                 "integers");
@@ -2448,7 +2442,7 @@ ast_function_expression::hir(exec_list *instructions,
          ir_variable *mvp =
             state->symbols->get_variable("gl_ModelViewProjectionMatrix");
          ir_variable *vtx = state->symbols->get_variable("gl_Vertex");
-         value = new(ctx) ir_expression(ir_binop_mul, glsl_type::vec4_type,
+         value = new(ctx) ir_expression(ir_binop_mul, &glsl_type_builtin_vec4,
                                         new(ctx) ir_dereference_variable(mvp),
                                         new(ctx) ir_dereference_variable(vtx));
       } else {
@@ -2502,7 +2496,7 @@ ast_function_expression::hir(exec_list *instructions,
          value = generate_call(instructions, sig, &actual_parameters, sub_var,
                                array_idx, state);
          if (!value) {
-            ir_variable *const tmp = new(ctx) ir_variable(glsl_type::void_type,
+            ir_variable *const tmp = new(ctx) ir_variable(&glsl_type_builtin_void,
                                                           "void_var",
                                                           ir_var_temporary);
             instructions->push_tail(tmp);

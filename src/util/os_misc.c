@@ -26,9 +26,12 @@
  **************************************************************************/
 
 
+#include "hash_table.h"
+#include "macros.h"
 #include "os_misc.h"
 #include "os_file.h"
-#include "macros.h"
+#include "ralloc.h"
+#include "simple_mtx.h"
 
 #include <stdarg.h>
 
@@ -103,6 +106,7 @@ os_log_message(const char *message)
 
 #if DETECT_OS_WINDOWS
    OutputDebugStringA(message);
+#if !defined(_GAMING_XBOX)
    if(GetConsoleWindow() && !IsDebuggerPresent()) {
       fflush(stdout);
       fputs(message, fout);
@@ -112,6 +116,7 @@ os_log_message(const char *message)
       fputs(message, fout);
       fflush(fout);
    }
+#endif
 #else /* !DETECT_OS_WINDOWS */
    fflush(stdout);
    fputs(message, fout);
@@ -129,6 +134,61 @@ os_get_option(const char *name)
    return opt;
 }
 
+#endif
+
+static struct hash_table *options_tbl;
+static bool options_tbl_exited = false;
+static simple_mtx_t options_tbl_mtx = SIMPLE_MTX_INITIALIZER;
+
+/**
+ * NOTE: The strings that allocated with ralloc_strdup(options_tbl, ...)
+ * are freed by _mesa_hash_table_destroy automatically
+ */
+static void
+options_tbl_fini(void)
+{
+   simple_mtx_lock(&options_tbl_mtx);
+   _mesa_hash_table_destroy(options_tbl, NULL);
+   options_tbl = NULL;
+   options_tbl_exited = true;
+   simple_mtx_unlock(&options_tbl_mtx);
+}
+
+const char *
+os_get_option_cached(const char *name)
+{
+   const char *opt = NULL;
+   simple_mtx_lock(&options_tbl_mtx);
+   if (options_tbl_exited) {
+      opt = os_get_option(name);
+      goto exit_mutex;
+   }
+
+   if (!options_tbl) {
+      options_tbl = _mesa_hash_table_create(NULL, _mesa_hash_string,
+            _mesa_key_string_equal);
+      if (options_tbl == NULL) {
+         goto exit_mutex;
+      }
+      atexit(options_tbl_fini);
+   }
+   struct hash_entry *entry = _mesa_hash_table_search(options_tbl, name);
+   if (entry) {
+      opt = entry->data;
+      goto exit_mutex;
+   }
+
+   char *name_dup = ralloc_strdup(options_tbl, name);
+   if (name_dup == NULL) {
+      goto exit_mutex;
+   }
+   opt = ralloc_strdup(options_tbl, os_get_option(name));
+   _mesa_hash_table_insert(options_tbl, name_dup, (void *)opt);
+exit_mutex:
+   simple_mtx_unlock(&options_tbl_mtx);
+   return opt;
+}
+
 /**
  * Return the size of the total physical memory.
  * \param size returns the size of the total physical memory
@@ -137,7 +197,7 @@ os_get_option(const char *name)
 bool
 os_get_total_physical_memory(uint64_t *size)
 {
-#if DETECT_OS_LINUX || DETECT_OS_CYGWIN || DETECT_OS_SOLARIS || DETECT_OS_HURD
+#if DETECT_OS_LINUX || DETECT_OS_CYGWIN || DETECT_OS_SOLARIS || DETECT_OS_HURD || DETECT_OS_MANAGARM
    const long phys_pages = sysconf(_SC_PHYS_PAGES);
    const long page_size = sysconf(_SC_PAGE_SIZE);
 
@@ -181,7 +241,7 @@ os_get_total_physical_memory(uint64_t *size)
    status.dwLength = sizeof(status);
    ret = GlobalMemoryStatusEx(&status);
    *size = status.ullTotalPhys;
-   return (ret == TRUE);
+   return (ret == true);
 #else
 #error unexpected platform in os_misc.c
    return false;
@@ -238,7 +298,7 @@ os_get_available_system_memory(uint64_t *size)
    status.dwLength = sizeof(status);
    ret = GlobalMemoryStatusEx(&status);
    *size = status.ullAvailPhys;
-   return (ret == TRUE);
+   return (ret == true);
 #else
    return false;
 #endif

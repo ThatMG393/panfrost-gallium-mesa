@@ -30,9 +30,18 @@ gen_xml_files = [
   'gen11.xml',
   'gen12.xml',
   'gen125.xml',
+  'gen20.xml',
 ]
 
-gen_pack_header_deps = files('util.py')
+gen_xml_rt_files = [
+  'gen125_rt.xml',
+  'gen20_rt.xml',
+]
+
+gen_pack_header_deps = files('intel_genxml.py', 'util.py')
+foreach f : gen_xml_files + gen_xml_rt_files
+  gen_pack_header_deps += files(f)
+endforeach
 
 genX_xml_h = custom_target(
   'genX_xml.h',
@@ -70,6 +79,11 @@ genX_bits_included_symbols = [
   'RENDER_SURFACE_STATE::Green Clear Color',
   'RENDER_SURFACE_STATE::Blue Clear Color',
   'RENDER_SURFACE_STATE::Alpha Clear Color',
+  'RENDER_SURFACE_STATE::Width',
+  'RENDER_SURFACE_STATE::Height',
+  'RENDER_SURFACE_STATE::Depth',
+  'RENDER_SURFACE_STATE::Surface Type',
+  'RENDER_SURFACE_STATE::Render Target View Extent',
   'CLEAR_COLOR',
   'VERTEX_BUFFER_STATE::Buffer Starting Address',
   'CPS_STATE',
@@ -83,7 +97,7 @@ genX_bits_included_symbols = [
 
 genX_bits_h = custom_target(
   'genX_bits.h',
-  input : ['gen_bits_header.py', gen_xml_files, 'gen_rt.xml'],
+  input : ['gen_bits_header.py', gen_xml_files, gen_xml_rt_files],
   output : 'genX_bits.h',
   command : [prog_python, '@INPUT@', '-o', '@OUTPUT@',
              '--include-symbols', ','.join(genX_bits_included_symbols)],
@@ -91,7 +105,7 @@ genX_bits_h = custom_target(
 )
 
 gen_xml_pack = []
-foreach f : gen_xml_files + ['gen_rt.xml']
+foreach f : gen_xml_files + gen_xml_rt_files
   _name = '@0@_pack.h'.format(f.split('.')[0])
   gen_xml_pack += custom_target(
     _name,
@@ -107,7 +121,7 @@ gen_pack_header_py = files('gen_pack_header.py')
 
 idep_genxml = declare_dependency(sources : [gen_xml_pack, genX_bits_h, genX_xml_h])
 
-foreach f : gen_xml_files + ['gen_rt.xml']
+foreach f : gen_xml_files + gen_xml_rt_files
   test(
     'genxml sort @0@'.format(f),
     prog_python,

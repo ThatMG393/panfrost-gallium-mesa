@@ -18,22 +18,22 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-c_sse2_args = []
-c_sse2_arg = []
-if ['x86', 'x86_64'].contains(host_machine.cpu_family())
-  c_sse2_arg = ['-msse2']
-  c_sse2_args = [c_sse2_arg, '-mstackrealign']
-endif
 inc_intel = include_directories('.')
 
 subdir('genxml')
-subdir('blorp')
 subdir('dev')
+if with_intel_hasvk or with_intel_vk or with_gallium_crocus or with_gallium_iris
+  subdir('blorp')
+endif
 subdir('isl')
 subdir('common')
 subdir('compiler')
-subdir('perf')
-subdir('ds')
+if with_intel_hasvk or with_intel_vk or with_gallium_crocus or with_gallium_iris or with_intel_tools
+  subdir('perf')
+endif
+if with_intel_hasvk or with_intel_vk or with_gallium_iris
+  subdir('ds')
+endif
 if with_intel_tools
   subdir('tools')
 endif

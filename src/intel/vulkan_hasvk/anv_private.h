@@ -41,12 +41,12 @@
 #define VG(x) ((void)0)
 #endif
 
-#include "common/intel_clflush.h"
 #include "common/intel_decoder.h"
 #include "common/intel_engine.h"
 #include "common/intel_gem.h"
 #include "common/intel_l3_config.h"
 #include "common/intel_measure.h"
+#include "common/intel_mem.h"
 #include "common/intel_sample_positions.h"
 #include "dev/intel_device_info.h"
 #include "blorp/blorp.h"
@@ -59,6 +59,7 @@
 #include "util/hash_table.h"
 #include "util/list.h"
 #include "util/perf/u_trace.h"
+#include "util/set.h"
 #include "util/sparse_array.h"
 #include "util/u_atomic.h"
 #include "util/u_vector.h"
@@ -74,6 +75,7 @@
 #include "vk_device.h"
 #include "vk_drm_syncobj.h"
 #include "vk_enum_defines.h"
+#include "vk_format.h"
 #include "vk_framebuffer.h"
 #include "vk_graphics_state.h"
 #include "vk_image.h"
@@ -86,6 +88,7 @@
 #include "vk_util.h"
 #include "vk_queue.h"
 #include "vk_log.h"
+#include "vk_ycbcr_conversion.h"
 
 /* Pre-declarations needed for WSI entrypoints */
 struct wl_surface;
@@ -283,68 +286,12 @@ align_down_npot_u32(uint32_t v, uint32_t a)
    return v - (v % a);
 }
 
-static inline uint32_t
-align_down_u32(uint32_t v, uint32_t a)
-{
-   assert(a != 0 && a == (a & -a));
-   return v & ~(a - 1);
-}
-
-static inline uint32_t
-align_u32(uint32_t v, uint32_t a)
-{
-   assert(a != 0 && a == (a & -a));
-   return align_down_u32(v + a - 1, a);
-}
-
-static inline uint64_t
-align_down_u64(uint64_t v, uint64_t a)
-{
-   assert(a != 0 && a == (a & -a));
-   return v & ~(a - 1);
-}
-
-static inline uint64_t
-align_u64(uint64_t v, uint64_t a)
-{
-   return align_down_u64(v + a - 1, a);
-}
-
-static inline int32_t
-align_i32(int32_t v, int32_t a)
-{
-   assert(a != 0 && a == (a & -a));
-   return (v + a - 1) & ~(a - 1);
-}
-
 /** Alignment must be a power of 2. */
 static inline bool
 anv_is_aligned(uintmax_t n, uintmax_t a)
 {
    assert(a == (a & -a));
    return (n & (a - 1)) == 0;
-}
-
-static inline uint32_t
-anv_minify(uint32_t n, uint32_t levels)
-{
-   if (unlikely(n == 0))
-      return 0;
-   else
-      return MAX2(n >> levels, 1);
-}
-
-static inline float
-anv_clamp_f(float f, float min, float max)
-{
-   assert(min < max);
-
-   if (f > max)
-      return max;
-   else if (f < min)
-      return min;
-   else
-      return f;
 }
 
 static inline union isl_color_value
@@ -589,7 +536,7 @@ union anv_free_list {
    /* Make sure it's aligned to 64 bits. This will make atomic operations
     * faster on 32 bit platforms.
     */
-   uint64_t u64 __attribute__ ((aligned (8)));
+   alignas(8) uint64_t u64;
 };
 
 #define ANV_FREE_LIST_EMPTY ((union anv_free_list) { { UINT32_MAX, 0 } })
@@ -603,7 +550,7 @@ struct anv_block_state {
       /* Make sure it's aligned to 64 bits. This will make atomic operations
        * faster on 32 bit platforms.
        */
-      uint64_t u64 __attribute__ ((aligned (8)));
+      alignas(8) uint64_t u64;
    };
 };
 
@@ -889,12 +836,18 @@ struct anv_memory_heap {
     *
     * Align it to 64 bits to make atomic operations faster on 32 bit platforms.
     */
-   VkDeviceSize      used __attribute__ ((aligned (8)));
+   alignas(8) VkDeviceSize used;
 };
 
 struct anv_memregion {
    uint64_t size;
    uint64_t available;
+};
+
+enum anv_timestamp_capture_type {
+    ANV_TIMESTAMP_CAPTURE_TOP_OF_PIPE,
+    ANV_TIMESTAMP_CAPTURE_END_OF_PIPE,
+    ANV_TIMESTAMP_CAPTURE_AT_CS_STALL,
 };
 
 struct anv_physical_device {
@@ -906,14 +859,6 @@ struct anv_physical_device {
     struct anv_instance *                       instance;
     char                                        path[20];
     struct intel_device_info                      info;
-    /** Amount of "GPU memory" we want to advertise
-     *
-     * Clearly, this value is bogus since Intel is a UMA architecture.  On
-     * gfx7 platforms, we are limited by GTT size unless we want to implement
-     * fine-grained tracking and GTT splitting.  On Broadwell and above we are
-     * practically unlimited.  However, we will never report more than 3/4 of
-     * the total system ram to try and avoid running out of RAM.
-     */
     bool                                        supports_48bit_addresses;
     struct brw_compiler *                       compiler;
     struct isl_device                           isl_dev;
@@ -962,7 +907,7 @@ struct anv_physical_device {
       struct anv_memory_type                    types[VK_MAX_MEMORY_TYPES];
       uint32_t                                  heap_count;
       struct anv_memory_heap                    heaps[VK_MAX_MEMORY_HEAPS];
-      bool                                      need_clflush;
+      bool                                      need_flush;
     } memory;
 
     struct anv_memregion                        sys;
@@ -986,7 +931,7 @@ struct anv_physical_device {
     int64_t                                     master_minor;
     struct intel_query_engine_info *            engine_info;
 
-    void (*cmd_emit_timestamp)(struct anv_batch *, struct anv_device *, struct anv_address, bool);
+    void (*cmd_emit_timestamp)(struct anv_batch *, struct anv_device *, struct anv_address, enum anv_timestamp_capture_type);
     struct intel_measure_device                 measure_device;
 };
 
@@ -999,10 +944,14 @@ struct anv_instance {
     /**
      * Workarounds for game bugs.
      */
-    bool                                        assume_full_subgroups;
+    uint8_t                                     assume_full_subgroups;
     bool                                        limit_trig_input_range;
     bool                                        sample_mask_out_opengl_behaviour;
     float                                       lower_depth_range_rate;
+    bool                                        report_vk_1_3;
+
+    /* HW workarounds */
+    bool                                        no_16bit;
 };
 
 VkResult anv_init_wsi(struct anv_physical_device *physical_device);
@@ -1015,14 +964,12 @@ struct anv_queue {
 
    const struct anv_queue_family *           family;
 
-   uint32_t                                  index_in_family;
-
    uint32_t                                  exec_flags;
 
    /** Synchronization object for debug purposes (DEBUG_SYNC) */
    struct vk_sync                           *sync;
 
-   struct intel_ds_queue *                   ds;
+   struct intel_ds_queue                     ds;
 };
 
 struct nir_xfb_info;
@@ -1074,7 +1021,6 @@ struct anv_device {
     uint32_t                                    context_id;
     int                                         fd;
     bool                                        can_chain_batches;
-    bool                                        robust_buffer_access;
 
     pthread_mutex_t                             vma_mutex;
     struct util_vma_heap                        vma_lo;
@@ -1109,6 +1055,13 @@ struct anv_device {
     struct anv_bo *                             workaround_bo;
     struct anv_address                          workaround_address;
 
+    /**
+     * Workarounds for game bugs.
+     */
+    struct {
+       struct set *                             doom64_images;
+    } workarounds;
+
     struct anv_bo *                             trivial_batch_bo;
     struct anv_state                            null_surface_state;
 
@@ -1124,6 +1077,8 @@ struct anv_device {
     struct anv_queue  *                         queues;
 
     struct anv_scratch_pool                     scratch_pool;
+
+    bool                                        robust_buffer_access;
 
     pthread_mutex_t                             mutex;
     pthread_cond_t                              queue_submit;
@@ -1330,8 +1285,6 @@ int anv_gem_context_get_reset_stats(int fd, int context,
 int anv_gem_handle_to_fd(struct anv_device *device, uint32_t gem_handle);
 uint32_t anv_gem_fd_to_handle(struct anv_device *device, int fd);
 int anv_gem_set_caching(struct anv_device *device, uint32_t gem_handle, uint32_t caching);
-int anv_i915_query(int fd, uint64_t query_id, void *buffer,
-                   int32_t *buffer_len);
 
 uint64_t anv_vma_alloc(struct anv_device *device,
                        uint64_t size, uint64_t align,
@@ -1464,7 +1417,7 @@ anv_batch_emit_reloc(struct anv_batch *batch,
 static inline void
 write_reloc(const struct anv_device *device, void *p, uint64_t v, bool flush)
 {
-   unsigned reloc_size = 0;
+   UNUSED unsigned reloc_size = 0;
    if (device->info->ver >= 8) {
       reloc_size = sizeof(uint64_t);
       *(uint64_t *)p = intel_canonical_address(v);
@@ -1473,8 +1426,10 @@ write_reloc(const struct anv_device *device, void *p, uint64_t v, bool flush)
       *(uint32_t *)p = v;
    }
 
-   if (flush && device->physical->memory.need_clflush)
+#ifdef SUPPORT_INTEL_INTEGRATED_GPUS
+   if (flush && device->physical->memory.need_flush)
       intel_flush_range(p, reloc_size);
+#endif
 }
 
 static inline uint64_t
@@ -2244,13 +2199,24 @@ anv_pipe_invalidate_bits_for_access_flags(struct anv_device *device,
             pipe_bits |= ANV_PIPE_UNTYPED_DATAPORT_CACHE_FLUSH_BIT;
          }
          break;
-      case VK_ACCESS_2_SHADER_READ_BIT:
       case VK_ACCESS_2_INPUT_ATTACHMENT_READ_BIT:
       case VK_ACCESS_2_TRANSFER_READ_BIT:
+      case VK_ACCESS_2_SHADER_SAMPLED_READ_BIT:
          /* Transitioning a buffer to be read through the sampler, so
           * invalidate the texture cache, we don't want any stale data.
           */
          pipe_bits |= ANV_PIPE_TEXTURE_CACHE_INVALIDATE_BIT;
+         break;
+      case VK_ACCESS_2_SHADER_READ_BIT:
+         /* Same as VK_ACCESS_2_UNIFORM_READ_BIT and
+          * VK_ACCESS_2_SHADER_SAMPLED_READ_BIT cases above
+          */
+         pipe_bits |= ANV_PIPE_CONSTANT_CACHE_INVALIDATE_BIT |
+                      ANV_PIPE_TEXTURE_CACHE_INVALIDATE_BIT;
+         if (!device->physical->compiler->indirect_ubos_use_sampler) {
+            pipe_bits |= ANV_PIPE_HDC_PIPELINE_FLUSH_BIT;
+            pipe_bits |= ANV_PIPE_UNTYPED_DATAPORT_CACHE_FLUSH_BIT;
+         }
          break;
       case VK_ACCESS_2_MEMORY_READ_BIT:
          /* Transitioning a buffer for generic read, invalidate all the
@@ -2290,6 +2256,7 @@ anv_pipe_invalidate_bits_for_access_flags(struct anv_device *device,
           */
          pipe_bits |= ANV_PIPE_TILE_CACHE_FLUSH_BIT;
          break;
+      case VK_ACCESS_2_SHADER_STORAGE_READ_BIT:
       default:
          break; /* Nothing to do */
       }
@@ -2401,6 +2368,18 @@ struct anv_vb_cache_range {
    uint64_t end;
 };
 
+static inline void
+anv_merge_vb_cache_range(struct anv_vb_cache_range *dirty,
+                         const struct anv_vb_cache_range *bound)
+{
+   if (dirty->start == dirty->end) {
+      *dirty = *bound;
+   } else if (bound->start != bound->end) {
+      dirty->start = MIN2(dirty->start, bound->start);
+      dirty->end = MAX2(dirty->end, bound->end);
+   }
+}
+
 /* Check whether we need to apply the Gfx8-9 vertex buffer workaround*/
 static inline bool
 anv_gfx8_9_vb_cache_range_needs_workaround(struct anv_vb_cache_range *bound,
@@ -2421,11 +2400,9 @@ anv_gfx8_9_vb_cache_range_needs_workaround(struct anv_vb_cache_range *bound,
 
    /* Align everything to a cache line */
    bound->start &= ~(64ull - 1ull);
-   bound->end = align_u64(bound->end, 64);
+   bound->end = align64(bound->end, 64);
 
-   /* Compute the dirty range */
-   dirty->start = MIN2(dirty->start, bound->start);
-   dirty->end = MAX2(dirty->end, bound->end);
+   anv_merge_vb_cache_range(dirty, bound);
 
    /* If our range is larger than 32 bits, we have to flush */
    assert(bound->end - bound->start <= (1ull << 32));
@@ -2493,6 +2470,8 @@ struct anv_cmd_graphics_state {
    uint32_t index_offset;
 
    struct vk_sample_locations_state sample_locations;
+
+   bool has_uint_rt;
 };
 
 enum anv_depth_reg_mode {
@@ -2844,7 +2823,7 @@ anv_shader_bin_ref(struct anv_shader_bin *shader)
 static inline void
 anv_shader_bin_unref(struct anv_device *device, struct anv_shader_bin *shader)
 {
-   vk_pipeline_cache_object_unref(&shader->base);
+   vk_pipeline_cache_object_unref(&device->vk, &shader->base);
 }
 
 struct anv_pipeline_executable {
@@ -2994,6 +2973,18 @@ anv_cmd_buffer_all_color_write_masked(const struct anv_cmd_buffer *cmd_buffer)
    }
 
    return true;
+}
+
+static inline void
+anv_cmd_graphic_state_update_has_uint_rt(struct anv_cmd_graphics_state *state)
+{
+   state->has_uint_rt = false;
+   for (unsigned a = 0; a < state->color_att_count; a++) {
+      if (vk_format_is_int(state->color_att[a].vk_format)) {
+         state->has_uint_rt = true;
+         break;
+      }
+   }
 }
 
 #define ANV_DECL_GET_GRAPHICS_PROG_DATA_FUNC(prefix, stage)             \
@@ -3240,6 +3231,11 @@ struct anv_image {
    bool disjoint;
 
    /**
+    * Image is a WSI image
+    */
+   bool from_wsi;
+
+   /**
     * Image was imported from an struct AHardwareBuffer.  We have to delay
     * final image creation until bind time.
     */
@@ -3464,31 +3460,6 @@ anv_can_sample_with_hiz(const struct intel_device_info * const devinfo,
       return false;
 
    return image->vk.samples == 1;
-}
-
-/* Returns true if an MCS-enabled buffer can be sampled from. */
-static inline bool
-anv_can_sample_mcs_with_clear(const struct intel_device_info * const devinfo,
-                              const struct anv_image *image)
-{
-   assert(image->vk.aspects == VK_IMAGE_ASPECT_COLOR_BIT);
-   const uint32_t plane =
-      anv_image_aspect_to_plane(image, VK_IMAGE_ASPECT_COLOR_BIT);
-
-   assert(isl_aux_usage_has_mcs(image->planes[plane].aux_usage));
-
-   const struct anv_surface *anv_surf = &image->planes[plane].primary_surface;
-
-   /* On TGL, the sampler has an issue with some 8 and 16bpp MSAA fast clears.
-    * See HSD 1707282275, wa_14013111325. Due to the use of
-    * format-reinterpretation, a simplified workaround is implemented.
-    */
-   if (devinfo->ver >= 12 &&
-       isl_format_get_layout(anv_surf->isl.format)->bpb <= 16) {
-      return false;
-   }
-
-   return true;
 }
 
 void
@@ -3735,24 +3706,12 @@ struct gfx8_border_color {
    uint32_t _pad[12];
 };
 
-struct anv_ycbcr_conversion {
-   struct vk_object_base base;
-
-   const struct anv_format *        format;
-   VkSamplerYcbcrModelConversion    ycbcr_model;
-   VkSamplerYcbcrRange              ycbcr_range;
-   VkComponentSwizzle               mapping[4];
-   VkChromaLocation                 chroma_offsets[2];
-   VkFilter                         chroma_filter;
-   bool                             chroma_reconstruction;
-};
-
 struct anv_sampler {
    struct vk_object_base        base;
 
    uint32_t                     state[3][4];
    uint32_t                     n_planes;
-   struct anv_ycbcr_conversion *conversion;
+   struct vk_ycbcr_conversion  *conversion;
 
    /* Blob of sampler state data which is guaranteed to be 32-byte aligned
     * and with a 32-byte stride for use as bindless samplers.
@@ -3919,9 +3878,6 @@ VK_DEFINE_NONDISP_HANDLE_CASTS(anv_query_pool, base, VkQueryPool,
                                VK_OBJECT_TYPE_QUERY_POOL)
 VK_DEFINE_NONDISP_HANDLE_CASTS(anv_sampler, base, VkSampler,
                                VK_OBJECT_TYPE_SAMPLER)
-VK_DEFINE_NONDISP_HANDLE_CASTS(anv_ycbcr_conversion, base,
-                               VkSamplerYcbcrConversion,
-                               VK_OBJECT_TYPE_SAMPLER_YCBCR_CONVERSION)
 VK_DEFINE_NONDISP_HANDLE_CASTS(anv_performance_configuration_intel, base,
                                VkPerformanceConfigurationINTEL,
                                VK_OBJECT_TYPE_PERFORMANCE_CONFIGURATION_INTEL)

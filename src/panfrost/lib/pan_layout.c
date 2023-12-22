@@ -84,12 +84,12 @@ afbc_superblock_sizes[] = {
 struct pan_block_size
 panfrost_afbc_superblock_size(uint64_t modifier)
 {
-        unsigned index = (modifier & AFBC_FORMAT_MOD_BLOCK_SIZE_MASK);
+   unsigned index = (modifier & AFBC_FORMAT_MOD_BLOCK_SIZE_MASK);
 
-        assert(drm_is_afbc(modifier));
-        assert(index < ARRAY_SIZE(afbc_superblock_sizes));
+   assert(drm_is_afbc(modifier));
+   assert(index < ARRAY_SIZE(afbc_superblock_sizes));
 
-        return afbc_superblock_sizes[index];
+   return afbc_superblock_sizes[index];
 }
 
 /*
@@ -98,7 +98,7 @@ panfrost_afbc_superblock_size(uint64_t modifier)
 unsigned
 panfrost_afbc_superblock_width(uint64_t modifier)
 {
-        return panfrost_afbc_superblock_size(modifier).width;
+   return panfrost_afbc_superblock_size(modifier).width;
 }
 
 /*
@@ -107,7 +107,7 @@ panfrost_afbc_superblock_width(uint64_t modifier)
 unsigned
 panfrost_afbc_superblock_height(uint64_t modifier)
 {
-        return panfrost_afbc_superblock_size(modifier).height;
+   return panfrost_afbc_superblock_size(modifier).height;
 }
 
 /*
@@ -118,7 +118,18 @@ panfrost_afbc_superblock_height(uint64_t modifier)
 bool
 panfrost_afbc_is_wide(uint64_t modifier)
 {
-        return panfrost_afbc_superblock_width(modifier) > 16;
+   return panfrost_afbc_superblock_width(modifier) > 16;
+}
+
+/*
+ * Given an AFBC modifier, return the subblock size (subdivision of a
+ * superblock). This is always 4x4 for now as we only support one AFBC
+ * superblock layout.
+ */
+struct pan_block_size
+panfrost_afbc_subblock_size(uint64_t modifier)
+{
+   return (struct pan_block_size){4, 4};
 }
 
 /*
@@ -129,10 +140,10 @@ panfrost_afbc_is_wide(uint64_t modifier)
 static inline struct pan_block_size
 panfrost_u_interleaved_tile_size(enum pipe_format format)
 {
-        if (util_format_is_compressed(format))
-                return (struct pan_block_size) {  4,  4 };
-        else
-                return (struct pan_block_size) { 16, 16 };
+   if (util_format_is_compressed(format))
+      return (struct pan_block_size){4, 4};
+   else
+      return (struct pan_block_size){16, 16};
 }
 
 /*
@@ -143,12 +154,12 @@ panfrost_u_interleaved_tile_size(enum pipe_format format)
 struct pan_block_size
 panfrost_block_size(uint64_t modifier, enum pipe_format format)
 {
-        if (modifier == DRM_FORMAT_MOD_ARM_16X16_BLOCK_U_INTERLEAVED)
-                return panfrost_u_interleaved_tile_size(format);
-        else if (drm_is_afbc(modifier))
-                return panfrost_afbc_superblock_size(modifier);
-        else
-                return (struct pan_block_size) { 1, 1 };
+   if (modifier == DRM_FORMAT_MOD_ARM_16X16_BLOCK_U_INTERLEAVED)
+      return panfrost_u_interleaved_tile_size(format);
+   else if (drm_is_afbc(modifier))
+      return panfrost_afbc_superblock_size(modifier);
+   else
+      return (struct pan_block_size){1, 1};
 }
 
 /*
@@ -158,23 +169,23 @@ panfrost_block_size(uint64_t modifier, enum pipe_format format)
 static inline unsigned
 pan_afbc_tile_size(uint64_t modifier)
 {
-        return (modifier & AFBC_FORMAT_MOD_TILED) ? 8 : 1;
+   return (modifier & AFBC_FORMAT_MOD_TILED) ? 8 : 1;
 }
 
 /*
  * Determine the number of bytes between header rows for an AFBC image. For an
  * image with linear headers, this is simply the number of header blocks
  * (=superblocks) per row times the numbers of bytes per header block. For an
- * image with linear headers, this is multipled by the number of rows of
+ * image with tiled headers, this is multipled by the number of rows of
  * header blocks are in a tile together.
  */
 uint32_t
 pan_afbc_row_stride(uint64_t modifier, uint32_t width)
 {
-        unsigned block_width = panfrost_afbc_superblock_width(modifier);
+   unsigned block_width = panfrost_afbc_superblock_width(modifier);
 
-        return (width / block_width) * pan_afbc_tile_size(modifier) *
-                AFBC_HEADER_BYTES_PER_TILE;
+   return (width / block_width) * pan_afbc_tile_size(modifier) *
+          AFBC_HEADER_BYTES_PER_TILE;
 }
 
 /*
@@ -186,8 +197,17 @@ pan_afbc_row_stride(uint64_t modifier, uint32_t width)
 uint32_t
 pan_afbc_stride_blocks(uint64_t modifier, uint32_t row_stride_bytes)
 {
-        return row_stride_bytes /
-               (AFBC_HEADER_BYTES_PER_TILE * pan_afbc_tile_size(modifier));
+   return row_stride_bytes /
+          (AFBC_HEADER_BYTES_PER_TILE * pan_afbc_tile_size(modifier));
+}
+
+/*
+ * Determine the required alignment for the slice offset of an image. For
+ * now, this is always aligned on 64-byte boundaries. */
+uint32_t
+pan_slice_align(uint64_t modifier)
+{
+   return 64;
 }
 
 /*

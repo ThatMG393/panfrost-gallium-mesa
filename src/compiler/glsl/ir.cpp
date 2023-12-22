@@ -31,7 +31,7 @@
 ir_rvalue::ir_rvalue(enum ir_node_type t)
    : ir_instruction(t)
 {
-   this->type = glsl_type::error_type;
+   this->type = &glsl_type_builtin_error;
 }
 
 bool ir_rvalue::is_zero() const
@@ -371,11 +371,11 @@ ir_expression::ir_expression(int op, ir_rvalue *op0)
 
    case ir_unop_unpack_double_2x32:
    case ir_unop_unpack_uint_2x32:
-      this->type = glsl_type::uvec2_type;
+      this->type = &glsl_type_builtin_uvec2;
       break;
 
    case ir_unop_unpack_int_2x32:
-      this->type = glsl_type::ivec2_type;
+      this->type = &glsl_type_builtin_ivec2;
       break;
 
    case ir_unop_pack_snorm_2x16:
@@ -383,35 +383,35 @@ ir_expression::ir_expression(int op, ir_rvalue *op0)
    case ir_unop_pack_unorm_2x16:
    case ir_unop_pack_unorm_4x8:
    case ir_unop_pack_half_2x16:
-      this->type = glsl_type::uint_type;
+      this->type = &glsl_type_builtin_uint;
       break;
 
    case ir_unop_pack_double_2x32:
-      this->type = glsl_type::double_type;
+      this->type = &glsl_type_builtin_double;
       break;
 
    case ir_unop_pack_int_2x32:
-      this->type = glsl_type::int64_t_type;
+      this->type = &glsl_type_builtin_int64_t;
       break;
 
    case ir_unop_pack_uint_2x32:
-      this->type = glsl_type::uint64_t_type;
+      this->type = &glsl_type_builtin_uint64_t;
       break;
 
    case ir_unop_unpack_snorm_2x16:
    case ir_unop_unpack_unorm_2x16:
    case ir_unop_unpack_half_2x16:
-      this->type = glsl_type::vec2_type;
+      this->type = &glsl_type_builtin_vec2;
       break;
 
    case ir_unop_unpack_snorm_4x8:
    case ir_unop_unpack_unorm_4x8:
-      this->type = glsl_type::vec4_type;
+      this->type = &glsl_type_builtin_vec4;
       break;
 
    case ir_unop_unpack_sampler_2x32:
    case ir_unop_unpack_image_2x32:
-      this->type = glsl_type::uvec2_type;
+      this->type = &glsl_type_builtin_uvec2;
       break;
 
    case ir_unop_pack_sampler_2x32:
@@ -430,7 +430,7 @@ ir_expression::ir_expression(int op, ir_rvalue *op0)
    case ir_unop_get_buffer_size:
    case ir_unop_ssbo_unsized_array_length:
    case ir_unop_implicitly_sized_array_length:
-      this->type = glsl_type::int_type;
+      this->type = &glsl_type_builtin_int;
       break;
 
    case ir_unop_bitcast_i642d:
@@ -474,7 +474,7 @@ ir_expression::ir_expression(int op, ir_rvalue *op0, ir_rvalue *op1)
    switch (this->operation) {
    case ir_binop_all_equal:
    case ir_binop_any_nequal:
-      this->type = glsl_type::bool_type;
+      this->type = &glsl_type_builtin_bool;
       break;
 
    case ir_binop_add:
@@ -574,7 +574,7 @@ ir_expression::ir_expression(int op, ir_rvalue *op0, ir_rvalue *op1)
          base = GLSL_TYPE_UINT64;
          break;
       default:
-         unreachable(!"Invalid base type.");
+         unreachable("Invalid base type.");
       }
 
       this->type = glsl_type::get_instance(base, op0->type->vector_elements, 1);
@@ -587,7 +587,7 @@ ir_expression::ir_expression(int op, ir_rvalue *op0, ir_rvalue *op1)
 
    default:
       assert(!"not reached: missing automatic type setup for ir_expression");
-      this->type = glsl_type::float_type;
+      this->type = &glsl_type_builtin_float;
    }
 }
 
@@ -622,7 +622,7 @@ ir_expression::ir_expression(int op, ir_rvalue *op0, ir_rvalue *op1,
 
    default:
       assert(!"not reached: missing automatic type setup for ir_expression");
-      this->type = glsl_type::float_type;
+      this->type = &glsl_type_builtin_float;
    }
 }
 
@@ -1802,7 +1802,7 @@ ir_texture::set_sampler(ir_dereference *sampler, const glsl_type *type)
    if (this->is_sparse) {
       /* code holds residency info */
       glsl_struct_field fields[2] = {
-         glsl_struct_field(glsl_type::int_type, "code"),
+         glsl_struct_field(&glsl_type_builtin_int, "code"),
          glsl_struct_field(type, "texel"),
       };
       this->type = glsl_type::get_struct_instance(fields, 2, "struct");
@@ -1816,7 +1816,7 @@ ir_texture::set_sampler(ir_dereference *sampler, const glsl_type *type)
       assert(type->vector_elements == 2);
       assert(type->is_float());
    } else if (this->op == ir_samples_identical) {
-      assert(type == glsl_type::bool_type);
+      assert(type == &glsl_type_builtin_bool);
       assert(sampler->type->is_sampler());
       assert(sampler->type->sampler_dimensionality == GLSL_SAMPLER_DIM_MS);
    } else {
@@ -2043,7 +2043,6 @@ ir_variable::ir_variable(const struct glsl_type *type, const char *name,
    this->data.depth_layout = ir_depth_layout_none;
    this->data.used = false;
    this->data.assigned = false;
-   this->data.always_active_io = false;
    this->data.read_only = false;
    this->data.centroid = false;
    this->data.sample = false;
@@ -2083,21 +2082,6 @@ ir_variable::ir_variable(const struct glsl_type *type, const char *name,
       else if (type->without_array()->is_interface())
          this->init_interface_type(type->without_array());
    }
-}
-
-
-const char *
-interpolation_string(unsigned interpolation)
-{
-   switch (interpolation) {
-   case INTERP_MODE_NONE:          return "no";
-   case INTERP_MODE_SMOOTH:        return "smooth";
-   case INTERP_MODE_FLAT:          return "flat";
-   case INTERP_MODE_NOPERSPECTIVE: return "noperspective";
-   }
-
-   assert(!"Should not get here.");
-   return "";
 }
 
 const char *const ir_variable::warn_extension_table[] = {
@@ -2240,7 +2224,7 @@ ir_rvalue::error_value(void *mem_ctx)
 {
    ir_rvalue *v = new(mem_ctx) ir_rvalue(ir_type_unset);
 
-   v->type = glsl_type::error_type;
+   v->type = &glsl_type_builtin_error;
    return v;
 }
 
@@ -2291,81 +2275,18 @@ reparent_ir(exec_list *list, void *mem_ctx)
    }
 }
 
-
-static ir_rvalue *
-try_min_one(ir_rvalue *ir)
+enum mesa_prim
+gl_to_mesa_prim(GLenum prim)
 {
-   ir_expression *expr = ir->as_expression();
+   STATIC_ASSERT(GL_POINTS                == MESA_PRIM_POINTS);
+   STATIC_ASSERT(GL_LINES                 == MESA_PRIM_LINES);
+   STATIC_ASSERT(GL_LINES_ADJACENCY       == MESA_PRIM_LINES_ADJACENCY);
+   STATIC_ASSERT(GL_LINE_STRIP            == MESA_PRIM_LINE_STRIP);
+   STATIC_ASSERT(GL_TRIANGLES             == MESA_PRIM_TRIANGLES);
+   STATIC_ASSERT(GL_TRIANGLES_ADJACENCY   == MESA_PRIM_TRIANGLES_ADJACENCY);
+   STATIC_ASSERT(GL_TRIANGLE_STRIP        == MESA_PRIM_TRIANGLE_STRIP);
 
-   if (!expr || expr->operation != ir_binop_min)
-      return NULL;
-
-   if (expr->operands[0]->is_one())
-      return expr->operands[1];
-
-   if (expr->operands[1]->is_one())
-      return expr->operands[0];
-
-   return NULL;
-}
-
-static ir_rvalue *
-try_max_zero(ir_rvalue *ir)
-{
-   ir_expression *expr = ir->as_expression();
-
-   if (!expr || expr->operation != ir_binop_max)
-      return NULL;
-
-   if (expr->operands[0]->is_zero())
-      return expr->operands[1];
-
-   if (expr->operands[1]->is_zero())
-      return expr->operands[0];
-
-   return NULL;
-}
-
-ir_rvalue *
-ir_rvalue::as_rvalue_to_saturate()
-{
-   ir_expression *expr = this->as_expression();
-
-   if (!expr)
-      return NULL;
-
-   ir_rvalue *max_zero = try_max_zero(expr);
-   if (max_zero) {
-      return try_min_one(max_zero);
-   } else {
-      ir_rvalue *min_one = try_min_one(expr);
-      if (min_one) {
-	 return try_max_zero(min_one);
-      }
-   }
-
-   return NULL;
-}
-
-
-unsigned
-vertices_per_prim(GLenum prim)
-{
-   switch (prim) {
-   case GL_POINTS:
-      return 1;
-   case GL_LINES:
-      return 2;
-   case GL_TRIANGLES:
-      return 3;
-   case GL_LINES_ADJACENCY:
-      return 4;
-   case GL_TRIANGLES_ADJACENCY:
-      return 6;
-   default:
-      assert(!"Bad primitive");
-      return 3;
-   }
+   return (enum mesa_prim)prim;
 }
 
 /**

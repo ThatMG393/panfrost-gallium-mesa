@@ -1,0 +1,10 @@
+diff a/src/panfrost/meson.build b/src/panfrost/meson.build	(rejected hunks)
+@@ -34,7 +34,7 @@ compile_args_panfrost = [
+ subdir('shared')
+ subdir('util')
+ subdir('midgard')
+-subdir('bifrost')
++subdir('compiler')
+ 
+ if with_gallium_panfrost or with_panfrost_vk
+    subdir('lib')

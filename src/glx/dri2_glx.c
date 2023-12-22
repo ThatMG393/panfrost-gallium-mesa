@@ -111,8 +111,7 @@ dri2_destroy_context(struct glx_context *context)
 }
 
 static Bool
-dri2_bind_context(struct glx_context *context, struct glx_context *old,
-		  GLXDrawable draw, GLXDrawable read)
+dri2_bind_context(struct glx_context *context, GLXDrawable draw, GLXDrawable read)
 {
    struct dri2_screen *psc = (struct dri2_screen *) context->psc;
    struct dri2_drawable *pdraw, *pread;
@@ -140,7 +139,7 @@ dri2_bind_context(struct glx_context *context, struct glx_context *old,
 }
 
 static void
-dri2_unbind_context(struct glx_context *context, struct glx_context *new)
+dri2_unbind_context(struct glx_context *context)
 {
    struct dri2_screen *psc = (struct dri2_screen *) context->psc;
 
@@ -169,8 +168,10 @@ dri2_create_context_attribs(struct glx_screen *base,
       goto error_exit;
 
    /* Check the renderType value */
-   if (!validate_renderType_against_config(config_base, dca.render_type))
-       goto error_exit;
+   if (!validate_renderType_against_config(config_base, dca.render_type)) {
+      *error = BadValue;
+      goto error_exit;
+   }
 
    if (shareList) {
       /* We can't share with an indirect context */
@@ -184,7 +185,7 @@ dri2_create_context_attribs(struct glx_screen *base,
        *    GLX_CONTEXT_OPENGL_NO_ERROR_ARB for the context being created.
        */
       if (!!shareList->noError != !!dca.no_error) {
-         *error = __DRI_CTX_ERROR_BAD_FLAG;
+         *error = BadMatch;
          return NULL;
       }
 
@@ -193,7 +194,7 @@ dri2_create_context_attribs(struct glx_screen *base,
 
    pcp = calloc(1, sizeof *pcp);
    if (pcp == NULL) {
-      *error = __DRI_CTX_ERROR_NO_MEMORY;
+      *error = BadAlloc;
       goto error_exit;
    }
 
@@ -244,6 +245,8 @@ dri2_create_context_attribs(struct glx_screen *base,
 					  ctx_attribs,
 					  error,
 					  pcp);
+
+   *error = dri_context_error_to_glx_error(*error);
 
    if (pcp->driContext == NULL)
       goto error_exit;
@@ -654,29 +657,6 @@ unsigned dri2GetSwapEventType(Display* dpy, XID drawable)
       return glx_dpy->codes.first_event + GLX_BufferSwapComplete;
 }
 
-static void show_fps(struct dri2_drawable *draw)
-{
-   const int interval =
-      ((struct dri2_screen *) draw->base.psc)->show_fps_interval;
-   struct timeval tv;
-   uint64_t current_time;
-
-   gettimeofday(&tv, NULL);
-   current_time = (uint64_t)tv.tv_sec*1000000 + (uint64_t)tv.tv_usec;
-
-   draw->frames++;
-
-   if (draw->previous_time + interval * 1000000 <= current_time) {
-      if (draw->previous_time) {
-         fprintf(stderr, "libGL: FPS = %.2f\n",
-                 ((uint64_t)draw->frames * 1000000) /
-                 (double)(current_time - draw->previous_time));
-      }
-      draw->frames = 0;
-      draw->previous_time = current_time;
-   }
-}
-
 static int64_t
 dri2XcbSwapBuffers(Display *dpy,
                   __GLXDRIdrawable *pdraw,
@@ -743,10 +723,6 @@ dri2SwapBuffers(__GLXDRIdrawable *pdraw, int64_t target_msc, int64_t divisor,
 
     ret = dri2XcbSwapBuffers(pdraw->psc->dpy, pdraw,
                              target_msc, divisor, remainder);
-
-    if (psc->show_fps_interval) {
-       show_fps(priv);
-    }
 
     return ret;
 }
@@ -836,7 +812,7 @@ driIsThreadSafe(void *loaderPrivate)
    /* Check Xlib is running in thread safe mode
     *
     * 'lock_fns' is the XLockDisplay function pointer of the X11 display 'dpy'.
-    * It wll be NULL if XInitThreads wasn't called.
+    * It will be NULL if XInitThreads wasn't called.
     */
    return pcp->psc->dpy->lock_fns != NULL;
 }
@@ -1003,6 +979,9 @@ dri2BindExtensions(struct dri2_screen *psc, struct glx_display * priv,
 
    if (psc->rendererQuery)
       __glXEnableDirectExtension(&psc->base, "GLX_MESA_query_renderer");
+
+   if (psc->interop)
+      __glXEnableDirectExtension(&psc->base, "GLX_MESA_gl_interop");
 }
 
 static char *

@@ -4,6 +4,7 @@
  * Copyright (C) 2014-2017 Broadcom
  * Copyright (C) 2018-2019 Alyssa Rosenzweig
  * Copyright (C) 2019 Collabora, Ltd.
+ * Copyright (C) 2023 Amazon.com, Inc. or its affiliates
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -326,67 +327,66 @@ panfrost_is_2d(const struct panfrost_resource *pres)
 
 static bool
 panfrost_should_afbc(struct panfrost_device *dev,
-                     const struct panfrost_resource *pres,
-                     enum pipe_format fmt)
+                     const struct panfrost_resource *pres, enum pipe_format fmt)
 {
-        /* AFBC resources may be rendered to, textured from, or shared across
-         * processes, but may not be used as e.g buffers */
-        const unsigned valid_binding =
-                PIPE_BIND_DEPTH_STENCIL |
-                PIPE_BIND_RENDER_TARGET |
-                PIPE_BIND_BLENDABLE |
-                PIPE_BIND_SAMPLER_VIEW |
-                PIPE_BIND_DISPLAY_TARGET |
-                PIPE_BIND_SCANOUT |
-                PIPE_BIND_SHARED;
+   /* AFBC resources may be rendered to, textured from, or shared across
+    * processes, but may not be used as e.g buffers */
+   const unsigned valid_binding =
+      PIPE_BIND_DEPTH_STENCIL | PIPE_BIND_RENDER_TARGET | PIPE_BIND_BLENDABLE |
+      PIPE_BIND_SAMPLER_VIEW | PIPE_BIND_DISPLAY_TARGET | PIPE_BIND_SCANOUT |
+      PIPE_BIND_SHARED;
 
-        if (pres->base.bind & ~valid_binding)
-                return false;
+   if (pres->base.bind & ~valid_binding)
+      return false;
 
-        /* AFBC support is optional */
-        if (!dev->has_afbc)
-                return false;
+   /* AFBC support is optional */
+   if (!dev->has_afbc)
+      return false;
 
-        /* AFBC<-->staging is expensive */
-        if (pres->base.usage == PIPE_USAGE_STREAM)
-                return false;
+   /* AFBC<-->staging is expensive */
+   if (pres->base.usage == PIPE_USAGE_STREAM)
+      return false;
 
-        /* Only a small selection of formats are AFBC'able */
-        if (!panfrost_format_supports_afbc(dev, fmt))
-                return false;
+   /* If constant (non-data-dependent) format is requested, don't AFBC: */
+   if (pres->base.bind & PIPE_BIND_CONST_BW)
+      return false;
 
-        /* AFBC does not support layered (GLES3 style) multisampling. Use
-         * EXT_multisampled_render_to_texture instead */
-        if (pres->base.nr_samples > 1)
-                return false;
+   /* Only a small selection of formats are AFBC'able */
+   if (!panfrost_format_supports_afbc(dev, fmt))
+      return false;
 
-        switch (pres->base.target) {
-        case PIPE_TEXTURE_2D:
-        case PIPE_TEXTURE_RECT:
-        case PIPE_TEXTURE_2D_ARRAY:
-        case PIPE_TEXTURE_CUBE:
-        case PIPE_TEXTURE_CUBE_ARRAY:
-                break;
+   /* AFBC does not support layered (GLES3 style) multisampling. Use
+    * EXT_multisampled_render_to_texture instead */
+   if (pres->base.nr_samples > 1)
+      return false;
 
-        case PIPE_TEXTURE_3D:
-                /* 3D AFBC is only supported on Bifrost v7+. It's supposed to
-                 * be supported on Midgard but it doesn't seem to work */
-                if (dev->arch != 7)
-                        return false;
+   switch (pres->base.target) {
+   case PIPE_TEXTURE_2D:
+   case PIPE_TEXTURE_RECT:
+   case PIPE_TEXTURE_2D_ARRAY:
+   case PIPE_TEXTURE_CUBE:
+   case PIPE_TEXTURE_CUBE_ARRAY:
+      break;
 
-                break;
+   case PIPE_TEXTURE_3D:
+      /* 3D AFBC is only supported on Bifrost v7+. It's supposed to
+       * be supported on Midgard but it doesn't seem to work */
+      if (dev->arch != 7)
+         return false;
 
-        default:
-                return false;
-        }
+      break;
 
-        /* For one tile, AFBC is a loss compared to u-interleaved */
-        if (pres->base.width0 <= 16 && pres->base.height0 <= 16)
-                return false;
+   default:
+      return false;
+   }
 
-        /* Otherwise, we'd prefer AFBC as it is dramatically more efficient
-         * than linear or usually even u-interleaved */
-        return true;
+   /* For one tile, AFBC is a loss compared to u-interleaved */
+   if (pres->base.width0 <= 16 && pres->base.height0 <= 16)
+      return false;
+
+   /* Otherwise, we'd prefer AFBC as it is dramatically more efficient
+    * than linear or usually even u-interleaved */
+   return true;
 }
 
 /*
@@ -398,37 +398,47 @@ static bool
 panfrost_should_tile_afbc(const struct panfrost_device *dev,
                           const struct panfrost_resource *pres)
 {
-        return panfrost_afbc_can_tile(dev) &&
-               pres->base.width0 >= 128 &&
-               pres->base.height0 >= 128;
+   return panfrost_afbc_can_tile(dev) && pres->base.width0 >= 128 &&
+          pres->base.height0 >= 128 && !(dev->debug & PAN_DBG_FORCE_PACK);
+}
+
+bool
+panfrost_should_pack_afbc(struct panfrost_device *dev,
+                          const struct panfrost_resource *prsrc)
+{
+   const unsigned valid_binding = PIPE_BIND_DEPTH_STENCIL |
+                                  PIPE_BIND_RENDER_TARGET |
+                                  PIPE_BIND_SAMPLER_VIEW;
+
+   return panfrost_afbc_can_pack(prsrc->base.format) && panfrost_is_2d(prsrc) &&
+          drm_is_afbc(prsrc->image.layout.modifier) &&
+          (prsrc->image.layout.modifier & AFBC_FORMAT_MOD_SPARSE) &&
+          (prsrc->base.bind & ~valid_binding) == 0 &&
+          !prsrc->modifier_constant && prsrc->base.width0 >= 32 &&
+          prsrc->base.height0 >= 32;
 }
 
 static bool
 panfrost_should_tile(struct panfrost_device *dev,
-                     const struct panfrost_resource *pres,
-                     enum pipe_format fmt)
+                     const struct panfrost_resource *pres, enum pipe_format fmt)
 {
-        const unsigned valid_binding =
-                PIPE_BIND_DEPTH_STENCIL |
-                PIPE_BIND_RENDER_TARGET |
-                PIPE_BIND_BLENDABLE |
-                PIPE_BIND_SAMPLER_VIEW |
-                PIPE_BIND_DISPLAY_TARGET |
-                PIPE_BIND_SCANOUT |
-                PIPE_BIND_SHARED;
+   const unsigned valid_binding =
+      PIPE_BIND_DEPTH_STENCIL | PIPE_BIND_RENDER_TARGET | PIPE_BIND_BLENDABLE |
+      PIPE_BIND_SAMPLER_VIEW | PIPE_BIND_DISPLAY_TARGET | PIPE_BIND_SCANOUT |
+      PIPE_BIND_SHARED;
 
-        /* The purpose of tiling is improving locality in both X- and
-         * Y-directions. If there is only a single pixel in either direction,
-         * tiling does not make sense; using a linear layout instead is optimal
-         * for both memory usage and performance.
-         */
-        if (MIN2(pres->base.width0, pres->base.height0) < 2)
-                return false;
+   /* The purpose of tiling is improving locality in both X- and
+    * Y-directions. If there is only a single pixel in either direction,
+    * tiling does not make sense; using a linear layout instead is optimal
+    * for both memory usage and performance.
+    */
+   if (MIN2(pres->base.width0, pres->base.height0) < 2)
+      return false;
 
-        bool can_tile = (pres->base.target != PIPE_BUFFER)
-                && ((pres->base.bind & ~valid_binding) == 0);
+   bool can_tile = (pres->base.target != PIPE_BUFFER) &&
+                   ((pres->base.bind & ~valid_binding) == 0);
 
-        return can_tile && (pres->base.usage != PIPE_USAGE_STREAM);
+   return can_tile && (pres->base.usage != PIPE_USAGE_STREAM);
 }
 
 static uint64_t
@@ -788,8 +798,8 @@ static struct pipe_resource *
 panfrost_resource_create(struct pipe_screen *screen,
                          const struct pipe_resource *template)
 {
-        return panfrost_resource_create_with_modifier(screen, template,
-                        DRM_FORMAT_MOD_INVALID);
+   return panfrost_resource_create_with_modifier(screen, template,
+                                                 DRM_FORMAT_MOD_INVALID);
 }
 
 /* If no modifier is specified, we'll choose. Otherwise, the order of
@@ -1372,20 +1382,25 @@ pan_resource_modifier_convert(struct panfrost_context *ctx,
 void
 pan_legalize_afbc_format(struct panfrost_context *ctx,
                          struct panfrost_resource *rsrc,
-                         enum pipe_format format)
+                         enum pipe_format format, bool write)
 {
-        struct panfrost_device *dev = pan_device(ctx->base.screen);
+   struct panfrost_device *dev = pan_device(ctx->base.screen);
 
-        if (!drm_is_afbc(rsrc->image.layout.modifier))
-                return;
+   if (!drm_is_afbc(rsrc->image.layout.modifier))
+      return;
 
-        if (panfrost_afbc_format(dev->arch, pan_blit_format(rsrc->base.format)) ==
-            panfrost_afbc_format(dev->arch, pan_blit_format(format)))
-                return;
+   if (panfrost_afbc_format(dev->arch, rsrc->base.format) !=
+       panfrost_afbc_format(dev->arch, format)) {
+      pan_resource_modifier_convert(
+         ctx, rsrc, DRM_FORMAT_MOD_ARM_16X16_BLOCK_U_INTERLEAVED,
+         "Reinterpreting AFBC surface as incompatible format");
+      return;
+   }
 
-        pan_resource_modifier_convert(ctx, rsrc,
-                        DRM_FORMAT_MOD_ARM_16X16_BLOCK_U_INTERLEAVED,
-                        "Reinterpreting AFBC surface as incompatible format");
+   if (write && (rsrc->image.layout.modifier & AFBC_FORMAT_MOD_SPARSE) == 0)
+      pan_resource_modifier_convert(
+         ctx, rsrc, rsrc->image.layout.modifier | AFBC_FORMAT_MOD_SPARSE,
+         "Legalizing resource to allow writing");
 }
 
 static bool

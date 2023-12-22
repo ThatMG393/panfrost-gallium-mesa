@@ -105,7 +105,7 @@ typedef struct driOptionDescription {
 
    driOptionInfo info;
    driOptionValue value;
-   driEnumDescription enums[4];
+   driEnumDescription enums[5];
 } driOptionDescription;
 
 /** Returns an XML string describing the options for the driver. */
@@ -159,7 +159,6 @@ float driQueryOptionf(const driOptionCache *cache, const char *name);
 char *driQueryOptionstr(const driOptionCache *cache, const char *name);
 
 /* Overrides for the unit tests to control drirc parsing. */
-void driInjectDataDir(const char *dir);
 void driInjectExecName(const char *exec);
 
 /**

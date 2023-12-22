@@ -1,0 +1,228 @@
+diff a/src/egl/drivers/dri2/platform_wayland.c b/src/egl/drivers/dri2/platform_wayland.c	(rejected hunks)
+@@ -27,31 +27,32 @@
+  *    Benjamin Franzke <benjaminfranzke@googlemail.com>
+  */
+ 
++#include <dlfcn.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <limits.h>
+ #include <stdint.h>
+ #include <stdlib.h>
+ #include <string.h>
+-#include <limits.h>
+-#include <dlfcn.h>
+-#include <errno.h>
+ #include <unistd.h>
+-#include <vulkan/vulkan.h>
+-#include <fcntl.h>
+ #include <xf86drm.h>
+ #include "drm-uapi/drm_fourcc.h"
+ #include <sys/mman.h>
++#include <vulkan/vulkan_core.h>
++#include <vulkan/vulkan_wayland.h>
+ 
+-#include "egl_dri2.h"
+-#include "loader_dri_helper.h"
+-#include "loader.h"
+-#include "util/u_vector.h"
+ #include "util/anon_file.h"
++#include "util/u_vector.h"
++#include "egl_dri2.h"
+ #include "eglglobals.h"
+ #include "kopper_interface.h"
++#include "loader.h"
++#include "loader_dri_helper.h"
+ 
+-#include <wayland-egl-backend.h>
+-#include <wayland-client.h>
+-#include "wayland-drm-client-protocol.h"
+ #include "linux-dmabuf-unstable-v1-client-protocol.h"
++#include "wayland-drm-client-protocol.h"
++#include <wayland-client.h>
++#include <wayland-egl-backend.h>
+ 
+ /*
+  * The index of entries in this table is used as a bitmask in
+@@ -746,28 +826,28 @@ dri2_wl_create_window_surface(_EGLDisplay *disp, _EGLConfig *conf,
+       dri2_surf->wl_win->resize_callback = resize_callback;
+ 
+    if (!dri2_create_drawable(dri2_dpy, config, dri2_surf, dri2_surf))
+-       goto cleanup_dmabuf_feedback;
++      goto cleanup_dmabuf_feedback;
+ 
+    dri2_surf->base.SwapInterval = dri2_dpy->default_swap_interval;
+ 
+    return &dri2_surf->base;
+ 
+- cleanup_dmabuf_feedback:
++cleanup_dmabuf_feedback:
+    if (dri2_surf->wl_dmabuf_feedback) {
+       zwp_linux_dmabuf_feedback_v1_destroy(dri2_surf->wl_dmabuf_feedback);
+       dmabuf_feedback_fini(&dri2_surf->dmabuf_feedback);
+       dmabuf_feedback_fini(&dri2_surf->pending_dmabuf_feedback);
+    }
+- cleanup_surf_wrapper:
++cleanup_surf_wrapper:
+    wl_proxy_wrapper_destroy(dri2_surf->wl_surface_wrapper);
+- cleanup_dpy_wrapper:
++cleanup_dpy_wrapper:
+    wl_proxy_wrapper_destroy(dri2_surf->wl_dpy_wrapper);
+- cleanup_drm:
++cleanup_drm:
+    if (dri2_surf->wl_drm_wrapper)
+       wl_proxy_wrapper_destroy(dri2_surf->wl_drm_wrapper);
+- cleanup_queue:
++cleanup_queue:
+    wl_event_queue_destroy(dri2_surf->wl_queue);
+- cleanup_surf:
++cleanup_surf:
+    free(dri2_surf);
+ 
+    return NULL;
+@@ -1765,7 +1808,7 @@ static const struct wl_drm_listener drm_listener = {
+    .device = drm_handle_device,
+    .format = drm_handle_format,
+    .authenticated = drm_handle_authenticated,
+-   .capabilities = drm_handle_capabilities
++   .capabilities = drm_handle_capabilities,
+ };
+ 
+ static void
+@@ -1808,28 +1851,31 @@ static const struct zwp_linux_dmabuf_v1_listener dmabuf_listener = {
+ static void
+ wl_drm_bind(struct dri2_egl_display *dri2_dpy)
+ {
+-   dri2_dpy->wl_drm = wl_registry_bind(dri2_dpy->wl_registry, dri2_dpy->wl_drm_name,
+-                                       &wl_drm_interface, dri2_dpy->wl_drm_version);
++   dri2_dpy->wl_drm =
++      wl_registry_bind(dri2_dpy->wl_registry, dri2_dpy->wl_drm_name,
++                       &wl_drm_interface, dri2_dpy->wl_drm_version);
+    wl_drm_add_listener(dri2_dpy->wl_drm, &drm_listener, dri2_dpy);
+ }
+ 
+ static void
+-default_dmabuf_feedback_format_table(void *data,
+-                                     struct zwp_linux_dmabuf_feedback_v1 *zwp_linux_dmabuf_feedback_v1,
+-                                     int32_t fd, uint32_t size)
++default_dmabuf_feedback_format_table(
++   void *data,
++   struct zwp_linux_dmabuf_feedback_v1 *zwp_linux_dmabuf_feedback_v1,
++   int32_t fd, uint32_t size)
+ {
+    struct dri2_egl_display *dri2_dpy = data;
+ 
+    dri2_dpy->format_table.size = size;
+-   dri2_dpy->format_table.data = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
++   dri2_dpy->format_table.data =
++      mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
+ 
+    close(fd);
+ }
+ 
+ static void
+-default_dmabuf_feedback_main_device(void *data,
+-                                    struct zwp_linux_dmabuf_feedback_v1 *dmabuf_feedback,
+-                                    struct wl_array *device)
++default_dmabuf_feedback_main_device(
++   void *data, struct zwp_linux_dmabuf_feedback_v1 *dmabuf_feedback,
++   struct wl_array *device)
+ {
+    struct dri2_egl_display *dri2_dpy = data;
+    char *node;
+@@ -1943,10 +1990,11 @@ registry_handle_global_drm(void *data, struct wl_registry *registry,
+    if (strcmp(interface, wl_drm_interface.name) == 0) {
+       dri2_dpy->wl_drm_version = MIN2(version, 2);
+       dri2_dpy->wl_drm_name = name;
+-   } else if (strcmp(interface, zwp_linux_dmabuf_v1_interface.name) == 0 && version >= 3) {
+-      dri2_dpy->wl_dmabuf =
+-         wl_registry_bind(registry, name, &zwp_linux_dmabuf_v1_interface,
+-                          MIN2(version, ZWP_LINUX_DMABUF_V1_GET_DEFAULT_FEEDBACK_SINCE_VERSION));
++   } else if (strcmp(interface, zwp_linux_dmabuf_v1_interface.name) == 0 &&
++              version >= 3) {
++      dri2_dpy->wl_dmabuf = wl_registry_bind(
++         registry, name, &zwp_linux_dmabuf_v1_interface,
++         MIN2(version, ZWP_LINUX_DMABUF_V1_GET_DEFAULT_FEEDBACK_SINCE_VERSION));
+       zwp_linux_dmabuf_v1_add_listener(dri2_dpy->wl_dmabuf, &dmabuf_listener,
+                                        dri2_dpy);
+    }
+@@ -2110,70 +2191,29 @@ dri2_initialize_wayland_drm(_EGLDisplay *disp)
+    if (dri2_dpy->wl_dpy_wrapper == NULL)
+       goto cleanup;
+ 
+-   wl_proxy_set_queue((struct wl_proxy *) dri2_dpy->wl_dpy_wrapper,
++   wl_proxy_set_queue((struct wl_proxy *)dri2_dpy->wl_dpy_wrapper,
+                       dri2_dpy->wl_queue);
+ 
+    if (dri2_dpy->own_device)
+       wl_display_dispatch_pending(dri2_dpy->wl_dpy);
+ 
+    dri2_dpy->wl_registry = wl_display_get_registry(dri2_dpy->wl_dpy_wrapper);
+-   wl_registry_add_listener(dri2_dpy->wl_registry,
+-                            &registry_listener_drm, dri2_dpy);
++   wl_registry_add_listener(dri2_dpy->wl_registry, &registry_listener_drm,
++                            dri2_dpy);
+ 
+    if (roundtrip(dri2_dpy) < 0)
+       goto cleanup;
+ 
+-   /* Get default dma-buf feedback */
+-   if (dri2_dpy->wl_dmabuf && zwp_linux_dmabuf_v1_get_version(dri2_dpy->wl_dmabuf) >=
+-                              ZWP_LINUX_DMABUF_V1_GET_DEFAULT_FEEDBACK_SINCE_VERSION) {
+-      dmabuf_feedback_format_table_init(&dri2_dpy->format_table);
+-      dri2_dpy->wl_dmabuf_feedback =
+-         zwp_linux_dmabuf_v1_get_default_feedback(dri2_dpy->wl_dmabuf);
+-      zwp_linux_dmabuf_feedback_v1_add_listener(dri2_dpy->wl_dmabuf_feedback,
+-                                                &dmabuf_feedback_listener, dri2_dpy);
+-   }
+-
+-   if (roundtrip(dri2_dpy) < 0)
+-      goto cleanup;
+-
+-   /* Destroy the default dma-buf feedback and the format table. */
+-   if (dri2_dpy->wl_dmabuf_feedback) {
+-      zwp_linux_dmabuf_feedback_v1_destroy(dri2_dpy->wl_dmabuf_feedback);
+-      dri2_dpy->wl_dmabuf_feedback = NULL;
+-      dmabuf_feedback_format_table_fini(&dri2_dpy->format_table);
+-   }
+-
+-   /* We couldn't retrieve a render node from the dma-buf feedback (or the
+-    * feedback was not advertised at all), so we must fallback to wl_drm. */
+-   if (dri2_dpy->fd == -1) {
+-      /* wl_drm not advertised by compositor, so can't continue */
+-      if (dri2_dpy->wl_drm_name == 0)
+-         goto cleanup;
+-      wl_drm_bind(dri2_dpy);
+-
+-      if (dri2_dpy->wl_drm == NULL)
+-         goto cleanup;
+-      if (roundtrip(dri2_dpy) < 0 || dri2_dpy->fd == -1)
+-         goto cleanup;
+-
+-      if (!dri2_dpy->authenticated &&
+-          (roundtrip(dri2_dpy) < 0 || !dri2_dpy->authenticated))
+-         goto cleanup;
+-   }
+-
+-   dri2_dpy->fd = loader_get_user_preferred_fd(dri2_dpy->fd,
+-                                               &dri2_dpy->is_different_gpu);
+-   dev = _eglAddDevice(dri2_dpy->fd, false);
+-   if (!dev) {
+-      _eglError(EGL_NOT_INITIALIZED, "DRI2: failed to find EGLDevice");
++   if (!dri2_initialize_wayland_drm_extensions(dri2_dpy))
+       goto cleanup;
+-   }
+ 
+-   disp->Device = dev;
++   loader_get_user_preferred_fd(&dri2_dpy->fd_render_gpu,
++                                &dri2_dpy->fd_display_gpu);
+ 
+-   if (dri2_dpy->is_different_gpu) {
++   if (dri2_dpy->fd_render_gpu != dri2_dpy->fd_display_gpu) {
+       free(dri2_dpy->device_name);
+-      dri2_dpy->device_name = loader_get_device_name_for_fd(dri2_dpy->fd);
++      dri2_dpy->device_name =
++         loader_get_device_name_for_fd(dri2_dpy->fd_render_gpu);
+       if (!dri2_dpy->device_name) {
+          _eglError(EGL_BAD_ALLOC, "wayland-egl: failed to get device name "
+                                   "for requested GPU");

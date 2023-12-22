@@ -43,8 +43,15 @@ struct __DRIextensionRec;
 int
 loader_open_device(const char *);
 
+char *
+loader_get_kernel_driver_name(int fd);
+
 int
-loader_open_render_node(const char *name);
+loader_open_render_node_platform_device(const char * const drivers[],
+                                        unsigned int n_drivers);
+
+bool
+loader_is_device_render_capable(int fd);
 
 char *
 loader_get_render_node(dev_t device);
@@ -70,13 +77,14 @@ loader_open_driver(const char *driver_name,
 char *
 loader_get_device_name_for_fd(int fd);
 
-/* Function to get a different device than the one we are to use by default,
- * if the user requests so and it is possible. The initial fd will be closed
- * if necessary. The returned fd is potentially a render-node.
+/* For dri prime gpu offloading this function will take current render fd and possibly
+ * update it with new prime gpu offloading fd. For dri prime gpu offloading optionally
+ * this function can return the original fd. Also this function returns true/false based
+ * on render gpu is different from display gpu.
  */
 
-int
-loader_get_user_preferred_fd(int default_fd, bool *different_device);
+bool
+loader_get_user_preferred_fd(int *fd_render_gpu, int *original_fd);
 
 /* for logging.. keep this aligned with egllog.h so we can just use
  * _eglLog directly.

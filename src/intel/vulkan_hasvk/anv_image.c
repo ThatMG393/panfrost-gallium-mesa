@@ -126,7 +126,7 @@ image_binding_grow(const struct anv_device *device,
       &image->bindings[binding].memory_range;
 
    if (has_implicit_offset) {
-      offset = align_u64(container->offset + container->size, alignment);
+      offset = align64(container->offset + container->size, alignment);
    } else {
       /* Offset must be validated because it comes from
        * VkImageDrmFormatModifierExplicitCreateInfoEXT.
@@ -375,6 +375,13 @@ can_fast_clear_with_non_zero_color(const struct intel_device_info *devinfo,
                                    uint32_t plane,
                                    const VkImageFormatListCreateInfo *fmt_list)
 {
+   /* Triangles rendered on non-zero fast cleared images with 8xMSAA can get
+    * black pixels around them on Haswell.
+    */
+   if (devinfo->ver == 7 && image->vk.samples == 8) {
+      return false;
+   }
+
    /* If we don't have an AUX surface where fast clears apply, we can return
     * early.
     */
@@ -441,7 +448,7 @@ anv_get_isl_format_with_usage(const struct intel_device_info *devinfo,
                             vk_tiling);
 
    if ((vk_usage == VK_IMAGE_USAGE_STORAGE_BIT) &&
-       isl_is_storage_image_format(format.isl_format)) {
+       isl_is_storage_image_format(devinfo, format.isl_format)) {
       enum isl_format lowered_format =
          isl_lower_storage_image_format(devinfo, format.isl_format);
 
@@ -610,9 +617,6 @@ add_aux_surface_if_supported(struct anv_device *device,
          return VK_SUCCESS;
       }
 
-      if (INTEL_DEBUG(DEBUG_NO_HIZ))
-         return VK_SUCCESS;
-
       ok = isl_surf_get_hiz_surf(&device->isl_dev,
                                  &image->planes[plane].primary_surface.isl,
                                  &image->planes[plane].aux_surface.isl);
@@ -627,7 +631,7 @@ add_aux_surface_if_supported(struct anv_device *device,
          return VK_SUCCESS;
       }
 
-      if ((image->vk.create_flags & VK_IMAGE_CREATE_ALIAS_BIT)) {
+      if ((image->vk.create_flags & VK_IMAGE_CREATE_ALIAS_BIT) && !image->from_wsi) {
          /* The image may alias a plane of a multiplanar image. Above we ban
           * CCS on multiplanar images.
           *
@@ -638,9 +642,6 @@ add_aux_surface_if_supported(struct anv_device *device,
           */
          return VK_SUCCESS;
       }
-
-      if (INTEL_DEBUG(DEBUG_NO_CCS))
-         return VK_SUCCESS;
 
       ok = isl_surf_get_ccs_surf(&device->isl_dev,
                                  &image->planes[plane].primary_surface.isl,
@@ -855,6 +856,7 @@ check_memory_bindings(const struct anv_device *device,
        * live in a VkDeviceMemory.  The one exception is swapchain images.
        */
       assert(!(image->vk.create_flags & VK_IMAGE_CREATE_ALIAS_BIT) ||
+             image->from_wsi ||
              image->bindings[ANV_IMAGE_MEMORY_BINDING_PRIVATE].memory_range.size == 0);
 
       /* Check primary surface */
@@ -937,10 +939,7 @@ check_memory_bindings(const struct anv_device *device,
  * Ideally, if vkGetPhysicalDeviceImageFormatProperties2() succeeds with a given
  * modifier, then vkCreateImage() produces an image that is compatible with the
  * modifier. However, it is difficult to reconcile the two functions to agree
- * due to their complexity. For example, isl_surf_get_ccs_surf() may
- * unexpectedly fail in vkCreateImage(), eliminating the image's aux surface
- * even when the modifier requires one. (Maybe we should reconcile the two
- * functions despite the difficulty).
+ * due to their complexity.
  */
 static VkResult MUST_CHECK
 check_drm_format_mod(const struct anv_device *device,
@@ -977,21 +976,7 @@ check_drm_format_mod(const struct anv_device *device,
       assert(isl_layout->colorspace == ISL_COLORSPACE_LINEAR ||
              isl_layout->colorspace == ISL_COLORSPACE_SRGB);
       assert(!anv_surface_is_valid(&plane->shadow_surface));
-
-      if (isl_mod_info->aux_usage != ISL_AUX_USAGE_NONE) {
-         /* Reject DISJOINT for consistency with the GL driver. */
-         assert(!image->disjoint);
-
-         /* The modifier's required aux usage mandates the image's aux usage.
-          * The inverse, however, does not hold; if the modifier has no aux
-          * usage, then we may enable a private aux surface.
-          */
-         if (plane->aux_usage != isl_mod_info->aux_usage) {
-            return vk_errorf(device, VK_ERROR_UNKNOWN,
-                             "image with modifier unexpectedly has wrong aux "
-                             "usage");
-         }
-      }
+      assert(!isl_drm_modifier_has_aux(isl_mod_info->modifier));
    }
 
    return VK_SUCCESS;
@@ -1273,10 +1258,15 @@ anv_image_init(struct anv_device *device, struct anv_image *image,
    if (image->vk.external_handle_types &
        VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID) {
       image->from_ahb = true;
+#ifdef ANDROID
+      image->vk.ahb_format = anv_ahb_format_for_vk_format(image->vk.format);
+#endif
       return VK_SUCCESS;
    }
 
    image->n_planes = anv_get_format_planes(image->vk.format);
+   image->from_wsi =
+      vk_find_struct_const(pCreateInfo->pNext, WSI_IMAGE_CREATE_INFO_MESA) != NULL;
 
    /* The Vulkan 1.2.165 glossary says:
     *
@@ -1605,7 +1595,7 @@ void anv_GetImageMemoryRequirements2(
                                      pMemoryRequirements);
 }
 
-void anv_GetDeviceImageMemoryRequirementsKHR(
+void anv_GetDeviceImageMemoryRequirements(
     VkDevice                                    _device,
     const VkDeviceImageMemoryRequirements*   pInfo,
     VkMemoryRequirements2*                      pMemoryRequirements)
@@ -1642,7 +1632,7 @@ void anv_GetImageSparseMemoryRequirements2(
    *pSparseMemoryRequirementCount = 0;
 }
 
-void anv_GetDeviceImageSparseMemoryRequirementsKHR(
+void anv_GetDeviceImageSparseMemoryRequirements(
     VkDevice                                    device,
     const VkDeviceImageMemoryRequirements* pInfo,
     uint32_t*                                   pSparseMemoryRequirementCount,
@@ -1844,8 +1834,8 @@ void anv_GetImageSubresourceLayout(
                                           0 /* logical_z_offset_px */,
                                           &offset_B, NULL, NULL);
       layout->offset += offset_B;
-      layout->size = layout->rowPitch * anv_minify(image->vk.extent.height,
-                                                   subresource->mipLevel) *
+      layout->size = layout->rowPitch * u_minify(image->vk.extent.height,
+                                                 subresource->mipLevel) *
                      image->vk.extent.depth;
    } else {
       layout->size = surface->memory_range.size;
@@ -1984,8 +1974,6 @@ anv_layout_to_aux_state(const struct intel_device_info * const devinfo,
          break;
 
       case ISL_AUX_USAGE_MCS:
-         if (!anv_can_sample_mcs_with_clear(devinfo, image))
-            clear_supported = false;
          break;
 
       default:
@@ -2392,36 +2380,6 @@ anv_CreateImageView(VkDevice _device,
    iview->image = image;
    iview->n_planes = anv_image_aspect_get_planes(iview->vk.aspects);
 
-   /* Check if a conversion info was passed. */
-   const struct anv_format *conv_format = NULL;
-   const VkSamplerYcbcrConversionInfo *conv_info =
-      vk_find_struct_const(pCreateInfo->pNext, SAMPLER_YCBCR_CONVERSION_INFO);
-
-#ifdef ANDROID
-   /* If image has an external format, the pNext chain must contain an
-    * instance of VKSamplerYcbcrConversionInfo with a conversion object
-    * created with the same external format as image."
-    */
-   assert(!image->vk.android_external_format || conv_info);
-#endif
-
-   if (conv_info) {
-      ANV_FROM_HANDLE(anv_ycbcr_conversion, conversion, conv_info->conversion);
-      conv_format = conversion->format;
-   }
-
-#ifdef ANDROID
-   /* "If image has an external format, format must be VK_FORMAT_UNDEFINED." */
-   assert(!image->vk.android_external_format ||
-          pCreateInfo->format == VK_FORMAT_UNDEFINED);
-#endif
-
-   /* Format is undefined, this can happen when using external formats. Set
-    * view format from the passed conversion info.
-    */
-   if (iview->vk.view_format == VK_FORMAT_UNDEFINED && conv_format)
-      iview->vk.view_format = conv_format->vk_format;
-
    /* Now go through the underlying image selected planes and map them to
     * planes in the image view.
     */
@@ -2509,7 +2467,7 @@ anv_CreateImageView(VkDevice _device,
                                       &iview->planes[vplane].storage_surface_state,
                                       NULL);
 
-         if (isl_is_storage_image_format(format.isl_format)) {
+         if (isl_is_storage_image_format(device->info, format.isl_format)) {
             iview->planes[vplane].lowered_storage_surface_state.state =
                alloc_surface_state(device);
 

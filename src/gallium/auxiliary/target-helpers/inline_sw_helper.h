@@ -2,7 +2,7 @@
 #ifndef INLINE_SW_HELPER_H
 #define INLINE_SW_HELPER_H
 
-#include "pipe/p_compiler.h"
+#include "util/compiler.h"
 #include "pipe/p_screen.h"
 #include "util/u_debug.h"
 #include "frontend/sw_winsys.h"
@@ -104,9 +104,6 @@ sw_screen_create_vk(struct sw_winsys *winsys, bool sw_vk)
       (sw_vk ? "" : debug_get_option("GALLIUM_DRIVER", "")),
 #if defined(GALLIUM_D3D12)
       (sw_vk || only_sw) ? "" : "d3d12",
-#endif
-#if defined(GALLIUM_ASAHI) && __APPLE__
-      (sw_vk || only_sw) ? "" : "asahi",
 #endif
 #if defined(GALLIUM_LLVMPIPE)
       "llvmpipe",

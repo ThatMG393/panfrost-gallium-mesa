@@ -62,6 +62,7 @@ struct gl_vertex_array_object;
 struct ati_fragment_shader;
 struct util_queue_monitoring;
 struct pipe_draw_info;
+struct pipe_draw_indirect_info;
 struct pipe_draw_start_count_bias;
 struct pipe_vertex_state;
 struct pipe_draw_vertex_state_info;
@@ -145,8 +146,7 @@ struct dd_function_table {
     * Optimal Gallium version of Draw() that doesn't require translation
     * of draw info in the state tracker.
     *
-    * The interface is identical to pipe_context::draw_vbo
-    * with indirect == NULL.
+    * The interface is identical to pipe_context::draw_vbo.
     *
     * "info" is not const and the following fields can be changed by
     * the callee, so callers should be aware:
@@ -154,11 +154,11 @@ struct dd_function_table {
     * - info->min_index (if index_bounds_valid is false)
     * - info->max_index (if index_bounds_valid is false)
     * - info->drawid (if increment_draw_id is true)
-    * - info->index.gl_bo (if index_size && !has_user_indices)
     */
    void (*DrawGallium)(struct gl_context *ctx,
                        struct pipe_draw_info *info,
                        unsigned drawid_offset,
+                       const struct pipe_draw_indirect_info *indirect,
                        const struct pipe_draw_start_count_bias *draws,
                        unsigned num_draws);
 
@@ -182,8 +182,7 @@ struct dd_function_table {
                                   struct pipe_draw_vertex_state_info info,
                                   const struct pipe_draw_start_count_bias *draws,
                                   const uint8_t *mode,
-                                  unsigned num_draws,
-                                  bool per_vertex_edgeflags);
+                                  unsigned num_draws);
    /*@}*/
 
    struct pipe_vertex_state *

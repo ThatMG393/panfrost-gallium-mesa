@@ -33,6 +33,7 @@
 #endif
 
 struct leaf_args {
+   VOID_REF ir;
    VOID_REF bvh;
    REF(radv_ir_header) header;
    REF(key_id_pair) ids;
@@ -41,7 +42,6 @@ struct leaf_args {
    VOID_REF indices;
    VOID_REF transform;
 
-   uint32_t dst_offset;
    uint32_t first_id;
    uint32_t geometry_type;
    uint32_t geometry_id;
@@ -58,7 +58,7 @@ struct morton_args {
 };
 
 #define LBVH_RIGHT_CHILD_BIT_SHIFT 29
-#define LBVH_RIGHT_CHILD_BIT (1 << LBVH_RIGHT_CHILD_BIT_SHIFT)
+#define LBVH_RIGHT_CHILD_BIT       (1 << LBVH_RIGHT_CHILD_BIT_SHIFT)
 
 struct lbvh_node_info {
    /* Number of children that have been processed (or are invalid/leaves) in
@@ -95,18 +95,12 @@ struct copy_args {
    uint32_t mode;
 };
 
-struct convert_internal_args {
+struct encode_args {
    VOID_REF intermediate_bvh;
    VOID_REF output_bvh;
    REF(radv_ir_header) header;
    uint32_t output_bvh_offset;
    uint32_t leaf_node_count;
-   uint32_t geometry_type;
-};
-
-struct convert_leaf_args {
-   VOID_REF intermediate_bvh;
-   VOID_REF output_bvh;
    uint32_t geometry_type;
 };
 
@@ -124,6 +118,13 @@ struct ploc_args {
    VOID_REF ids_0;
    VOID_REF ids_1;
    uint32_t internal_node_offset;
+};
+
+struct header_args {
+   REF(radv_ir_header) src;
+   REF(radv_accel_struct_header) dst;
+   uint32_t bvh_offset;
+   uint32_t instance_count;
 };
 
 #endif

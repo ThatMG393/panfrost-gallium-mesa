@@ -150,7 +150,7 @@ dzn_query_pool_create(struct dzn_device *device,
    hres = ID3D12Device1_CreateCommittedResource(device->dev, &hprops,
                                                 D3D12_HEAP_FLAG_NONE,
                                                 &rdesc,
-                                                D3D12_RESOURCE_STATE_COPY_DEST,
+                                                D3D12_RESOURCE_STATE_COMMON,
                                                 NULL,
                                                 &IID_ID3D12Resource,
                                                 (void **)&qpool->resolve_buffer);
@@ -165,7 +165,7 @@ dzn_query_pool_create(struct dzn_device *device,
    hres = ID3D12Device1_CreateCommittedResource(device->dev, &hprops,
                                                 D3D12_HEAP_FLAG_NONE,
                                                 &rdesc,
-                                                D3D12_RESOURCE_STATE_COPY_DEST,
+                                                D3D12_RESOURCE_STATE_COMMON,
                                                 NULL,
                                                 &IID_ID3D12Resource,
                                                 (void **)&qpool->collect_buffer);
@@ -240,7 +240,7 @@ dzn_ResetQueryPool(VkDevice device,
          query->fence = NULL;
       }
    }
-   mtx_lock(&qpool->queries_lock);
+   mtx_unlock(&qpool->queries_lock);
 
    memset((uint8_t *)qpool->collect_map + dzn_query_pool_get_result_offset(qpool, firstQuery),
           0, queryCount * qpool->query_size);

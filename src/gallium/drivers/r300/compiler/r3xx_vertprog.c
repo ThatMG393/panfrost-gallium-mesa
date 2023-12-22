@@ -237,6 +237,36 @@ static void ei_math1(struct r300_vertex_program_code *vp,
 	inst[3] = __CONST(0, RC_SWIZZLE_ZERO);
 }
 
+static void ei_cmp(struct r300_vertex_program_code *vp,
+				struct rc_sub_instruction *vpi,
+				unsigned int * inst)
+{
+	inst[0] = PVS_OP_DST_OPERAND(VE_COND_MUX_GTE,
+				     0,
+				     0,
+				     t_dst_index(vp, &vpi->DstReg),
+				     t_dst_mask(vpi->DstReg.WriteMask),
+				     t_dst_class(vpi->DstReg.File),
+                                     vpi->SaturateMode == RC_SATURATE_ZERO_ONE);
+
+	/* Arguments with constant swizzles still count as a unique
+	 * temporary, so we should make sure these arguments share a
+	 * register index with one of the other arguments. */
+	for (unsigned i = 0; i < 3; i++) {
+		unsigned j = (i + 1) % 3;
+		if (vpi->SrcReg[i].File == RC_FILE_NONE &&
+			(vpi->SrcReg[j].File == RC_FILE_NONE ||
+			 vpi->SrcReg[j].File == RC_FILE_TEMPORARY)) {
+			vpi->SrcReg[i].Index = vpi->SrcReg[j].Index;
+			break;
+		}
+	}
+
+	inst[1] = t_src(vp, &vpi->SrcReg[0]);
+	inst[2] = t_src(vp, &vpi->SrcReg[2]);
+	inst[3] = t_src(vp, &vpi->SrcReg[1]);
+}
+
 static void ei_lit(struct r300_vertex_program_code *vp,
 				      struct rc_sub_instruction *vpi,
 				      unsigned int * inst)
@@ -414,6 +444,7 @@ static void translate_vertex_program(struct radeon_compiler *c, void *user)
 		case RC_OPCODE_ARL: ei_vector1(compiler->code, VE_FLT2FIX_DX, vpi, inst); break;
 		case RC_OPCODE_ARR: ei_vector1(compiler->code, VE_FLT2FIX_DX_RND, vpi, inst); break;
 		case RC_OPCODE_COS: ei_math1(compiler->code, ME_COS, vpi, inst); break;
+		case RC_OPCODE_CMP: ei_cmp(compiler->code, vpi, inst); break;
 		case RC_OPCODE_DP4: ei_vector2(compiler->code, VE_DOT_PRODUCT, vpi, inst); break;
 		case RC_OPCODE_DST: ei_vector2(compiler->code, VE_DISTANCE_VECTOR, vpi, inst); break;
 		case RC_OPCODE_EX2: ei_math1(compiler->code, ME_EXP_BASE2_FULL_DX, vpi, inst); break;
@@ -471,11 +502,15 @@ static void translate_vertex_program(struct radeon_compiler *c, void *user)
 					"Too many flow control instructions.");
 				return;
 			}
+			/* Maximum of R500_PVS_FC_LOOP_CNT_JMP_INST is 0xff, here
+			 * we reduce it to half to avoid occasional hangs on RV516
+			 * and downclocked RV530.
+			 */
 			if (compiler->Base.is_r500) {
 				compiler->code->fc_op_addrs.r500
 					[compiler->code->num_fc_ops].lw =
 					R500_PVS_FC_ACT_ADRS(act_addr)
-					| R500_PVS_FC_LOOP_CNT_JMP_INST(0x00ff)
+					| R500_PVS_FC_LOOP_CNT_JMP_INST(0x0080)
 					;
 				compiler->code->fc_op_addrs.r500
 					[compiler->code->num_fc_ops].uw =
@@ -794,77 +829,6 @@ static int swizzle_is_native(rc_opcode opcode, struct rc_src_register reg)
 	return 1;
 }
 
-static void transform_negative_addressing(struct r300_vertex_program_compiler *c,
-					  struct rc_instruction *arl,
-					  struct rc_instruction *end,
-					  int min_offset)
-{
-	struct rc_instruction *inst, *add;
-	unsigned const_swizzle;
-
-	/* Transform ARL/ARR */
-	add = rc_insert_new_instruction(&c->Base, arl->Prev);
-	add->U.I.Opcode = RC_OPCODE_ADD;
-	add->U.I.DstReg.File = RC_FILE_TEMPORARY;
-	add->U.I.DstReg.Index = rc_find_free_temporary(&c->Base);
-	add->U.I.DstReg.WriteMask = RC_MASK_X;
-	add->U.I.SrcReg[0] = arl->U.I.SrcReg[0];
-	add->U.I.SrcReg[1].File = RC_FILE_CONSTANT;
-	add->U.I.SrcReg[1].Index = rc_constants_add_immediate_scalar(&c->Base.Program.Constants,
-								     min_offset, &const_swizzle);
-	add->U.I.SrcReg[1].Swizzle = const_swizzle;
-
-	arl->U.I.SrcReg[0].File = RC_FILE_TEMPORARY;
-	arl->U.I.SrcReg[0].Index = add->U.I.DstReg.Index;
-	arl->U.I.SrcReg[0].Swizzle = RC_SWIZZLE_XXXX;
-
-	/* Rewrite offsets up to and excluding inst. */
-	for (inst = arl->Next; inst != end; inst = inst->Next) {
-		const struct rc_opcode_info * opcode = rc_get_opcode_info(inst->U.I.Opcode);
-
-		for (unsigned i = 0; i < opcode->NumSrcRegs; i++)
-			if (inst->U.I.SrcReg[i].RelAddr)
-				inst->U.I.SrcReg[i].Index -= min_offset;
-	}
-}
-
-static void rc_emulate_negative_addressing(struct radeon_compiler *compiler, void *user)
-{
-	struct r300_vertex_program_compiler * c = (struct r300_vertex_program_compiler*)compiler;
-	struct rc_instruction *inst, *lastARL = NULL;
-	int min_offset = 0;
-
-	for (inst = c->Base.Program.Instructions.Next; inst != &c->Base.Program.Instructions; inst = inst->Next) {
-		const struct rc_opcode_info * opcode = rc_get_opcode_info(inst->U.I.Opcode);
-
-		if (inst->U.I.Opcode == RC_OPCODE_ARL || inst->U.I.Opcode == RC_OPCODE_ARR) {
-			if (lastARL != NULL && min_offset < 0)
-				transform_negative_addressing(c, lastARL, inst, min_offset);
-
-			lastARL = inst;
-			min_offset = 0;
-			continue;
-		}
-
-		for (unsigned i = 0; i < opcode->NumSrcRegs; i++) {
-			if (inst->U.I.SrcReg[i].RelAddr &&
-			    inst->U.I.SrcReg[i].Index < 0) {
-				/* ARL must precede any indirect addressing. */
-				if (!lastARL) {
-					rc_error(&c->Base, "Vertex shader: Found relative addressing without ARL/ARR.");
-					return;
-				}
-
-				if (inst->U.I.SrcReg[i].Index < min_offset)
-					min_offset = inst->U.I.SrcReg[i].Index;
-			}
-		}
-	}
-
-	if (lastARL != NULL && min_offset < 0)
-		transform_negative_addressing(c, lastARL, inst, min_offset);
-}
-
 const struct rc_swizzle_caps r300_vertprog_swizzle_caps = {
 	.IsNative = &swizzle_is_native,
 	.Split = NULL /* should never be called */
@@ -876,19 +840,12 @@ void r3xx_compile_vertex_program(struct r300_vertex_program_compiler *c)
 	int opt = !c->Base.disable_optimizations;
 
 	/* Lists of instruction transformations. */
-	struct radeon_program_transformation alu_rewrite_r500[] = {
+	struct radeon_program_transformation alu_rewrite[] = {
 		{ &r300_transform_vertex_alu, NULL },
-		{ &r300_transform_trig_scale_vertex, NULL },
 		{ NULL, NULL }
 	};
 
-	struct radeon_program_transformation alu_rewrite_r300[] = {
-		{ &r300_transform_vertex_alu, NULL },
-		{ &r300_transform_trig_simple, NULL },
-		{ NULL, NULL }
-	};
-
-	/* Note: These passes have to be done seperately from ALU rewrite,
+	/* Note: These passes have to be done separately from ALU rewrite,
 	 * otherwise non-native ALU instructions with source conflits
 	 * or non-native modifiers will not be treated properly.
 	 */
@@ -906,9 +863,7 @@ void r3xx_compile_vertex_program(struct r300_vertex_program_compiler *c)
 	struct radeon_compiler_pass vs_list[] = {
 		/* NAME				DUMP PREDICATE	FUNCTION			PARAM */
 		{"add artificial outputs",	0, 1,		rc_vs_add_artificial_outputs,	NULL},
-		{"emulate negative addressing", 1, 1,		rc_emulate_negative_addressing,	NULL},
-		{"native rewrite",		1, is_r500,	rc_local_transform,		alu_rewrite_r500},
-		{"native rewrite",		1, !is_r500,	rc_local_transform,		alu_rewrite_r300},
+		{"native rewrite",		1, 1,		rc_local_transform,		alu_rewrite},
 		{"emulate modifiers",		1, !is_r500,	rc_local_transform,		emulate_modifiers},
 		{"deadcode",			1, opt,		rc_dataflow_deadcode,		NULL},
 		{"dataflow optimize",		1, opt,		rc_optimize,			NULL},

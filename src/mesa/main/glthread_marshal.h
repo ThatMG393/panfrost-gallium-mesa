@@ -33,7 +33,7 @@
 #include "main/glthread.h"
 #include "main/context.h"
 #include "main/macros.h"
-#include "marshal_generated.h"
+#include "main/matrix.h"
 
 struct marshal_cmd_base
 {
@@ -48,8 +48,28 @@ struct marshal_cmd_base
    uint16_t cmd_size;
 };
 
-typedef uint32_t (*_mesa_unmarshal_func)(struct gl_context *ctx, const void *cmd);
+/* This must be included after "struct marshal_cmd_base" because it uses it. */
+#include "marshal_generated.h"
+
+typedef uint32_t (*_mesa_unmarshal_func)(struct gl_context *ctx,
+                                         const void *restrict cmd);
 extern const _mesa_unmarshal_func _mesa_unmarshal_dispatch[NUM_DISPATCH_CMD];
+extern const char *_mesa_unmarshal_func_name[NUM_DISPATCH_CMD];
+
+struct marshal_cmd_DrawElementsUserBuf
+{
+   struct marshal_cmd_base cmd_base;
+   GLenum16 mode;
+   GLenum16 type;
+   GLsizei count;
+   GLsizei instance_count;
+   GLint basevertex;
+   GLuint baseinstance;
+   GLuint drawid;
+   GLuint user_buffer_mask;
+   const GLvoid *indices;
+   struct gl_buffer_object *index_buffer;
+};
 
 static inline void *
 _mesa_glthread_allocate_command(struct gl_context *ctx,
@@ -73,6 +93,19 @@ _mesa_glthread_allocate_command(struct gl_context *ctx,
    return cmd_base;
 }
 
+static inline struct marshal_cmd_base *
+_mesa_glthread_get_cmd(uint64_t *opaque_cmd)
+{
+   return (struct marshal_cmd_base*)opaque_cmd;
+}
+
+static inline uint64_t *
+_mesa_glthread_next_cmd(uint64_t *opaque_cmd, unsigned cmd_size)
+{
+   assert(_mesa_glthread_get_cmd(opaque_cmd)->cmd_size == cmd_size);
+   return opaque_cmd + cmd_size;
+}
+
 static inline bool
 _mesa_glthread_call_is_last(struct glthread_state *glthread,
                             struct marshal_cmd_base *last)
@@ -92,54 +125,6 @@ static inline bool
 _mesa_glthread_has_no_unpack_buffer(const struct gl_context *ctx)
 {
    return ctx->GLThread.CurrentPixelUnpackBufferName == 0;
-}
-
-/**
- * Instead of conditionally handling marshaling immediate index data in draw
- * calls (deprecated and removed in GL core), we just disable threading.
- */
-static inline bool
-_mesa_glthread_has_non_vbo_vertices_or_indices(const struct gl_context *ctx)
-{
-   const struct glthread_state *glthread = &ctx->GLThread;
-   struct glthread_vao *vao = glthread->CurrentVAO;
-
-   return ctx->API != API_OPENGL_CORE &&
-          (vao->CurrentElementBufferName == 0 ||
-           (vao->UserPointerMask & vao->BufferEnabled));
-}
-
-static inline bool
-_mesa_glthread_has_non_vbo_vertices(const struct gl_context *ctx)
-{
-   const struct glthread_state *glthread = &ctx->GLThread;
-   const struct glthread_vao *vao = glthread->CurrentVAO;
-
-   return ctx->API != API_OPENGL_CORE &&
-          (vao->UserPointerMask & vao->BufferEnabled);
-}
-
-static inline bool
-_mesa_glthread_has_non_vbo_vertices_or_indirect(const struct gl_context *ctx)
-{
-   const struct glthread_state *glthread = &ctx->GLThread;
-   const struct glthread_vao *vao = glthread->CurrentVAO;
-
-   return ctx->API != API_OPENGL_CORE &&
-          (glthread->CurrentDrawIndirectBufferName == 0 ||
-           (vao->UserPointerMask & vao->BufferEnabled));
-}
-
-static inline bool
-_mesa_glthread_has_non_vbo_vertices_or_indices_or_indirect(const struct gl_context *ctx)
-{
-   const struct glthread_state *glthread = &ctx->GLThread;
-   struct glthread_vao *vao = glthread->CurrentVAO;
-
-   return ctx->API != API_OPENGL_CORE &&
-          (glthread->CurrentDrawIndirectBufferName == 0 ||
-           vao->CurrentElementBufferName == 0 ||
-           (vao->UserPointerMask & vao->BufferEnabled));
 }
 
 static inline unsigned
@@ -446,19 +431,6 @@ _mesa_get_matrix_index(struct gl_context *ctx, GLenum mode)
    return M_DUMMY;
 }
 
-static inline bool
-_mesa_matrix_is_identity(const float *m)
-{
-   static float identity[16] = {
-      1, 0, 0, 0,
-      0, 1, 0, 0,
-      0, 0, 1, 0,
-      0, 0, 0, 1
-   };
-
-   return !memcmp(m, identity, sizeof(identity));
-}
-
 static inline void
 _mesa_glthread_Enable(struct gl_context *ctx, GLenum cap)
 {
@@ -470,11 +442,12 @@ _mesa_glthread_Enable(struct gl_context *ctx, GLenum cap)
    case GL_PRIMITIVE_RESTART_FIXED_INDEX:
       _mesa_glthread_set_prim_restart(ctx, cap, true);
       break;
-   case GL_DEBUG_OUTPUT_SYNCHRONOUS_ARB:
-      _mesa_glthread_destroy(ctx, "Enable(DEBUG_OUTPUT_SYNCHRONOUS)");
-      break;
    case GL_BLEND:
       ctx->GLThread.Blend = true;
+      break;
+   case GL_DEBUG_OUTPUT_SYNCHRONOUS:
+      _mesa_glthread_disable(ctx);
+      ctx->GLThread.DebugOutputSynchronous = true;
       break;
    case GL_DEPTH_TEST:
       ctx->GLThread.DepthTest = true;
@@ -487,6 +460,18 @@ _mesa_glthread_Enable(struct gl_context *ctx, GLenum cap)
       break;
    case GL_POLYGON_STIPPLE:
       ctx->GLThread.PolygonStipple = true;
+      break;
+   case GL_VERTEX_ARRAY:
+   case GL_NORMAL_ARRAY:
+   case GL_COLOR_ARRAY:
+   case GL_TEXTURE_COORD_ARRAY:
+   case GL_INDEX_ARRAY:
+   case GL_EDGE_FLAG_ARRAY:
+   case GL_FOG_COORDINATE_ARRAY:
+   case GL_SECONDARY_COLOR_ARRAY:
+   case GL_POINT_SIZE_ARRAY_OES:
+      _mesa_glthread_ClientState(ctx, NULL, _mesa_array_to_attrib(ctx, cap),
+                                 true);
       break;
    }
 }
@@ -508,6 +493,10 @@ _mesa_glthread_Disable(struct gl_context *ctx, GLenum cap)
    case GL_CULL_FACE:
       ctx->GLThread.CullFace = false;
       break;
+   case GL_DEBUG_OUTPUT_SYNCHRONOUS:
+      ctx->GLThread.DebugOutputSynchronous = false;
+      _mesa_glthread_enable(ctx);
+      break;
    case GL_DEPTH_TEST:
       ctx->GLThread.DepthTest = false;
       break;
@@ -516,6 +505,18 @@ _mesa_glthread_Disable(struct gl_context *ctx, GLenum cap)
       break;
    case GL_POLYGON_STIPPLE:
       ctx->GLThread.PolygonStipple = false;
+      break;
+   case GL_VERTEX_ARRAY:
+   case GL_NORMAL_ARRAY:
+   case GL_COLOR_ARRAY:
+   case GL_TEXTURE_COORD_ARRAY:
+   case GL_INDEX_ARRAY:
+   case GL_EDGE_FLAG_ARRAY:
+   case GL_FOG_COORDINATE_ARRAY:
+   case GL_SECONDARY_COLOR_ARRAY:
+   case GL_POINT_SIZE_ARRAY_OES:
+      _mesa_glthread_ClientState(ctx, NULL, _mesa_array_to_attrib(ctx, cap),
+                                 false);
       break;
    }
 }
@@ -532,6 +533,8 @@ _mesa_glthread_IsEnabled(struct gl_context *ctx, GLenum cap)
       return ctx->GLThread.Blend;
    case GL_CULL_FACE:
       return ctx->GLThread.CullFace;
+   case GL_DEBUG_OUTPUT_SYNCHRONOUS:
+      return ctx->GLThread.DebugOutputSynchronous;
    case GL_DEPTH_TEST:
       return ctx->GLThread.DepthTest;
    case GL_LIGHTING:

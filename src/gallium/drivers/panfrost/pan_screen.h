@@ -30,22 +30,23 @@
 #define PAN_SCREEN_H
 
 #include <xf86drm.h>
-#include "pipe/p_screen.h"
 #include "pipe/p_defines.h"
+#include "pipe/p_screen.h"
 #include "renderonly/renderonly.h"
-#include "util/u_dynarray.h"
 #include "util/bitset.h"
-#include "util/set.h"
-#include "util/log.h"
 #include "util/disk_cache.h"
+#include "util/log.h"
+#include "util/set.h"
+#include "util/u_dynarray.h"
 
 #include "pan_device.h"
 #include "pan_mempool.h"
+#include "pan_texture.h"
 
 #define PAN_QUERY_DRAW_CALLS (PIPE_QUERY_DRIVER_SPECIFIC + 0)
 
 static const struct pipe_driver_query_info panfrost_driver_query_list[] = {
-        {"draw-calls", PAN_QUERY_DRAW_CALLS, { 0 }},
+   {"draw-calls", PAN_QUERY_DRAW_CALLS, {0}},
 };
 
 struct panfrost_batch;

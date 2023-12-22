@@ -31,14 +31,14 @@
 #include "genxml/gen_macros.h"
 
 #include <stdbool.h>
-#include "drm-uapi/drm_fourcc.h"
-#include "util/format/u_format.h"
 #include "compiler/shader_enums.h"
+#include "drm-uapi/drm_fourcc.h"
 #include "genxml/gen_macros.h"
+#include "util/format/u_format.h"
 #include "pan_bo.h"
 #include "pan_device.h"
-#include "pan_util.h"
 #include "pan_format.h"
+#include "pan_util.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -186,79 +186,78 @@ unsigned panfrost_afbc_superblock_height(uint64_t modifier);
 
 bool panfrost_afbc_is_wide(uint64_t modifier);
 
+struct pan_block_size panfrost_afbc_subblock_size(uint64_t modifier);
+
 uint32_t pan_afbc_row_stride(uint64_t modifier, uint32_t width);
 
 uint32_t pan_afbc_stride_blocks(uint64_t modifier, uint32_t row_stride_bytes);
 
-struct pan_block_size
-panfrost_block_size(uint64_t modifier, enum pipe_format format);
+uint32_t pan_slice_align(uint64_t modifier);
+
+uint32_t pan_afbc_body_align(uint64_t modifier);
+
+struct pan_block_size panfrost_block_size(uint64_t modifier,
+                                          enum pipe_format format);
 
 #ifdef PAN_ARCH
-unsigned
-GENX(panfrost_estimate_texture_payload_size)(const struct pan_image_view *iview);
+unsigned GENX(panfrost_estimate_texture_payload_size)(
+   const struct pan_image_view *iview);
 
-void
-GENX(panfrost_new_texture)(const struct panfrost_device *dev,
-                           const struct pan_image_view *iview,
-                           void *out,
-                           const struct panfrost_ptr *payload);
+void GENX(panfrost_new_texture)(const struct panfrost_device *dev,
+                                const struct pan_image_view *iview, void *out,
+                                const struct panfrost_ptr *payload);
 #endif
 
-unsigned
-panfrost_get_layer_stride(const struct pan_image_layout *layout,
-                          unsigned level);
+unsigned panfrost_get_layer_stride(const struct pan_image_layout *layout,
+                                   unsigned level);
 
-unsigned
-panfrost_texture_offset(const struct pan_image_layout *layout,
-                        unsigned level, unsigned array_idx,
-                        unsigned surface_idx);
+unsigned panfrost_texture_offset(const struct pan_image_layout *layout,
+                                 unsigned level, unsigned array_idx,
+                                 unsigned surface_idx);
 
 struct pan_pool;
-struct pan_scoreboard;
+struct pan_jc;
 
 /* DRM modifier helper */
 
-#define drm_is_afbc(mod) \
-        ((mod >> 52) == (DRM_FORMAT_MOD_ARM_TYPE_AFBC | \
-                (DRM_FORMAT_MOD_VENDOR_ARM << 4)))
+#define drm_is_afbc(mod)                                                       \
+   ((mod >> 52) ==                                                             \
+    (DRM_FORMAT_MOD_ARM_TYPE_AFBC | (DRM_FORMAT_MOD_VENDOR_ARM << 4)))
 
 struct pan_image_explicit_layout {
-        unsigned offset;
-        unsigned row_stride;
+   unsigned offset;
+   unsigned row_stride;
 };
 
 bool
-pan_image_layout_init(struct pan_image_layout *layout,
+pan_image_layout_init(const struct panfrost_device *dev,
+                      struct pan_image_layout *layout,
                       const struct pan_image_explicit_layout *explicit_layout);
 
-unsigned
-panfrost_get_legacy_stride(const struct pan_image_layout *layout,
-                           unsigned level);
+unsigned panfrost_get_legacy_stride(const struct pan_image_layout *layout,
+                                    unsigned level);
 
-unsigned
-panfrost_from_legacy_stride(unsigned legacy_stride,
-                            enum pipe_format format,
-                            uint64_t modifier);
+unsigned panfrost_from_legacy_stride(unsigned legacy_stride,
+                                     enum pipe_format format,
+                                     uint64_t modifier);
 
 struct pan_surface {
-        union {
-                mali_ptr data;
-                struct {
-                        mali_ptr header;
-                        mali_ptr body;
-                } afbc;
-        };
+   union {
+      mali_ptr data;
+      struct {
+         mali_ptr header;
+         mali_ptr body;
+      } afbc;
+   };
 };
 
-void
-pan_iview_get_surface(const struct pan_image_view *iview,
-                      unsigned level, unsigned layer, unsigned sample,
-                      struct pan_surface *surf);
-
+void pan_iview_get_surface(const struct pan_image_view *iview, unsigned level,
+                           unsigned layer, unsigned sample,
+                           struct pan_surface *surf);
 
 #if PAN_ARCH >= 9
 enum mali_afbc_compression_mode
-pan_afbc_compression_mode(enum pipe_format format);
+GENX(pan_afbc_compression_mode)(enum pipe_format format);
 #endif
 
 #ifdef __cplusplus

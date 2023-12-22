@@ -1,0 +1,674 @@
+diff a/src/panfrost/midgard/disassemble.c b/src/panfrost/midgard/disassemble.c	(rejected hunks)
+@@ -1242,393 +1254,346 @@ print_alu_word(disassemble_context *ctx, FILE *fp, uint32_t *words,
+ UNUSED static void
+ print_varying_parameters(FILE *fp, midgard_load_store_word *word)
+ {
+-        midgard_varying_params p = midgard_unpack_varying_params(*word);
+-
+-        /* If a varying, there are qualifiers */
+-        if (p.flat_shading)
+-                fprintf(fp, ".flat");
+-
+-        if (p.perspective_correction)
+-                fprintf(fp, ".correction");
+-
+-        if (p.centroid_mapping)
+-                fprintf(fp, ".centroid");
+-
+-        if (p.interpolate_sample)
+-                fprintf(fp, ".sample");
+-
+-        switch (p.modifier) {
+-                case midgard_varying_mod_perspective_y:
+-                        fprintf(fp, ".perspectivey");
+-                        break;
+-                case midgard_varying_mod_perspective_z:
+-                        fprintf(fp, ".perspectivez");
+-                        break;
+-                case midgard_varying_mod_perspective_w:
+-                        fprintf(fp, ".perspectivew");
+-                        break;
+-                default:
+-                        unreachable("invalid varying modifier");
+-                        break;
+-        }
+-}
+-
+-static bool
+-is_op_varying(unsigned op)
+-{
+-        switch (op) {
+-        case midgard_op_st_vary_16:
+-        case midgard_op_st_vary_32:
+-        case midgard_op_st_vary_32i:
+-        case midgard_op_st_vary_32u:
+-        case midgard_op_ld_vary_16:
+-        case midgard_op_ld_vary_32:
+-        case midgard_op_ld_vary_32i:
+-        case midgard_op_ld_vary_32u:
+-                return true;
+-        }
+-
+-        return false;
+-}
+-
+-static bool
+-is_op_attribute(unsigned op)
+-{
+-        switch (op) {
+-        case midgard_op_ld_attr_16:
+-        case midgard_op_ld_attr_32:
+-        case midgard_op_ld_attr_32i:
+-        case midgard_op_ld_attr_32u:
+-                return true;
+-        }
+-
+-        return false;
++   midgard_varying_params p = midgard_unpack_varying_params(*word);
++
++   /* If a varying, there are qualifiers */
++   if (p.flat_shading)
++      fprintf(fp, ".flat");
++
++   if (p.perspective_correction)
++      fprintf(fp, ".correction");
++
++   if (p.centroid_mapping)
++      fprintf(fp, ".centroid");
++
++   if (p.interpolate_sample)
++      fprintf(fp, ".sample");
++
++   switch (p.modifier) {
++   case midgard_varying_mod_perspective_y:
++      fprintf(fp, ".perspectivey");
++      break;
++   case midgard_varying_mod_perspective_z:
++      fprintf(fp, ".perspectivez");
++      break;
++   case midgard_varying_mod_perspective_w:
++      fprintf(fp, ".perspectivew");
++      break;
++   default:
++      unreachable("invalid varying modifier");
++      break;
++   }
+ }
+ 
+ /* Helper to print integer well-formatted, but only when non-zero. */
+ static void
+ midgard_print_sint(FILE *fp, int n)
+ {
+-        if (n > 0)
+-                fprintf(fp, " + 0x%X", n);
+-        else if (n < 0)
+-                fprintf(fp, " - 0x%X", -n);
++   if (n > 0)
++      fprintf(fp, " + 0x%X", n);
++   else if (n < 0)
++      fprintf(fp, " - 0x%X", -n);
+ }
+ 
+ static void
+-print_load_store_instr(disassemble_context *ctx, FILE *fp, uint64_t data, bool verbose)
++print_load_store_instr(disassemble_context *ctx, FILE *fp, uint64_t data,
++                       bool verbose)
+ {
+-        midgard_load_store_word *word = (midgard_load_store_word *) &data;
+-
+-        print_ld_st_opcode(fp, word->op);
+-
+-        if (word->op == midgard_op_trap) {
+-                fprintf(fp, " 0x%X\n", word->signed_offset);
+-                return;
+-        }
+-
+-        /* Print opcode modifiers */
+-
+-        if (OP_USES_ATTRIB(word->op)) {
+-                /* Print non-default attribute tables */
+-                bool default_secondary =
+-                        (word->op == midgard_op_st_vary_32) ||
+-                        (word->op == midgard_op_st_vary_16) ||
+-                        (word->op == midgard_op_st_vary_32u) ||
+-                        (word->op == midgard_op_st_vary_32i) ||
+-                        (word->op == midgard_op_ld_vary_32) ||
+-                        (word->op == midgard_op_ld_vary_16) ||
+-                        (word->op == midgard_op_ld_vary_32u) ||
+-                        (word->op == midgard_op_ld_vary_32i);
+-
+-                bool default_primary =
+-                        (word->op == midgard_op_ld_attr_32) ||
+-                        (word->op == midgard_op_ld_attr_16) ||
+-                        (word->op == midgard_op_ld_attr_32u) ||
+-                        (word->op == midgard_op_ld_attr_32i);
+-
+-                bool has_default = (default_secondary || default_primary);
+-                bool auto32 = (word->index_format >> 0) & 1;
+-                bool is_secondary = (word->index_format >> 1) & 1;
+-
+-                if (auto32)
+-                        fprintf(fp, ".a32");
+-
+-                if (has_default && (is_secondary != default_secondary))
+-                        fprintf(fp, ".%s", is_secondary ? "secondary" : "primary");
+-        } else if (word->op == midgard_op_ld_cubemap_coords || OP_IS_PROJECTION(word->op))
+-                fprintf(fp, ".%s", word->bitsize_toggle ? "f32" : "f16");
+-
+-        fprintf(fp, " ");
+-
+-        /* src/dest register */
+-
+-        if (!OP_IS_STORE(word->op)) {
+-                print_ldst_write_reg(fp, word->reg);
+-
+-                /* Some opcodes don't have a swizzable src register, and
+-                 * instead the swizzle is applied before the result is written
+-                 * to the dest reg. For these ops, we combine the writemask
+-                 * with the swizzle to display them in the disasm compactly. */
+-                unsigned swizzle = word->swizzle;
+-                if ((OP_IS_REG2REG_LDST(word->op) &&
+-                        word->op != midgard_op_lea &&
+-                        word->op != midgard_op_lea_image) || OP_IS_ATOMIC(word->op))
+-                        swizzle = 0xE4;
+-                print_ldst_mask(fp, word->mask, swizzle);
+-        } else {
+-                uint8_t mask =
+-                        (word->mask & 0x1) |
+-                        ((word->mask & 0x2) << 1) |
+-                        ((word->mask & 0x4) << 2) |
+-                        ((word->mask & 0x8) << 3);
+-                mask |= mask << 1;
+-                print_ldst_read_reg(fp, word->reg);
+-                print_vec_swizzle(fp, word->swizzle, midgard_src_passthrough,
+-                                  midgard_reg_mode_32, mask);
+-        }
+-
+-        /* ld_ubo args */
+-        if (OP_IS_UBO_READ(word->op)) {
+-                if (word->signed_offset & 1) { /* buffer index imm */
+-                        unsigned imm = midgard_unpack_ubo_index_imm(*word);
+-                        fprintf(fp, ", %u", imm);
+-                } else { /* buffer index from reg */
+-                        fprintf(fp, ", ");
+-                        print_ldst_read_reg(fp, word->arg_reg);
+-                        fprintf(fp, ".%c", components[word->arg_comp]);
+-                }
+-
+-                fprintf(fp, ", ");
+-                print_ldst_read_reg(fp, word->index_reg);
+-                fprintf(fp, ".%c", components[word->index_comp]);
+-                if (word->index_shift)
+-                        fprintf(fp, " << %u",  word->index_shift);
+-                midgard_print_sint(fp, UNPACK_LDST_UBO_OFS(word->signed_offset));
+-        }
+-
+-        /* mem addr expression */
+-        if (OP_HAS_ADDRESS(word->op)) {
+-                fprintf(fp, ", ");
+-                bool first = true;
+-
+-                /* Skip printing zero */
+-                if (word->arg_reg != 7 || verbose) {
+-                        print_ldst_read_reg(fp, word->arg_reg);
+-                        fprintf(fp, ".u%d.%c",
+-                                word->bitsize_toggle ? 64 : 32, components[word->arg_comp]);
+-                        first = false;
+-                }
+-
+-                if ((word->op < midgard_op_atomic_cmpxchg ||
+-                     word->op > midgard_op_atomic_cmpxchg64_be) &&
+-                     word->index_reg != 0x7) {
+-                        if (!first)
+-                                fprintf(fp, " + ");
+-
+-                        print_ldst_read_reg(fp, word->index_reg);
+-                        fprintf(fp, "%s.%c",
+-                                index_format_names[word->index_format],
+-                                components[word->index_comp]);
+-                        if (word->index_shift)
+-                                fprintf(fp, " << %u",  word->index_shift);
+-                }
+-
+-                midgard_print_sint(fp, word->signed_offset);
+-        }
+-
+-        /* src reg for reg2reg ldst opcodes */
+-        if (OP_IS_REG2REG_LDST(word->op)) {
+-                fprintf(fp, ", ");
+-                print_ldst_read_reg(fp, word->arg_reg);
+-                print_vec_swizzle(fp, word->swizzle, midgard_src_passthrough,
+-                                  midgard_reg_mode_32, 0xFF);
+-        }
+-
+-        /* atomic ops encode the source arg where the ldst swizzle would be. */
+-        if (OP_IS_ATOMIC(word->op)) {
+-                unsigned src = (word->swizzle >> 2) & 0x7;
+-                unsigned src_comp = word->swizzle & 0x3;
+-                fprintf(fp, ", ");
+-                print_ldst_read_reg(fp, src);
+-                fprintf(fp, ".%c", components[src_comp]);
+-        }
+-
+-        /* CMPXCHG encodes the extra comparison arg where the index reg would be. */
+-        if (word->op >= midgard_op_atomic_cmpxchg &&
+-            word->op <= midgard_op_atomic_cmpxchg64_be) {
+-                fprintf(fp, ", ");
+-                print_ldst_read_reg(fp, word->index_reg);
+-                fprintf(fp, ".%c", components[word->index_comp]);
+-        }
+-
+-        /* index reg for attr/vary/images, selector for ld/st_special */
+-        if (OP_IS_SPECIAL(word->op) || OP_USES_ATTRIB(word->op)) {
+-                fprintf(fp, ", ");
+-                print_ldst_read_reg(fp, word->index_reg);
+-                fprintf(fp, ".%c", components[word->index_comp]);
+-                if (word->index_shift)
+-                        fprintf(fp, " << %u",  word->index_shift);
+-                midgard_print_sint(fp, UNPACK_LDST_ATTRIB_OFS(word->signed_offset));
+-        }
+-
+-        /* vertex reg for attrib/varying ops, coord reg for image ops */
+-        if (OP_USES_ATTRIB(word->op)) {
+-                fprintf(fp, ", ");
+-                print_ldst_read_reg(fp, word->arg_reg);
+-
+-                if (OP_IS_IMAGE(word->op))
+-                        fprintf(fp, ".u%d", word->bitsize_toggle ? 64 : 32);
+-
+-                fprintf(fp, ".%c", components[word->arg_comp]);
+-
+-                if (word->bitsize_toggle && !OP_IS_IMAGE(word->op))
+-                        midgard_print_sint(fp, UNPACK_LDST_VERTEX_OFS(word->signed_offset));
+-        }
+-
+-        /* TODO: properly decode format specifier for PACK/UNPACK ops */
+-        if (OP_IS_PACK_COLOUR(word->op) || OP_IS_UNPACK_COLOUR(word->op)) {
+-                fprintf(fp, ", ");
+-                unsigned format_specifier = (word->signed_offset << 4) | word->index_shift;
+-                fprintf(fp, "0x%X", format_specifier);
+-        }
+-
+-        fprintf(fp, "\n");
+-
+-        /* Debugging stuff */
+-
+-        if (!OP_IS_STORE(word->op))
+-                update_dest(ctx, word->reg);
++   midgard_load_store_word *word = (midgard_load_store_word *)&data;
++
++   print_ld_st_opcode(fp, word->op);
++
++   if (word->op == midgard_op_trap) {
++      fprintf(fp, " 0x%X\n", word->signed_offset);
++      return;
++   }
++
++   /* Print opcode modifiers */
++
++   if (OP_USES_ATTRIB(word->op)) {
++      /* Print non-default attribute tables */
++      bool default_secondary = (word->op == midgard_op_st_vary_32) ||
++                               (word->op == midgard_op_st_vary_16) ||
++                               (word->op == midgard_op_st_vary_32u) ||
++                               (word->op == midgard_op_st_vary_32i) ||
++                               (word->op == midgard_op_ld_vary_32) ||
++                               (word->op == midgard_op_ld_vary_16) ||
++                               (word->op == midgard_op_ld_vary_32u) ||
++                               (word->op == midgard_op_ld_vary_32i);
++
++      bool default_primary = (word->op == midgard_op_ld_attr_32) ||
++                             (word->op == midgard_op_ld_attr_16) ||
++                             (word->op == midgard_op_ld_attr_32u) ||
++                             (word->op == midgard_op_ld_attr_32i);
++
++      bool has_default = (default_secondary || default_primary);
++      bool auto32 = (word->index_format >> 0) & 1;
++      bool is_secondary = (word->index_format >> 1) & 1;
++
++      if (auto32)
++         fprintf(fp, ".a32");
++
++      if (has_default && (is_secondary != default_secondary))
++         fprintf(fp, ".%s", is_secondary ? "secondary" : "primary");
++   } else if (word->op == midgard_op_ld_cubemap_coords ||
++              OP_IS_PROJECTION(word->op))
++      fprintf(fp, ".%s", word->bitsize_toggle ? "f32" : "f16");
++
++   fprintf(fp, " ");
++
++   /* src/dest register */
++
++   if (!OP_IS_STORE(word->op)) {
++      print_ldst_write_reg(fp, word->reg);
++
++      /* Some opcodes don't have a swizzable src register, and
++       * instead the swizzle is applied before the result is written
++       * to the dest reg. For these ops, we combine the writemask
++       * with the swizzle to display them in the disasm compactly. */
++      unsigned swizzle = word->swizzle;
++      if ((OP_IS_REG2REG_LDST(word->op) && word->op != midgard_op_lea &&
++           word->op != midgard_op_lea_image) ||
++          OP_IS_ATOMIC(word->op))
++         swizzle = 0xE4;
++      print_ldst_mask(fp, word->mask, swizzle);
++   } else {
++      uint8_t mask = (word->mask & 0x1) | ((word->mask & 0x2) << 1) |
++                     ((word->mask & 0x4) << 2) | ((word->mask & 0x8) << 3);
++      mask |= mask << 1;
++      print_ldst_read_reg(fp, word->reg);
++      print_vec_swizzle(fp, word->swizzle, midgard_src_passthrough,
++                        midgard_reg_mode_32, mask);
++   }
++
++   /* ld_ubo args */
++   if (OP_IS_UBO_READ(word->op)) {
++      if (word->signed_offset & 1) { /* buffer index imm */
++         unsigned imm = midgard_unpack_ubo_index_imm(*word);
++         fprintf(fp, ", %u", imm);
++      } else { /* buffer index from reg */
++         fprintf(fp, ", ");
++         print_ldst_read_reg(fp, word->arg_reg);
++         fprintf(fp, ".%c", components[word->arg_comp]);
++      }
++
++      fprintf(fp, ", ");
++      print_ldst_read_reg(fp, word->index_reg);
++      fprintf(fp, ".%c", components[word->index_comp]);
++      if (word->index_shift)
++         fprintf(fp, " << %u", word->index_shift);
++      midgard_print_sint(fp, UNPACK_LDST_UBO_OFS(word->signed_offset));
++   }
++
++   /* mem addr expression */
++   if (OP_HAS_ADDRESS(word->op)) {
++      fprintf(fp, ", ");
++      bool first = true;
++
++      /* Skip printing zero */
++      if (word->arg_reg != 7 || verbose) {
++         print_ldst_read_reg(fp, word->arg_reg);
++         fprintf(fp, ".u%d.%c", word->bitsize_toggle ? 64 : 32,
++                 components[word->arg_comp]);
++         first = false;
++      }
++
++      if ((word->op < midgard_op_atomic_cmpxchg ||
++           word->op > midgard_op_atomic_cmpxchg64_be) &&
++          word->index_reg != 0x7) {
++         if (!first)
++            fprintf(fp, " + ");
++
++         print_ldst_read_reg(fp, word->index_reg);
++         fprintf(fp, "%s.%c", index_format_names[word->index_format],
++                 components[word->index_comp]);
++         if (word->index_shift)
++            fprintf(fp, " << %u", word->index_shift);
++      }
++
++      midgard_print_sint(fp, word->signed_offset);
++   }
++
++   /* src reg for reg2reg ldst opcodes */
++   if (OP_IS_REG2REG_LDST(word->op)) {
++      fprintf(fp, ", ");
++      print_ldst_read_reg(fp, word->arg_reg);
++      print_vec_swizzle(fp, word->swizzle, midgard_src_passthrough,
++                        midgard_reg_mode_32, 0xFF);
++   }
++
++   /* atomic ops encode the source arg where the ldst swizzle would be. */
++   if (OP_IS_ATOMIC(word->op)) {
++      unsigned src = (word->swizzle >> 2) & 0x7;
++      unsigned src_comp = word->swizzle & 0x3;
++      fprintf(fp, ", ");
++      print_ldst_read_reg(fp, src);
++      fprintf(fp, ".%c", components[src_comp]);
++   }
++
++   /* CMPXCHG encodes the extra comparison arg where the index reg would be. */
++   if (word->op >= midgard_op_atomic_cmpxchg &&
++       word->op <= midgard_op_atomic_cmpxchg64_be) {
++      fprintf(fp, ", ");
++      print_ldst_read_reg(fp, word->index_reg);
++      fprintf(fp, ".%c", components[word->index_comp]);
++   }
++
++   /* index reg for attr/vary/images, selector for ld/st_special */
++   if (OP_IS_SPECIAL(word->op) || OP_USES_ATTRIB(word->op)) {
++      fprintf(fp, ", ");
++      print_ldst_read_reg(fp, word->index_reg);
++      fprintf(fp, ".%c", components[word->index_comp]);
++      if (word->index_shift)
++         fprintf(fp, " << %u", word->index_shift);
++      midgard_print_sint(fp, UNPACK_LDST_ATTRIB_OFS(word->signed_offset));
++   }
++
++   /* vertex reg for attrib/varying ops, coord reg for image ops */
++   if (OP_USES_ATTRIB(word->op)) {
++      fprintf(fp, ", ");
++      print_ldst_read_reg(fp, word->arg_reg);
++
++      if (OP_IS_IMAGE(word->op))
++         fprintf(fp, ".u%d", word->bitsize_toggle ? 64 : 32);
++
++      fprintf(fp, ".%c", components[word->arg_comp]);
++
++      if (word->bitsize_toggle && !OP_IS_IMAGE(word->op))
++         midgard_print_sint(fp, UNPACK_LDST_VERTEX_OFS(word->signed_offset));
++   }
++
++   /* TODO: properly decode format specifier for PACK/UNPACK ops */
++   if (OP_IS_PACK_COLOUR(word->op) || OP_IS_UNPACK_COLOUR(word->op)) {
++      fprintf(fp, ", ");
++      unsigned format_specifier =
++         (word->signed_offset << 4) | word->index_shift;
++      fprintf(fp, "0x%X", format_specifier);
++   }
++
++   fprintf(fp, "\n");
++
++   /* Debugging stuff */
++
++   if (!OP_IS_STORE(word->op))
++      update_dest(ctx, word->reg);
+ }
+ 
+ static void
+-print_load_store_word(disassemble_context *ctx, FILE *fp, uint32_t *word, bool verbose)
++print_load_store_word(disassemble_context *ctx, FILE *fp, uint32_t *word,
++                      bool verbose)
+ {
+-        midgard_load_store *load_store = (midgard_load_store *) word;
++   midgard_load_store *load_store = (midgard_load_store *)word;
+ 
+-        if (load_store->word1 != 3) {
+-                print_load_store_instr(ctx, fp, load_store->word1, verbose);
+-        }
++   if (load_store->word1 != 3) {
++      print_load_store_instr(ctx, fp, load_store->word1, verbose);
++   }
+ 
+-        if (load_store->word2 != 3) {
+-                print_load_store_instr(ctx, fp, load_store->word2, verbose);
+-        }
++   if (load_store->word2 != 3) {
++      print_load_store_instr(ctx, fp, load_store->word2, verbose);
++   }
+ }
+ 
+ static void
+ print_texture_reg_select(FILE *fp, uint8_t u, unsigned base)
+ {
+-        midgard_tex_register_select sel;
+-        memcpy(&sel, &u, sizeof(u));
++   midgard_tex_register_select sel;
++   memcpy(&sel, &u, sizeof(u));
+ 
+-        print_tex_reg(fp, base + sel.select, false);
++   print_tex_reg(fp, base + sel.select, false);
+ 
+-        unsigned component = sel.component;
++   unsigned component = sel.component;
+ 
+-        /* Use the upper half in half-reg mode */
+-        if (sel.upper) {
+-                assert(!sel.full);
+-                component += 4;
+-        }
++   /* Use the upper half in half-reg mode */
++   if (sel.upper) {
++      assert(!sel.full);
++      component += 4;
++   }
+ 
+-        fprintf(fp, ".%c.%d", components[component], sel.full ? 32 : 16);
++   fprintf(fp, ".%c.%d", components[component], sel.full ? 32 : 16);
+ 
+-        assert(sel.zero == 0);
++   assert(sel.zero == 0);
+ }
+ 
+ static void
+ print_texture_format(FILE *fp, int format)
+ {
+-        /* Act like a modifier */
+-        fprintf(fp, ".");
+-
+-        switch (format) {
+-                DEFINE_CASE(1, "1d");
+-                DEFINE_CASE(2, "2d");
+-                DEFINE_CASE(3, "3d");
+-                DEFINE_CASE(0, "cube");
+-
+-        default:
+-                unreachable("Bad format");
+-        }
+-}
+-
+-static bool
+-midgard_op_has_helpers(unsigned op)
+-{
+-        switch (op) {
+-        case midgard_tex_op_normal:
+-        case midgard_tex_op_derivative:
+-                return true;
+-        default:
+-                return false;
+-        }
++   /* Act like a modifier */
++   fprintf(fp, ".");
++
++   switch (format) {
++      DEFINE_CASE(1, "1d");
++      DEFINE_CASE(2, "2d");
++      DEFINE_CASE(3, "3d");
++      DEFINE_CASE(0, "cube");
++
++   default:
++      unreachable("Bad format");
++   }
+ }
+ 
+ static void
+ print_texture_op(FILE *fp, unsigned op)
+ {
+-        if (tex_opcode_props[op].name)
+-                fprintf(fp, "%s", tex_opcode_props[op].name);
+-        else
+-                fprintf(fp, "tex_op_%02X", op);
++   if (tex_opcode_props[op].name)
++      fprintf(fp, "%s", tex_opcode_props[op].name);
++   else
++      fprintf(fp, "tex_op_%02X", op);
+ }
+ 
+ static bool
+ texture_op_takes_bias(unsigned op)
+ {
+-        return op == midgard_tex_op_normal;
++   return op == midgard_tex_op_normal;
+ }
+ 
+ static char
+ sampler_type_name(enum mali_sampler_type t)
+ {
+-        switch (t) {
+-        case MALI_SAMPLER_FLOAT:
+-                return 'f';
+-        case MALI_SAMPLER_UNSIGNED:
+-                return 'u';
+-        case MALI_SAMPLER_SIGNED:
+-                return 'i';
+-        default:
+-                return '?';
+-        }
+-
++   switch (t) {
++   case MALI_SAMPLER_FLOAT:
++      return 'f';
++   case MALI_SAMPLER_UNSIGNED:
++      return 'u';
++   case MALI_SAMPLER_SIGNED:
++      return 'i';
++   default:
++      return '?';
++   }
+ }
+ 
+ static void
+ print_texture_barrier(FILE *fp, uint32_t *word)
+ {
+-        midgard_texture_barrier_word *barrier = (midgard_texture_barrier_word *) word;
++   midgard_texture_barrier_word *barrier = (midgard_texture_barrier_word *)word;
+ 
+-        if (barrier->type != TAG_TEXTURE_4_BARRIER)
+-                fprintf(fp, "/* barrier tag %X != tex/bar */ ", barrier->type);
++   if (barrier->type != TAG_TEXTURE_4_BARRIER)
++      fprintf(fp, "/* barrier tag %X != tex/bar */ ", barrier->type);
+ 
+-        if (!barrier->cont)
+-                fprintf(fp, "/* cont missing? */");
++   if (!barrier->cont)
++      fprintf(fp, "/* cont missing? */");
+ 
+-        if (!barrier->last)
+-                fprintf(fp, "/* last missing? */");
++   if (!barrier->last)
++      fprintf(fp, "/* last missing? */");
+ 
+-        if (barrier->zero1)
+-                fprintf(fp, "/* zero1 = 0x%X */ ", barrier->zero1);
++   if (barrier->zero1)
++      fprintf(fp, "/* zero1 = 0x%X */ ", barrier->zero1);
+ 
+-        if (barrier->zero2)
+-                fprintf(fp, "/* zero2 = 0x%X */ ", barrier->zero2);
++   if (barrier->zero2)
++      fprintf(fp, "/* zero2 = 0x%X */ ", barrier->zero2);
+ 
+-        if (barrier->zero3)
+-                fprintf(fp, "/* zero3 = 0x%X */ ", barrier->zero3);
++   if (barrier->zero3)
++      fprintf(fp, "/* zero3 = 0x%X */ ", barrier->zero3);
+ 
+-        if (barrier->zero4)
+-                fprintf(fp, "/* zero4 = 0x%X */ ", barrier->zero4);
++   if (barrier->zero4)
++      fprintf(fp, "/* zero4 = 0x%X */ ", barrier->zero4);
+ 
+-        if (barrier->zero5)
+-                fprintf(fp, "/* zero4 = 0x%" PRIx64 " */ ", barrier->zero5);
++   if (barrier->zero5)
++      fprintf(fp, "/* zero4 = 0x%" PRIx64 " */ ", barrier->zero5);
+ 
+-        if (barrier->out_of_order)
+-                fprintf(fp, ".ooo%u", barrier->out_of_order);
++   if (barrier->out_of_order)
++      fprintf(fp, ".ooo%u", barrier->out_of_order);
+ 
+-        fprintf(fp, "\n");
++   fprintf(fp, "\n");
+ }
+ 
+ #undef DEFINE_CASE

@@ -26,9 +26,11 @@
 
 #include "nir.h"
 #include "nir_builder.h"
+#include "nir_intrinsics.h"
+#include "nir_intrinsics_indices.h"
 #include "sfn_nir.h"
 
-static nir_ssa_def *
+static nir_def *
 r600_legalize_image_load_store_impl(nir_builder *b,
                                     nir_instr *instr,
                                     UNUSED void *_options)
@@ -36,18 +38,18 @@ r600_legalize_image_load_store_impl(nir_builder *b,
    b->cursor = nir_before_instr(instr);
    auto ir = nir_instr_as_intrinsic(instr);
 
-   nir_ssa_def *default_value = nir_imm_vec4(b, 0.0, 0.0, 0.0, 0.0);
+   nir_def *default_value = nir_imm_vec4(b, 0.0, 0.0, 0.0, 0.0);
 
-   nir_ssa_def *result = NIR_LOWER_INSTR_PROGRESS_REPLACE;
+   nir_def *result = NIR_LOWER_INSTR_PROGRESS_REPLACE;
 
    bool load_value = ir->intrinsic != nir_intrinsic_image_store;
 
    if (load_value)
       default_value =
-         nir_imm_zero(b, nir_dest_num_components(ir->dest), nir_dest_bit_size(ir->dest));
+         nir_imm_zero(b, ir->def.num_components, ir->def.bit_size);
 
    auto image_exists =
-      nir_ult(b, ir->src[0].ssa, nir_imm_int(b, b->shader->info.num_images));
+      nir_ult_imm(b, ir->src[0].ssa, b->shader->info.num_images);
 
    nir_if *if_exists = nir_push_if(b, image_exists);
 
@@ -57,8 +59,10 @@ r600_legalize_image_load_store_impl(nir_builder *b,
 
       /*  Image exists start */
       auto new_index =
-         nir_umin(b, ir->src[0].ssa, nir_imm_int(b, b->shader->info.num_images - 1));
-      nir_instr_rewrite_src_ssa(instr, &ir->src[0], new_index);
+         nir_umin(b,
+                  ir->src[0].ssa,
+                  nir_imm_int(b, b->shader->info.num_images - 1));
+      nir_src_rewrite(&ir->src[0], new_index);
 
       enum glsl_sampler_dim dim = nir_intrinsic_image_dim(ir);
 
@@ -92,7 +96,8 @@ r600_legalize_image_load_store_impl(nir_builder *b,
                                      dim,
                                      nir_intrinsic_image_array(ir),
                                      nir_intrinsic_format(ir),
-                                     nir_intrinsic_access(ir));
+                                     nir_intrinsic_access(ir),
+                                     nir_intrinsic_range_base(ir));
 
       unsigned mask = (1 << num_components) - 1;
       unsigned num_src1_comp = MIN2(ir->src[1].ssa->num_components, num_components);
@@ -123,7 +128,7 @@ r600_legalize_image_load_store_impl(nir_builder *b,
    nir_builder_instr_insert(b, new_load);
 
    if (load_value)
-      result = &new_load_ir->dest.ssa;
+      result = &new_load_ir->def;
 
    if (ir->intrinsic != nir_intrinsic_image_size) {
       /*  Access is out of range start */
@@ -163,16 +168,8 @@ r600_legalize_image_load_store_filter(const nir_instr *instr, UNUSED const void 
    switch (ir->intrinsic) {
    case nir_intrinsic_image_store:
    case nir_intrinsic_image_load:
-   case nir_intrinsic_image_atomic_add:
-   case nir_intrinsic_image_atomic_and:
-   case nir_intrinsic_image_atomic_or:
-   case nir_intrinsic_image_atomic_xor:
-   case nir_intrinsic_image_atomic_exchange:
-   case nir_intrinsic_image_atomic_comp_swap:
-   case nir_intrinsic_image_atomic_umin:
-   case nir_intrinsic_image_atomic_umax:
-   case nir_intrinsic_image_atomic_imin:
-   case nir_intrinsic_image_atomic_imax:
+   case nir_intrinsic_image_atomic:
+   case nir_intrinsic_image_atomic_swap:
    case nir_intrinsic_image_size:
       return true;
    default:
@@ -181,14 +178,15 @@ r600_legalize_image_load_store_filter(const nir_instr *instr, UNUSED const void 
 }
 
 /* This pass makes sure only existing images are accessd and
- * the access is withing range, if not zero is returned by all
+ * the access is within range, if not zero is returned by all
  * image ops that return a value.
  */
 bool
 r600_legalize_image_load_store(nir_shader *shader)
 {
-   return nir_shader_lower_instructions(shader,
+   bool progress = nir_shader_lower_instructions(shader,
                                         r600_legalize_image_load_store_filter,
                                         r600_legalize_image_load_store_impl,
                                         nullptr);
+   return progress;
 };

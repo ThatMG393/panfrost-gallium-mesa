@@ -1,29 +1,11 @@
 /*
- * Copyright (C) 2022 Alyssa Rosenzweig <alyssa@rosenzweig.io>
- * Copyright (C) 2021 Valve Corporation
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Copyright 2022 Alyssa Rosenzweig
+ * Copyright 2021 Valve Corporation
+ * SPDX-License-Identifier: MIT
  */
 
-#include "agx_compiler.h"
 #include "agx_builder.h"
+#include "agx_compiler.h"
 
 /*
  * Emits code for
@@ -53,6 +35,23 @@ do_swap(agx_builder *b, const struct agx_copy *copy)
 
    if (copy->dest == copy->src.value)
       return;
+
+   /* We can swap lo/hi halves of a 32-bit register with a 32-bit extr */
+   if (copy->src.size == AGX_SIZE_16 &&
+       (copy->dest >> 1) == (copy->src.value >> 1)) {
+
+      assert(((copy->dest & 1) == (1 - (copy->src.value & 1))) &&
+             "no trivial swaps, and only 2 halves of a register");
+
+      /* r0 = extr r0, r0, #16
+       *    = (((r0 << 32) | r0) >> 16) & 0xFFFFFFFF
+       *    = (((r0 << 32) >> 16) & 0xFFFFFFFF) | (r0 >> 16)
+       *    = (r0l << 16) | r0h
+       */
+      agx_index reg32 = agx_register(copy->dest & ~1, AGX_SIZE_32);
+      agx_extr_to(b, reg32, reg32, reg32, agx_immediate(16), 0);
+      return;
+   }
 
    agx_index x = agx_register(copy->dest, copy->src.size);
    agx_index y = copy->src;
@@ -114,17 +113,37 @@ split_32bit_copy(struct copy_ctx *ctx, struct agx_copy *entry)
 }
 
 void
-agx_emit_parallel_copies(agx_builder *b,
-                         struct agx_copy *copies,
+agx_emit_parallel_copies(agx_builder *b, struct agx_copy *copies,
                          unsigned num_copies)
 {
-   struct copy_ctx _ctx = {
-      .entry_count = num_copies
-   };
+   /* First, lower away 64-bit copies to smaller chunks, since we don't have
+    * 64-bit ALU so we always want to split.
+    */
+   struct agx_copy *copies2 = calloc(sizeof(copies[0]), num_copies * 2);
+   unsigned num_copies2 = 0;
 
-   struct copy_ctx *ctx = &_ctx;
+   for (unsigned i = 0; i < num_copies; ++i) {
+      struct agx_copy copy = copies[i];
+
+      if (copy.src.size == AGX_SIZE_64) {
+         copy.src.size = AGX_SIZE_32;
+         copies2[num_copies2++] = copy;
+
+         copy.src.value += 2;
+         copy.dest += 2;
+         copies2[num_copies2++] = copy;
+      } else {
+         copies2[num_copies2++] = copy;
+      }
+   }
+
+   copies = copies2;
+   num_copies = num_copies2;
 
    /* Set up the bookkeeping */
+   struct copy_ctx _ctx = {.entry_count = num_copies};
+   struct copy_ctx *ctx = &_ctx;
+
    memset(ctx->physreg_dest, 0, sizeof(ctx->physreg_dest));
    memset(ctx->physreg_use_count, 0, sizeof(ctx->physreg_use_count));
 
@@ -139,8 +158,43 @@ agx_emit_parallel_copies(agx_builder *b,
 
          /* Copies should not have overlapping destinations. */
          assert(!ctx->physreg_dest[entry->dest + j]);
-         ctx->physreg_dest[entry->dest + j] = entry;
+         ctx->physreg_dest[entry->dest + j] = &ctx->entries[i];
       }
+   }
+
+   /* Try to vectorize aligned 16-bit copies to use 32-bit operations instead */
+   for (unsigned i = 0; i < ctx->entry_count; i++) {
+      struct agx_copy *entry = &ctx->entries[i];
+      if (entry->src.size != AGX_SIZE_16)
+         continue;
+
+      if ((entry->dest & 1) || (entry->src.value & 1))
+         continue;
+
+      if (entry->src.type != AGX_INDEX_UNIFORM &&
+          entry->src.type != AGX_INDEX_REGISTER)
+         continue;
+
+      unsigned next_dest = entry->dest + 1;
+      assert(next_dest < ARRAY_SIZE(ctx->physreg_dest) && "aligned reg");
+
+      struct agx_copy *next_copy = ctx->physreg_dest[next_dest];
+      if (!next_copy)
+         continue;
+
+      assert(next_copy->dest == next_dest && "data structure invariant");
+      assert(next_copy->src.size == AGX_SIZE_16 && "unaligned copy");
+
+      if (next_copy->src.type != entry->src.type)
+         continue;
+
+      if (next_copy->src.value != (entry->src.value + 1))
+         continue;
+
+      /* Vectorize the copies */
+      ctx->physreg_dest[next_dest] = entry;
+      entry->src.size = AGX_SIZE_32;
+      next_copy->done = true;
    }
 
    bool progress = true;
@@ -274,11 +328,15 @@ agx_emit_parallel_copies(agx_builder *b,
       for (unsigned j = 0; j < ctx->entry_count; j++) {
          struct agx_copy *blocking = &ctx->entries[j];
          if (blocking->src.value >= entry->dest &&
-             blocking->src.value < entry->dest + agx_size_align_16(entry->src.size)) {
-            blocking->src.value = entry->src.value + (blocking->src.value - entry->dest);
+             blocking->src.value <
+                entry->dest + agx_size_align_16(entry->src.size)) {
+            blocking->src.value =
+               entry->src.value + (blocking->src.value - entry->dest);
          }
       }
 
       entry->done = true;
    }
+
+   free(copies2);
 }

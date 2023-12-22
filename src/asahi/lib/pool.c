@@ -1,34 +1,16 @@
 /*
- * © Copyright 2018 Alyssa Rosenzweig
- * Copyright (C) 2019 Collabora, Ltd.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Copyright 2018 Alyssa Rosenzweig
+ * Copyright 2019 Collabora, Ltd.
+ * SPDX-License-Identifier: MIT
  *
  */
 
+#include "pool.h"
 #include "agx_bo.h"
 #include "agx_device.h"
-#include "pool.h"
 
 /* Transient command stream pooling: command stream uploads try to simply copy
- * into whereever we left off. If there isn't space, we allocate a new entry
+ * into wherever we left off. If there isn't space, we allocate a new entry
  * into the pool and copy there */
 
 #define POOL_SLAB_SIZE (256 * 1024)
@@ -36,8 +18,8 @@
 static struct agx_bo *
 agx_pool_alloc_backing(struct agx_pool *pool, size_t bo_sz)
 {
-   struct agx_bo *bo = agx_bo_create(pool->dev, bo_sz, pool->create_flags,
-                                     "Pool");
+   struct agx_bo *bo =
+      agx_bo_create(pool->dev, bo_sz, pool->create_flags, "Pool");
 
    util_dynarray_append(&pool->bos, struct agx_bo *, bo);
    pool->transient_bo = bo;
@@ -48,12 +30,12 @@ agx_pool_alloc_backing(struct agx_pool *pool, size_t bo_sz)
 
 void
 agx_pool_init(struct agx_pool *pool, struct agx_device *dev,
-                   unsigned create_flags, bool prealloc)
+              unsigned create_flags, bool prealloc)
 {
    memset(pool, 0, sizeof(*pool));
    pool->dev = dev;
    pool->create_flags = create_flags;
-   util_dynarray_init(&pool->bos, dev->memctx);
+   util_dynarray_init(&pool->bos, NULL);
 
    if (prealloc)
       agx_pool_alloc_backing(pool, POOL_SLAB_SIZE);
@@ -63,7 +45,7 @@ void
 agx_pool_cleanup(struct agx_pool *pool)
 {
    util_dynarray_foreach(&pool->bos, struct agx_bo *, bo) {
-	   agx_bo_unreference(*bo);
+      agx_bo_unreference(*bo);
    }
 
    util_dynarray_fini(&pool->bos);
@@ -91,7 +73,7 @@ agx_pool_alloc_aligned_with_bo(struct agx_pool *pool, size_t sz,
    /* If we don't fit, allocate a new backing */
    if (unlikely(bo == NULL || (offset + sz) >= POOL_SLAB_SIZE)) {
       bo = agx_pool_alloc_backing(pool,
-            ALIGN_POT(MAX2(POOL_SLAB_SIZE, sz), 4096));
+                                  ALIGN_POT(MAX2(POOL_SLAB_SIZE, sz), 4096));
       offset = 0;
    }
 

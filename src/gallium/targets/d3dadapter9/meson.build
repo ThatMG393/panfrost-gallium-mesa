@@ -20,8 +20,6 @@
 # SOFTWARE.
 
 # TODO: support non-static targets
-# Static targets are always enabled in autotools (unless you modify
-# configure.ac)
 
 nine_version = ['1', '0', '0']
 

@@ -38,8 +38,6 @@
 
 struct intel_sample_positions;
 
-typedef struct VkRenderingSelfDependencyInfoMESA VkRenderingSelfDependencyInfoMESA;
-
 extern const uint32_t genX(vk_to_intel_cullmode)[];
 
 extern const uint32_t genX(vk_to_intel_front_face)[];
@@ -136,7 +134,7 @@ void genX(blorp_exec)(struct blorp_batch *batch,
 void genX(cmd_emit_timestamp)(struct anv_batch *batch,
                               struct anv_device *device,
                               struct anv_address addr,
-                              bool end_of_pipe);
+                              enum anv_timestamp_capture_type);
 
 void
 genX(rasterization_mode)(VkPolygonMode raster_mode,

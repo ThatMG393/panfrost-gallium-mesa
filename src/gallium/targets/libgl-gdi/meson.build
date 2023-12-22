@@ -33,7 +33,7 @@ libopengl32 = shared_library(
   ['stw_wgl.c'],
   vs_module_defs : opengl32_def,
   include_directories : [
-    inc_include, inc_wgl, inc_src,
+    inc_include, inc_wgl, inc_src, inc_gallium,
   ],
   link_with : [
     libgallium_wgl, libglapi_bridge, libglapi
@@ -78,6 +78,6 @@ if with_tests
     suite : ['wgl'],
     env : wgl_test_env,
     depends : [libopengl32],
-    protocol : gtest_test_protocol,
+    protocol : 'gtest',
   )
 endif

@@ -370,163 +370,167 @@ panfrost_get_shader_param(struct pipe_screen *screen,
                           enum pipe_shader_type shader,
                           enum pipe_shader_cap param)
 {
-        struct panfrost_device *dev = pan_device(screen);
-        bool is_nofp16 = dev->debug & PAN_DBG_NOFP16;
-        bool is_deqp = dev->debug & PAN_DBG_DEQP;
+   struct panfrost_device *dev = pan_device(screen);
+   bool is_nofp16 = dev->debug & PAN_DBG_NOFP16;
 
-        switch (shader) {
-        case PIPE_SHADER_VERTEX:
-        case PIPE_SHADER_FRAGMENT:
-        case PIPE_SHADER_COMPUTE:
-                break;
-        default:
-                return 0;
-        }
+   switch (shader) {
+   case PIPE_SHADER_VERTEX:
+   case PIPE_SHADER_FRAGMENT:
+   case PIPE_SHADER_COMPUTE:
+      break;
+   default:
+      return 0;
+   }
 
-        /* We only allow observable side effects (memory writes) in compute and
-         * fragment shaders. Side effects in the geometry pipeline cause
-         * trouble with IDVS and conflict with our transform feedback lowering.
-         */
-        bool allow_side_effects = (shader != PIPE_SHADER_VERTEX);
+   /* We only allow observable side effects (memory writes) in compute and
+    * fragment shaders. Side effects in the geometry pipeline cause
+    * trouble with IDVS and conflict with our transform feedback lowering.
+    */
+   bool allow_side_effects = (shader != PIPE_SHADER_VERTEX);
 
-        switch (param) {
-        case PIPE_SHADER_CAP_MAX_INSTRUCTIONS:
-        case PIPE_SHADER_CAP_MAX_ALU_INSTRUCTIONS:
-        case PIPE_SHADER_CAP_MAX_TEX_INSTRUCTIONS:
-        case PIPE_SHADER_CAP_MAX_TEX_INDIRECTIONS:
-                return 16384; /* arbitrary */
+   switch (param) {
+   case PIPE_SHADER_CAP_MAX_INSTRUCTIONS:
+   case PIPE_SHADER_CAP_MAX_ALU_INSTRUCTIONS:
+   case PIPE_SHADER_CAP_MAX_TEX_INSTRUCTIONS:
+   case PIPE_SHADER_CAP_MAX_TEX_INDIRECTIONS:
+      return 16384; /* arbitrary */
 
-        case PIPE_SHADER_CAP_MAX_CONTROL_FLOW_DEPTH:
-                return 1024; /* arbitrary */
+   case PIPE_SHADER_CAP_MAX_CONTROL_FLOW_DEPTH:
+      return 1024; /* arbitrary */
 
-        case PIPE_SHADER_CAP_MAX_INPUTS:
-                /* Used as ABI on Midgard */
-                return 16;
+   case PIPE_SHADER_CAP_MAX_INPUTS:
+      /* Used as ABI on Midgard */
+      return 16;
 
-        case PIPE_SHADER_CAP_MAX_OUTPUTS:
-                return shader == PIPE_SHADER_FRAGMENT ? 8 : PIPE_MAX_ATTRIBS;
+   case PIPE_SHADER_CAP_MAX_OUTPUTS:
+      return shader == PIPE_SHADER_FRAGMENT ? 8 : PIPE_MAX_ATTRIBS;
 
-        case PIPE_SHADER_CAP_MAX_TEMPS:
-                return 256; /* arbitrary */
+   case PIPE_SHADER_CAP_MAX_TEMPS:
+      return 256; /* arbitrary */
 
-        case PIPE_SHADER_CAP_MAX_CONST_BUFFER0_SIZE:
-                return 16 * 1024 * sizeof(float);
+   case PIPE_SHADER_CAP_MAX_CONST_BUFFER0_SIZE:
+      return 16 * 1024 * sizeof(float);
 
-        case PIPE_SHADER_CAP_MAX_CONST_BUFFERS:
-                STATIC_ASSERT(PAN_MAX_CONST_BUFFERS < 0x100);
-                return PAN_MAX_CONST_BUFFERS;
+   case PIPE_SHADER_CAP_MAX_CONST_BUFFERS:
+      STATIC_ASSERT(PAN_MAX_CONST_BUFFERS < 0x100);
+      return PAN_MAX_CONST_BUFFERS;
 
-        case PIPE_SHADER_CAP_CONT_SUPPORTED:
-                return 0;
+   case PIPE_SHADER_CAP_CONT_SUPPORTED:
+      return 0;
 
-        case PIPE_SHADER_CAP_INDIRECT_INPUT_ADDR:
-                return 1;
-        case PIPE_SHADER_CAP_INDIRECT_OUTPUT_ADDR:
-                return 0;
+   case PIPE_SHADER_CAP_INDIRECT_INPUT_ADDR:
+      return 1;
+   case PIPE_SHADER_CAP_INDIRECT_OUTPUT_ADDR:
+      return 0;
 
-        case PIPE_SHADER_CAP_INDIRECT_TEMP_ADDR:
-                return dev->arch >= 6;
+   case PIPE_SHADER_CAP_INDIRECT_TEMP_ADDR:
+      return dev->arch >= 6;
 
-        case PIPE_SHADER_CAP_INDIRECT_CONST_ADDR:
-                return 1;
+   case PIPE_SHADER_CAP_INDIRECT_CONST_ADDR:
+      return 1;
 
-        case PIPE_SHADER_CAP_SUBROUTINES:
-                return 0;
+   case PIPE_SHADER_CAP_SUBROUTINES:
+      return 0;
 
-        case PIPE_SHADER_CAP_TGSI_SQRT_SUPPORTED:
-                return 0;
+   case PIPE_SHADER_CAP_TGSI_SQRT_SUPPORTED:
+      return 0;
 
-        case PIPE_SHADER_CAP_INTEGERS:
-                return 1;
+   case PIPE_SHADER_CAP_INTEGERS:
+      return 1;
 
-        /* The Bifrost compiler supports full 16-bit. Midgard could but int16
-         * support is untested, so restrict INT16 to Bifrost. Midgard
-         * architecturally cannot support fp16 derivatives. */
+      /* The Bifrost compiler supports full 16-bit. Midgard could but int16
+       * support is untested, so restrict INT16 to Bifrost. Midgard
+       * architecturally cannot support fp16 derivatives. */
 
-        case PIPE_SHADER_CAP_FP16:
-        case PIPE_SHADER_CAP_GLSL_16BIT_CONSTS:
-                return !is_nofp16;
-        case PIPE_SHADER_CAP_FP16_DERIVATIVES:
-        case PIPE_SHADER_CAP_FP16_CONST_BUFFERS:
-                return dev->arch >= 6 && !is_nofp16;
-        case PIPE_SHADER_CAP_INT16:
-                /* XXX: Advertise this CAP when a proper fix to lower_precision
-                 * lands. GLSL IR validation failure in glmark2 -bterrain */
-                return dev->arch >= 6 && !is_nofp16 && is_deqp;
+   case PIPE_SHADER_CAP_FP16:
+   case PIPE_SHADER_CAP_GLSL_16BIT_CONSTS:
+      return !is_nofp16;
+   case PIPE_SHADER_CAP_FP16_DERIVATIVES:
+   case PIPE_SHADER_CAP_FP16_CONST_BUFFERS:
+      return dev->arch >= 6 && !is_nofp16;
+   case PIPE_SHADER_CAP_INT16:
+      /* Blocked on https://gitlab.freedesktop.org/mesa/mesa/-/issues/6075 */
+      return false;
 
-        case PIPE_SHADER_CAP_INT64_ATOMICS:
-        case PIPE_SHADER_CAP_DROUND_SUPPORTED:
-        case PIPE_SHADER_CAP_DFRACEXP_DLDEXP_SUPPORTED:
-        case PIPE_SHADER_CAP_LDEXP_SUPPORTED:
-        case PIPE_SHADER_CAP_TGSI_ANY_INOUT_DECL_RANGE:
-                return 0;
+   case PIPE_SHADER_CAP_INT64_ATOMICS:
+   case PIPE_SHADER_CAP_TGSI_ANY_INOUT_DECL_RANGE:
+      return 0;
 
-        case PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS:
-                STATIC_ASSERT(PIPE_MAX_SAMPLERS < 0x10000);
-                return PIPE_MAX_SAMPLERS;
+   case PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS:
+      STATIC_ASSERT(PIPE_MAX_SAMPLERS < 0x10000);
+      return PIPE_MAX_SAMPLERS;
 
-        case PIPE_SHADER_CAP_MAX_SAMPLER_VIEWS:
-                STATIC_ASSERT(PIPE_MAX_SHADER_SAMPLER_VIEWS < 0x10000);
-                return PIPE_MAX_SHADER_SAMPLER_VIEWS;
+   case PIPE_SHADER_CAP_MAX_SAMPLER_VIEWS:
+      STATIC_ASSERT(PIPE_MAX_SHADER_SAMPLER_VIEWS < 0x10000);
+      return PIPE_MAX_SHADER_SAMPLER_VIEWS;
 
-        case PIPE_SHADER_CAP_PREFERRED_IR:
-                return PIPE_SHADER_IR_NIR;
+   case PIPE_SHADER_CAP_SUPPORTED_IRS:
+      return (1 << PIPE_SHADER_IR_NIR);
 
-        case PIPE_SHADER_CAP_SUPPORTED_IRS:
-                return (1 << PIPE_SHADER_IR_NIR);
+   case PIPE_SHADER_CAP_MAX_SHADER_BUFFERS:
+      return allow_side_effects ? 16 : 0;
 
-        case PIPE_SHADER_CAP_MAX_SHADER_BUFFERS:
-                return allow_side_effects ? 16 : 0;
+   case PIPE_SHADER_CAP_MAX_SHADER_IMAGES:
+      return allow_side_effects ? PIPE_MAX_SHADER_IMAGES : 0;
 
-        case PIPE_SHADER_CAP_MAX_SHADER_IMAGES:
-                return allow_side_effects ? PIPE_MAX_SHADER_IMAGES : 0;
+   case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTERS:
+   case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTER_BUFFERS:
+      return 0;
 
-        case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTERS:
-        case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTER_BUFFERS:
-                return 0;
+   default:
+      return 0;
+   }
 
-        default:
-                return 0;
-        }
-
-        return 0;
+   return 0;
 }
 
 static float
 panfrost_get_paramf(struct pipe_screen *screen, enum pipe_capf param)
 {
-        switch (param) {
-        case PIPE_CAPF_MIN_LINE_WIDTH:
-        case PIPE_CAPF_MIN_LINE_WIDTH_AA:
-        case PIPE_CAPF_MIN_POINT_SIZE:
-        case PIPE_CAPF_MIN_POINT_SIZE_AA:
-           return 1;
+   switch (param) {
+   case PIPE_CAPF_MIN_LINE_WIDTH:
+   case PIPE_CAPF_MIN_LINE_WIDTH_AA:
+   case PIPE_CAPF_MIN_POINT_SIZE:
+   case PIPE_CAPF_MIN_POINT_SIZE_AA:
+      return 1;
 
-        case PIPE_CAPF_POINT_SIZE_GRANULARITY:
-        case PIPE_CAPF_LINE_WIDTH_GRANULARITY:
-           return 0.0625;
+   case PIPE_CAPF_POINT_SIZE_GRANULARITY:
+   case PIPE_CAPF_LINE_WIDTH_GRANULARITY:
+      return 0.0625;
 
-        case PIPE_CAPF_MAX_LINE_WIDTH:
-        case PIPE_CAPF_MAX_LINE_WIDTH_AA:
-        case PIPE_CAPF_MAX_POINT_SIZE:
-        case PIPE_CAPF_MAX_POINT_SIZE_AA:
-                return 4095.9375;
+   case PIPE_CAPF_MAX_LINE_WIDTH:
+   case PIPE_CAPF_MAX_LINE_WIDTH_AA:
+   case PIPE_CAPF_MAX_POINT_SIZE:
+   case PIPE_CAPF_MAX_POINT_SIZE_AA:
+      return 4095.9375;
 
-        case PIPE_CAPF_MAX_TEXTURE_ANISOTROPY:
-                return 16.0;
+   case PIPE_CAPF_MAX_TEXTURE_ANISOTROPY:
+      return 16.0;
 
-        case PIPE_CAPF_MAX_TEXTURE_LOD_BIAS:
-                return 16.0; /* arbitrary */
+   case PIPE_CAPF_MAX_TEXTURE_LOD_BIAS:
+      return 16.0; /* arbitrary */
 
-        case PIPE_CAPF_MIN_CONSERVATIVE_RASTER_DILATE:
-        case PIPE_CAPF_MAX_CONSERVATIVE_RASTER_DILATE:
-        case PIPE_CAPF_CONSERVATIVE_RASTER_DILATE_GRANULARITY:
-                return 0.0f;
+   case PIPE_CAPF_MIN_CONSERVATIVE_RASTER_DILATE:
+   case PIPE_CAPF_MAX_CONSERVATIVE_RASTER_DILATE:
+   case PIPE_CAPF_CONSERVATIVE_RASTER_DILATE_GRANULARITY:
+      return 0.0f;
 
-        default:
-                debug_printf("Unexpected PIPE_CAPF %d query\n", param);
-                return 0.0;
-        }
+   default:
+      debug_printf("Unexpected PIPE_CAPF %d query\n", param);
+      return 0.0;
+   }
+}
+
+static uint32_t
+pipe_to_pan_bind_flags(uint32_t pipe_bind_flags)
+{
+   static_assert(PIPE_BIND_DEPTH_STENCIL == PAN_BIND_DEPTH_STENCIL, "");
+   static_assert(PIPE_BIND_RENDER_TARGET == PAN_BIND_RENDER_TARGET, "");
+   static_assert(PIPE_BIND_SAMPLER_VIEW == PAN_BIND_SAMPLER_VIEW, "");
+   static_assert(PIPE_BIND_VERTEX_BUFFER == PAN_BIND_VERTEX_BUFFER, "");
+
+   return pipe_bind_flags & (PAN_BIND_DEPTH_STENCIL | PAN_BIND_RENDER_TARGET |
+                             PAN_BIND_VERTEX_BUFFER | PAN_BIND_SAMPLER_VIEW);
 }
 
 /**
@@ -535,69 +539,62 @@ panfrost_get_paramf(struct pipe_screen *screen, enum pipe_capf param)
  * \param type  one of PIPE_TEXTURE, PIPE_SURFACE
  */
 static bool
-panfrost_is_format_supported( struct pipe_screen *screen,
-                              enum pipe_format format,
-                              enum pipe_texture_target target,
-                              unsigned sample_count,
-                              unsigned storage_sample_count,
-                              unsigned bind)
+panfrost_is_format_supported(struct pipe_screen *screen,
+                             enum pipe_format format,
+                             enum pipe_texture_target target,
+                             unsigned sample_count,
+                             unsigned storage_sample_count, unsigned bind)
 {
-        struct panfrost_device *dev = pan_device(screen);
+   struct panfrost_device *dev = pan_device(screen);
 
-        assert(target == PIPE_BUFFER ||
-               target == PIPE_TEXTURE_1D ||
-               target == PIPE_TEXTURE_1D_ARRAY ||
-               target == PIPE_TEXTURE_2D ||
-               target == PIPE_TEXTURE_2D_ARRAY ||
-               target == PIPE_TEXTURE_RECT ||
-               target == PIPE_TEXTURE_3D ||
-               target == PIPE_TEXTURE_CUBE ||
-               target == PIPE_TEXTURE_CUBE_ARRAY);
+   assert(target == PIPE_BUFFER || target == PIPE_TEXTURE_1D ||
+          target == PIPE_TEXTURE_1D_ARRAY || target == PIPE_TEXTURE_2D ||
+          target == PIPE_TEXTURE_2D_ARRAY || target == PIPE_TEXTURE_RECT ||
+          target == PIPE_TEXTURE_3D || target == PIPE_TEXTURE_CUBE ||
+          target == PIPE_TEXTURE_CUBE_ARRAY);
 
-        /* MSAA 2x gets rounded up to 4x. MSAA 8x/16x only supported on v5+.
-         * TODO: debug MSAA 8x/16x */
+   /* MSAA 2x gets rounded up to 4x. MSAA 8x/16x only supported on v5+.
+    * TODO: debug MSAA 8x/16x */
 
-        switch (sample_count) {
-        case 0:
-        case 1:
-        case 4:
-                break;
-        case 8:
-        case 16:
-                if (dev->debug & PAN_DBG_MSAA16)
-                        break;
-                else
-                        return false;
-        default:
-                return false;
-        }
+   switch (sample_count) {
+   case 0:
+   case 1:
+   case 4:
+      break;
+   case 8:
+   case 16:
+      if (dev->debug & PAN_DBG_MSAA16)
+         break;
+      else
+         return false;
+   default:
+      return false;
+   }
 
-        if (MAX2(sample_count, 1) != MAX2(storage_sample_count, 1))
-                return false;
+   if (MAX2(sample_count, 1) != MAX2(storage_sample_count, 1))
+      return false;
 
-        /* Z16 causes dEQP failures on t720 */
-        if (format == PIPE_FORMAT_Z16_UNORM && dev->arch <= 4)
-                return false;
+   /* Z16 causes dEQP failures on t720 */
+   if (format == PIPE_FORMAT_Z16_UNORM && dev->arch <= 4)
+      return false;
 
-        /* Check we support the format with the given bind */
+   /* Check we support the format with the given bind */
 
-        unsigned relevant_bind = bind &
-                ( PIPE_BIND_DEPTH_STENCIL | PIPE_BIND_RENDER_TARGET
-                | PIPE_BIND_VERTEX_BUFFER | PIPE_BIND_SAMPLER_VIEW);
+   unsigned pan_bind_flags = pipe_to_pan_bind_flags(bind);
 
-        struct panfrost_format fmt = dev->formats[format];
+   struct panfrost_format fmt = dev->formats[format];
 
-        /* Also check that compressed texture formats are supported on this
-         * particular chip. They may not be depending on system integration
-         * differences. */
+   /* Also check that compressed texture formats are supported on this
+    * particular chip. They may not be depending on system integration
+    * differences. */
 
-        bool supported = panfrost_supports_compressed_format(dev,
-                        MALI_EXTRACT_INDEX(fmt.hw));
+   bool supported =
+      panfrost_supports_compressed_format(dev, MALI_EXTRACT_INDEX(fmt.hw));
 
-        if (!supported)
-                return false;
+   if (!supported)
+      return false;
 
-        return MALI_EXTRACT_INDEX(fmt.hw) && ((relevant_bind & ~fmt.bind) == 0);
+   return MALI_EXTRACT_INDEX(fmt.hw) && ((pan_bind_flags & ~fmt.bind) == 0);
 }
 
 /* We always support linear and tiled operations, both external and internal.

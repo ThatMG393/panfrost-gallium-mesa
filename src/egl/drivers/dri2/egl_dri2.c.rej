@@ -1,0 +1,122 @@
+diff a/src/egl/drivers/dri2/egl_dri2.c b/src/egl/drivers/dri2/egl_dri2.c	(rejected hunks)
+@@ -25,56 +25,55 @@
+  *    Kristian Høgsberg <krh@bitplanet.net>
+  */
+ 
++#include <dlfcn.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <limits.h>
+ #include <stdbool.h>
+ #include <stdint.h>
+-#include <stdbool.h>
++#include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+-#include <stdio.h>
+-#include <limits.h>
+-#include <dlfcn.h>
+-#include <fcntl.h>
+-#include <errno.h>
++#include <time.h>
+ #include <unistd.h>
+ #include <c11/threads.h>
+-#include <time.h>
+ #ifdef HAVE_LIBDRM
+ #include <xf86drm.h>
+ #include "drm-uapi/drm_fourcc.h"
+ #endif
+ #include <GL/gl.h>
+ #include <GL/internal/dri_interface.h>
+-#include <sys/types.h>
+ #include <sys/stat.h>
++#include <sys/types.h>
+ #include "dri_screen.h"
+ 
+ #ifdef HAVE_WAYLAND_PLATFORM
+-#include <wayland-client.h>
+-#include "wayland-drm.h"
+-#include "wayland-drm-client-protocol.h"
+ #include "linux-dmabuf-unstable-v1-client-protocol.h"
++#include "wayland-drm-client-protocol.h"
++#include "wayland-drm.h"
++#include <wayland-client.h>
+ #endif
+ 
+ #ifdef HAVE_X11_PLATFORM
+ #include "X11/Xlibint.h"
+ #endif
+ 
+-#include "egldefines.h"
+-#include "egl_dri2.h"
+ #include "GL/mesa_glinterop.h"
+ #include "loader/loader.h"
++#include "mapi/glapi/glapi.h"
++#include "pipe/p_screen.h"
++#include "util/bitscan.h"
++#include "util/driconf.h"
+ #include "util/libsync.h"
+ #include "util/os_file.h"
+ #include "util/u_atomic.h"
+ #include "util/u_call_once.h"
+-#include "util/u_vector.h"
+-#include "mapi/glapi/glapi.h"
+-#include "util/bitscan.h"
+-#include "util/driconf.h"
+ #include "util/u_math.h"
+-#include "pipe/p_screen.h"
++#include "util/u_vector.h"
++#include "egl_dri2.h"
++#include "egldefines.h"
+ 
+-#define NUM_ATTRIBS 12
++#define NUM_ATTRIBS 16
+ 
+ static const struct dri2_pbuffer_visual {
+    const char *format_name;
+@@ -2258,9 +2314,9 @@ dri2_create_image_wayland_wl_buffer(_EGLDisplay *disp, _EGLContext *ctx,
+    int32_t plane;
+ 
+    buffer = wayland_drm_buffer_get(dri2_dpy->wl_server_drm,
+-                                   (struct wl_resource *) _buffer);
++                                   (struct wl_resource *)_buffer);
+    if (!buffer)
+-       return NULL;
++      return NULL;
+ 
+    if (!_eglParseImageAttribList(&attrs, disp, attr_list))
+       return NULL;
+@@ -3240,21 +3263,20 @@ dri2_bind_wayland_display_wl(_EGLDisplay *disp, struct wl_display *wl_dpy)
+    if (dri2_dpy->wl_server_drm)
+       goto fail;
+ 
+-   device_name = drmGetRenderDeviceNameFromFd(dri2_dpy->fd);
++   device_name = drmGetRenderDeviceNameFromFd(dri2_dpy->fd_render_gpu);
+    if (!device_name)
+       device_name = strdup(dri2_dpy->device_name);
+    if (!device_name)
+       goto fail;
+ 
+-   if (drmGetCap(dri2_dpy->fd, DRM_CAP_PRIME, &cap) == 0 &&
++   if (drmGetCap(dri2_dpy->fd_render_gpu, DRM_CAP_PRIME, &cap) == 0 &&
+        cap == (DRM_PRIME_CAP_IMPORT | DRM_PRIME_CAP_EXPORT) &&
+        dri2_dpy->image->base.version >= 7 &&
+        dri2_dpy->image->createImageFromFds != NULL)
+       flags |= WAYLAND_DRM_PRIME;
+ 
+    dri2_dpy->wl_server_drm =
+-           wayland_drm_init(wl_dpy, device_name,
+-                            &wl_drm_callbacks, disp, flags);
++      wayland_drm_init(wl_dpy, device_name, &wl_drm_callbacks, disp, flags);
+ 
+    free(device_name);
+ 
+@@ -3282,7 +3304,7 @@ dri2_unbind_wayland_display_wl(_EGLDisplay *disp, struct wl_display *wl_dpy)
+    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
+ 
+    if (!dri2_dpy->wl_server_drm)
+-           return EGL_FALSE;
++      return EGL_FALSE;
+ 
+    wayland_drm_uninit(dri2_dpy->wl_server_drm);
+    dri2_dpy->wl_server_drm = NULL;

@@ -52,7 +52,7 @@ InstrFactory::InstrFactory():
 }
 
 PInst
-InstrFactory::from_string(const std::string& s, int nesting_depth)
+InstrFactory::from_string(const std::string& s, int nesting_depth, bool is_cayman)
 {
    string type;
    std::istringstream is(s);
@@ -72,7 +72,7 @@ InstrFactory::from_string(const std::string& s, int nesting_depth)
       group = nullptr;
       return retval;
    } else if (type == "ALU") {
-      result = AluInstr::from_string(is, m_value_factory, group);
+      result = AluInstr::from_string(is, m_value_factory, group, is_cayman);
    } else if (type == "TEX") {
       result = TexInstr::from_string(is, m_value_factory);
    } else if (type == "EXPORT") {
@@ -88,7 +88,7 @@ InstrFactory::from_string(const std::string& s, int nesting_depth)
    } else if (type == "READ_SCRATCH") {
       result = LoadFromScratch::from_string(is, m_value_factory);
    } else if (type == "IF") {
-      result = IfInstr::from_string(is, m_value_factory);
+      result = IfInstr::from_string(is, m_value_factory, is_cayman);
    } else if (type == "WRITE_SCRATCH") {
       result = ScratchIOInstr::from_string(is, m_value_factory);
    } else if (type == "MEM_RING") {
@@ -127,8 +127,8 @@ InstrFactory::from_nir(nir_instr *instr, Shader& shader)
       return TexInstr::from_nir(nir_instr_as_tex(instr), shader);
    case nir_instr_type_jump:
       return process_jump(nir_instr_as_jump(instr), shader);
-   case nir_instr_type_ssa_undef:
-      return process_undef(nir_instr_as_ssa_undef(instr), shader);
+   case nir_instr_type_undef:
+      return process_undef(nir_instr_as_undef(instr), shader);
    default:
       fprintf(stderr, "Instruction type %d not supported\n", instr->type);
       return false;
@@ -211,7 +211,7 @@ InstrFactory::process_jump(nir_jump_instr *instr, Shader& shader)
 }
 
 bool
-InstrFactory::process_undef(nir_ssa_undef_instr *undef, Shader& shader)
+InstrFactory::process_undef(nir_undef_instr *undef, Shader& shader)
 {
    for (int i = 0; i < undef->def.num_components; ++i) {
       auto dest = shader.value_factory().undef(undef->def.index, i);

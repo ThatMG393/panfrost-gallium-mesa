@@ -1300,30 +1300,28 @@ out:
 void
 panfrost_flush_all_batches(struct panfrost_context *ctx, const char *reason)
 {
-        struct panfrost_batch *batch = panfrost_get_batch_for_fbo(ctx);
-        panfrost_batch_submit(ctx, batch);
+   if (reason)
+      perf_debug_ctx(ctx, "Flushing everything due to: %s", reason);
 
-        for (unsigned i = 0; i < PAN_MAX_BATCHES; i++) {
-                if (ctx->batches.slots[i].seqnum) {
-                        if (reason)
-                                perf_debug_ctx(ctx, "Flushing everything due to: %s", reason);
+   struct panfrost_batch *batch = panfrost_get_batch_for_fbo(ctx);
+   panfrost_batch_submit(ctx, batch);
 
-                        panfrost_batch_submit(ctx, &ctx->batches.slots[i]);
-                }
-        }
+   for (unsigned i = 0; i < PAN_MAX_BATCHES; i++) {
+      if (ctx->batches.slots[i].seqnum)
+         panfrost_batch_submit(ctx, &ctx->batches.slots[i]);
+   }
 }
 
 void
 panfrost_flush_writer(struct panfrost_context *ctx,
-                      struct panfrost_resource *rsrc,
-                      const char *reason)
+                      struct panfrost_resource *rsrc, const char *reason)
 {
-        struct hash_entry *entry = _mesa_hash_table_search(ctx->writers, rsrc);
+   struct hash_entry *entry = _mesa_hash_table_search(ctx->writers, rsrc);
 
-        if (entry) {
-                perf_debug_ctx(ctx, "Flushing writer due to: %s", reason);
-                panfrost_batch_submit(ctx, entry->data);
-        }
+   if (entry) {
+      perf_debug_ctx(ctx, "Flushing writer due to: %s", reason);
+      panfrost_batch_submit(ctx, entry->data);
+   }
 }
 
 void
@@ -1423,10 +1421,9 @@ panfrost_batch_union_scissor(struct panfrost_batch *batch,
 bool
 panfrost_batch_skip_rasterization(struct panfrost_batch *batch)
 {
-        struct panfrost_context *ctx = batch->ctx;
-        struct pipe_rasterizer_state *rast = (void *) ctx->rasterizer;
+   struct panfrost_context *ctx = batch->ctx;
+   struct pipe_rasterizer_state *rast = (void *)ctx->rasterizer;
 
-        return (rast->rasterizer_discard ||
-                batch->scissor_culls_everything ||
-                !batch->rsd[PIPE_SHADER_VERTEX]);
+   return (rast->rasterizer_discard || batch->scissor_culls_everything ||
+           !batch->rsd[PIPE_SHADER_VERTEX]);
 }

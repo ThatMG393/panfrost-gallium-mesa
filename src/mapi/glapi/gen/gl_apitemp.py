@@ -134,10 +134,10 @@ class PrintGlOffsets(gl_XML.gl_print_base):
  *   #define KEYWORD2
  *   #define NAME(func)  gl##func
  *   #define DISPATCH(func, args, msg)                             \\
- *          struct _glapi_table *dispatch = CurrentClientDispatch; \\
+ *          struct _glapi_table *dispatch = GLApi; \\
  *          (*dispatch->func) args
  *   #define RETURN DISPATCH(func, args, msg)                      \\
- *          struct _glapi_table *dispatch = CurrentClientDispatch; \\
+ *          struct _glapi_table *dispatch = GLApi; \\
  *          return (*dispatch->func) args
  *
  */
@@ -238,10 +238,10 @@ _glapi_proc UNUSED_TABLE_NAME[] = {""")
         for ent in normal_entries:
             print('   TABLE_ENTRY(%s),' % (ent))
         print('#endif /* _GLAPI_SKIP_NORMAL_ENTRY_POINTS */')
-        print('#ifndef _GLAPI_SKIP_PROTO_ENTRY_POINTS')
+        print('#if GLAPI_EXPORT_PROTO_ENTRY_POINTS')
         for ent in proto_entries:
             print('   TABLE_ENTRY(%s),' % (ent))
-        print('#endif /* _GLAPI_SKIP_PROTO_ENTRY_POINTS */')
+        print('#endif /* GLAPI_EXPORT_PROTO_ENTRY_POINTS */')
 
         print('};')
         print('#endif /*UNUSED_TABLE_NAME*/')
@@ -291,13 +291,13 @@ _glapi_proc UNUSED_TABLE_NAME[] = {""")
         print('#endif /* _GLAPI_SKIP_NORMAL_ENTRY_POINTS */')
         print('')
         print('/* these entry points might require different protocols */')
-        print('#ifndef _GLAPI_SKIP_PROTO_ENTRY_POINTS')
+        print('#if GLAPI_EXPORT_PROTO_ENTRY_POINTS')
         print('')
         for func, ents in proto_entry_points:
             for ent in ents:
                 self.printFunction(func, ent)
         print('')
-        print('#endif /* _GLAPI_SKIP_PROTO_ENTRY_POINTS */')
+        print('#endif /* GLAPI_EXPORT_PROTO_ENTRY_POINTS */')
         print('')
 
         self.printInitDispatch(api)
