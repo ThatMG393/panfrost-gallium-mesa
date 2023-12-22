@@ -21,8 +21,6 @@
 
 files_panfrost = files(
   'pan_afbc_cso.c',
-  'pan_bo.c',
-  'pan_device.c',
   'pan_disk_cache.c',
   'pan_fence.c',
   'pan_helpers.c',
