@@ -847,7 +847,7 @@ panfrost_create_screen(int fd, struct renderonly *ro)
         /* The functionality is only useful with kbase */
         if (dev->kbase)
                 dev->has_dmabuf_fence = panfrost_check_dmabuf_fence(dev);
-        printf("PAN_OSMESA: set base params\n")
+        printf("PAN_OSMESA: set base params\n");
         screen->base.destroy = panfrost_destroy_screen;
 
         screen->base.get_name = panfrost_get_name;
