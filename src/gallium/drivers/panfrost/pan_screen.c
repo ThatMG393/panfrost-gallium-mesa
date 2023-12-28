@@ -817,34 +817,37 @@ panfrost_get_driver_query_info(struct pipe_screen *pscreen, unsigned index,
 struct pipe_screen *
 panfrost_create_screen(int fd, struct renderonly *ro)
 {
+        printf("PAN_OSMESA: init\n");
         /* Create the screen */
         struct panfrost_screen *screen = rzalloc(NULL, struct panfrost_screen);
-
+        printf("PAN_OSMESA: check screen NULL\n");
         if (!screen)
                 return NULL;
-
+        printf("PAN_OSMESA: pan device init\n");
         struct panfrost_device *dev = pan_device(&screen->base);
-
+        printf("PAN_OSMESA: pan device flags\n");
         /* Debug must be set first for pandecode to work correctly */
         dev->debug = debug_get_flags_option("PAN_MESA_DEBUG", panfrost_debug_options, 0);
+        printf("PAN_OSMESA: open device\n");
         panfrost_open_device(screen, fd, dev);
-
+        printf("PAN_OSMESA: set has_afbc\n");
         if (dev->debug & PAN_DBG_NO_AFBC)
                 dev->has_afbc = false;
 
         /* Bail early on unsupported hardware */
+        /* TODO: if this doesn't work, find a bypass */
         if (dev->model == NULL) {
-                debug_printf("panfrost: Unsupported model %X\n", dev->gpu_id);
+                printf("[FATAL?] PAN_OSMESA: Unsupported model %X\n", dev->gpu_id);
                 panfrost_destroy_screen(&(screen->base));
                 return NULL;
         }
-
+        printf("PAN_OSMESA: set dev->ro\n");
         dev->ro = ro;
-
+        printf("PAN_OSMESA: check kbase dmabuf fence\n");
         /* The functionality is only useful with kbase */
         if (dev->kbase)
                 dev->has_dmabuf_fence = panfrost_check_dmabuf_fence(dev);
-
+        printf("PAN_OSMESA: set base params\n")
         screen->base.destroy = panfrost_destroy_screen;
 
         screen->base.get_name = panfrost_get_name;
@@ -867,19 +870,22 @@ panfrost_create_screen(int fd, struct renderonly *ro)
         screen->base.fence_finish = panfrost_fence_finish;
         screen->base.fence_get_fd = panfrost_fence_get_fd;
         screen->base.set_damage_region = panfrost_resource_set_damage_region;
-
+        printf("PAN_OSMESA: resource screen init\n");
         panfrost_resource_screen_init(&screen->base);
+        printf("PAN_OSMESA: blend shaders init\n");
         pan_blend_shaders_init(dev);
-
-        panfrost_disk_cache_init(screen);
-
+        printf("PAN_OSMESA: pool init indirect draw shaders\n");
         panfrost_pool_init(&screen->indirect_draw.bin_pool, NULL, dev,
                            PAN_BO_EXECUTE, 65536, "Indirect draw shaders",
                            false, true);
+        printf("PAN_OSMESA: pool init blitter shaders\n");
         panfrost_pool_init(&screen->blitter.bin_pool, NULL, dev, PAN_BO_EXECUTE,
                            4096, "Blitter shaders", false, true);
+        printf("PAN_OSMESA: pool init blitter rsds\n");
         panfrost_pool_init(&screen->blitter.desc_pool, NULL, dev, 0, 65536,
                            "Blitter RSDs", false, true);
+
+        printf("PAN_OSMESA: screen init, dev arch is %i", dev->arch);
         if (dev->arch == 4)
                 panfrost_cmdstream_screen_init_v4(screen);
         else if (dev->arch == 5)

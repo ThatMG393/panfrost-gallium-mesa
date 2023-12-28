@@ -75,7 +75,8 @@ const struct panfrost_model panfrost_model_list[] = {
         MODEL(0x9093, "G57", "TNAx", HAS_ANISO, 16384, {}),
         MODEL(0xa867, "G610", "LODx", HAS_ANISO, 65536, {}),
         /* Matching the kbase dummy model, probably not real GPUs */
-        MODEL(0xa802, "G710", "TODx", HAS_ANISO, 65536, {}),
+        MODEL(0, "G710", "TODx", HAS_ANISO, 65536, {}),
+        MODEL(0xa802, "DMMY", "TODx", HAS_ANISO, 65536, {}),
 };
 
 const struct panfrost_model panfrost_unknown_model = {
@@ -103,7 +104,7 @@ panfrost_get_model(uint32_t gpu_id)
                 if (panfrost_model_list[i].gpu_id == gpu_id)
                         return &panfrost_model_list[i];
         }
-
+        printf("[WARN] PAN_OSMESA: could not detect gpu! Falling back to Unknown Model support\n");
         return &panfrost_unknown_model;
 }
 
