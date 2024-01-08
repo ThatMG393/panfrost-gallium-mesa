@@ -122,6 +122,7 @@ kbase_ioctl(int fd, unsigned long request, ...)
    case KBASE_IOCTL_CS_TILER_HEAP_TERM:
    case KBASE_IOCTL_CS_QUEUE_GROUP_TERMINATE:
    case KBASE_IOCTL_MEM_SYNC:
+   case KBASE_IOCTL_JOB_SUBMIT:
       break;
 
    default:
