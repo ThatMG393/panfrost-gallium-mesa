@@ -58,10 +58,13 @@ jobs:
             -Dosmesa=true \
             -Dvulkan-drivers= \
             -Dgallium-drivers=swrast,panfrost \
-            -Dshared-glapi=false
+            -Dshared-glapi=false \
+            -Dbuildtype=debug
           ninja -C "build-android" install
+          cd /tmp/pan
+          mv lib/libOSMesa.so.8.0.0 libOSMesa_pan.so
       - name: Upload libraries
         uses: actions/upload-artifact@v2
         with:
           name: panfrost_${{matrix.arch}}
-          path: /tmp/pan
+          path: /tmp/pan/libOSMesa_pan.so
