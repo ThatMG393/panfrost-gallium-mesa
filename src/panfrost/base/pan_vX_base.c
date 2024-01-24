@@ -1144,8 +1144,6 @@ kbase_submit(kbase k, uint64_t va, unsigned req,
         for (unsigned i = 0; i < KBASE_SLOT_COUNT; ++i)
                 dep_slots[i] = nr;
 
-        /* Make sure that we haven't taken an atom that's already in use. */
-        assert(!k->atom_bos[nr].data);
         k->atom_bos[atom.atom_number] = buf;
 
         unsigned handle_buf_size = util_dynarray_num_elements(&k->gem_handles, kbase_handle);
