@@ -45,9 +45,10 @@ jobs:
           envsubst <android-${{matrix.arch}} >build-crossfile
           meson setup "build-android" \
             --prefix=/tmp/pan \
+            -Dtools=panfrost \
             --cross-file "build-crossfile" \
             -Dplatforms=android \
-            -Dplatform-sdk-version=26 \
+            -Dplatform-sdk-version=33 \
             -Dandroid-stub=true \
             -Dllvm=disabled \
             -Dxlib-lease=disabled \
