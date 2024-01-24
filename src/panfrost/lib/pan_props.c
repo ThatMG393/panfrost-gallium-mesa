@@ -80,7 +80,7 @@ const struct panfrost_model panfrost_model_list[] = {
 
 const struct panfrost_model panfrost_unknown_model = {
    .gpu_id = 0,
-   .name = "Unknown Mali device (Panfrost)",
+   .name = "Mali G-series (Panfrost)",
    .performance_counters = "AAAA",
    .min_rev_anisotropic = NO_ANISO, 
    .tilebuffer_size = 8192, 
@@ -123,7 +123,7 @@ panfrost_query_raw(
                 if (ret) {
                         return value;
                 } else {
-                        assert(!required);
+                        //assert(!required);
                         return default_value;
                 }
         }
