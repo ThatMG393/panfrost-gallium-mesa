@@ -106,7 +106,7 @@ const struct panfrost_model panfrost_unknown_model = {
 const struct panfrost_model *
 panfrost_get_model(uint32_t gpu_id)
 {
-        printf("PAN_OSMESA: GPUID is %i\n", gpu_id);
+        printf("PAN_OSMESA: GPUID is 0x%x\n", gpu_id);
         for (unsigned i = 0; i < ARRAY_SIZE(panfrost_model_list); ++i) {
                 if (panfrost_model_list[i].gpu_id == gpu_id)
                         return &panfrost_model_list[i];
