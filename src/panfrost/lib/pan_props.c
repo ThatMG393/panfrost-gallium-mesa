@@ -76,13 +76,19 @@ const struct panfrost_model panfrost_model_list[] = {
         MODEL(0x7402, "G52 r1", "TGOx", HAS_ANISO, 16384, {}),
         MODEL(0x9093, "G57", "TNAx", HAS_ANISO, 16384, {}),
         MODEL(0xa867, "G610", "LODx", HAS_ANISO, 65536, {}),
-        /* Matching the kbase dummy model, probably not real GPUs */
         MODEL(0xa802, "G710", "TODx", HAS_ANISO, 65536, {}),
+
+        /* unnoficial support */
+        MODEL(0xa802, "Dummy kbase GPU", "TODx", HAS_ANISO, 65536, {}),
+        MODEL(0xa862, "G710 (PojavLauncher)", "LODx", HAS_ANISO, 65536, {}),
+        //MODEL(0xa862, "G710 (2)", "TODx", HAS_ANISO, 65536, {}),
+        MODEL(0x9091, "G57 (PojavLauncher)", "TNAx", HAS_ANISO, 16384, {}),
+        MODEL(0x9080, "G77 (PojavLauncher)", "TNAx", HAS_ANISO, 16384, {}),
 };
 
 const struct panfrost_model panfrost_unknown_model = {
    .gpu_id = 0,
-   .name = "Mali G-series (Panfrost)",
+   .name = "Unknown Mali GPU (Panfrost)",
    .performance_counters = "AAAA",
    .min_rev_anisotropic = NO_ANISO, 
    .tilebuffer_size = 8192, 
@@ -106,7 +112,7 @@ panfrost_get_model(uint32_t gpu_id)
                         return &panfrost_model_list[i];
         }
 
-        return &panfrost_model_list[14];
+        return &panfrost_unknown_model;
 }
 
 /* Abstraction over the raw drm_panfrost_get_param ioctl for fetching
