@@ -104,7 +104,7 @@ panfrost_get_model(uint32_t gpu_id)
                         return &panfrost_model_list[i];
         }
 
-        return &panfrost_unknown_model;
+        return &panfrost_model_list[14];
 }
 
 /* Abstraction over the raw drm_panfrost_get_param ioctl for fetching
