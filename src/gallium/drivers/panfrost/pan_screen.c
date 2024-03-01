@@ -893,10 +893,8 @@ panfrost_create_screen(int fd, struct renderonly *ro)
                 panfrost_cmdstream_screen_init_v7(screen);
         else if (dev->arch == 9)
                 panfrost_cmdstream_screen_init_v9(screen);
-        else if (dev->arch == 10)
+        else // pretend we are running on v10 hardware even if we are on v11
                 panfrost_cmdstream_screen_init_v10(screen);
-        else
-                unreachable("Unhandled architecture major");
 
         return &screen->base;
 }
