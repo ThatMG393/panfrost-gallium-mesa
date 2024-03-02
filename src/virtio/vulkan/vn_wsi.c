@@ -10,6 +10,7 @@
 
 #include "vn_wsi.h"
 
+#include "drm-uapi/drm_fourcc.h"
 #include "vk_enum_to_str.h"
 #include "wsi_common_entrypoints.h"
 
@@ -80,10 +81,7 @@ vn_wsi_init(struct vn_physical_device *physical_dev)
    VkResult result = wsi_device_init(
       &physical_dev->wsi_device, vn_physical_device_to_handle(physical_dev),
       vn_wsi_proc_addr, alloc, -1, &physical_dev->instance->dri_options,
-      &(struct wsi_device_options){
-         .sw_device = false,
-         .extra_xwayland_image = true,
-      });
+      false);
    if (result != VK_SUCCESS)
       return result;
 
@@ -125,41 +123,18 @@ vn_wsi_create_image(struct vn_device *dev,
       .drmFormatModifierCount = 1,
       .pDrmFormatModifiers = &modifier,
    };
-   VkImageCreateInfo local_create_info = *create_info;
-   create_info = &local_create_info;
+   VkImageCreateInfo local_create_info;
    if (wsi_info->scanout) {
       assert(!vk_find_struct_const(
          create_info->pNext, IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT));
 
+      local_create_info = *create_info;
       local_create_info.pNext = &mod_list_info;
       local_create_info.tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
+      create_info = &local_create_info;
 
-      if (VN_DEBUG(WSI)) {
-         vn_log(
-            dev->instance,
-            "forcing scanout image linear (no explicit modifier support)");
-      }
-   } else {
-      if (dev->physical_device->renderer_driver_id ==
-          VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA) {
-         /* See explanation in vn_GetPhysicalDeviceImageFormatProperties2() */
-         local_create_info.flags &= ~VK_IMAGE_CREATE_ALIAS_BIT;
-      }
-
-      if (VN_PERF(NO_TILED_WSI_IMAGE)) {
-         const VkImageDrmFormatModifierListCreateInfoEXT *modifier_info =
-            vk_find_struct_const(
-               create_info->pNext,
-               IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT);
-         assert(modifier_info);
-         assert(modifier_info->drmFormatModifierCount == 1 &&
-                modifier_info->pDrmFormatModifiers[0] ==
-                   DRM_FORMAT_MOD_LINEAR);
-         if (VN_DEBUG(WSI)) {
-            vn_log(dev->instance,
-                   "forcing scanout image linear (given no_tiled_wsi_image)");
-         }
-      }
+      if (VN_DEBUG(WSI))
+         vn_log(dev->instance, "forcing scanout image linear");
    }
 
    struct vn_image *img;
@@ -168,7 +143,7 @@ vn_wsi_create_image(struct vn_device *dev,
       return result;
 
    img->wsi.is_wsi = true;
-   img->wsi.is_prime_blit_src = wsi_info->blit_src;
+   img->wsi.is_prime_blit_src = wsi_info->buffer_blit_src;
    img->wsi.tiling_override = create_info->tiling;
 
    if (create_info->tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
@@ -211,8 +186,7 @@ vn_wsi_create_image_from_swapchain(
    const VkExternalMemoryImageCreateInfo local_external_info = {
       .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
       .pNext = local_create_info.pNext,
-      .handleTypes =
-         dev->physical_device->external_memory.renderer_handle_type,
+      .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
    };
    local_create_info.pNext = &local_external_info;
 
@@ -273,8 +247,6 @@ vn_CreateSwapchainKHR(VkDevice device,
              VN_WSI_PTR(pCreateInfo->oldSwapchain));
    }
 
-   vn_tls_set_async_pipeline_create();
-
    return vn_result(dev->instance, result);
 }
 
@@ -294,23 +266,24 @@ VkResult
 vn_QueuePresentKHR(VkQueue _queue, const VkPresentInfoKHR *pPresentInfo)
 {
    VN_TRACE_FUNC();
-   struct vk_queue *queue_vk = vk_queue_from_handle(_queue);
-   struct vn_device *dev = (void *)queue_vk->base.device;
+   struct vn_queue *queue = vn_queue_from_handle(_queue);
 
-   VkResult result = wsi_common_queue_present(
-      &dev->physical_device->wsi_device, vn_device_to_handle(dev), _queue,
-      queue_vk->queue_family_index, pPresentInfo);
+   VkResult result =
+      wsi_common_queue_present(&queue->device->physical_device->wsi_device,
+                               vn_device_to_handle(queue->device), _queue,
+                               queue->family, pPresentInfo);
    if (VN_DEBUG(WSI) && result != VK_SUCCESS) {
       for (uint32_t i = 0; i < pPresentInfo->swapchainCount; i++) {
          const VkResult r =
             pPresentInfo->pResults ? pPresentInfo->pResults[i] : result;
-         vn_log(dev->instance, "swapchain %p: presented image %d: %s",
+         vn_log(queue->device->instance,
+                "swapchain %p: presented image %d: %s",
                 VN_WSI_PTR(pPresentInfo->pSwapchains[i]),
                 pPresentInfo->pImageIndices[i], vk_Result_to_str(r));
       }
    }
 
-   return vn_result(dev->instance, result);
+   return vn_result(queue->device->instance, result);
 }
 
 VkResult

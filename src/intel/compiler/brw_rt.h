@@ -24,11 +24,6 @@
 #ifndef BRW_RT_H
 #define BRW_RT_H
 
-#include <stdint.h>
-
-#include "compiler/shader_enums.h"
-#include "util/macros.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -199,8 +194,8 @@ struct brw_rt_raygen_trampoline_params {
 #define BRW_RT_OFFSETOF_HIT_ATTRIB_DATA BRW_RT_SIZEOF_HW_STACK
 
 #define BRW_RT_ASYNC_STACK_STRIDE \
-   ALIGN_POT(BRW_RT_OFFSETOF_HIT_ATTRIB_DATA + \
-             BRW_RT_SIZEOF_HIT_ATTRIB_DATA, 64)
+   ALIGN(BRW_RT_OFFSETOF_HIT_ATTRIB_DATA + \
+         BRW_RT_SIZEOF_HIT_ATTRIB_DATA, 64)
 
 static inline void
 brw_rt_compute_scratch_layout(struct brw_rt_scratch_layout *layout,
@@ -235,18 +230,6 @@ brw_rt_compute_scratch_layout(struct brw_rt_scratch_layout *layout,
    assert(size % 64 == 0);
    layout->sw_stack_start = size;
    layout->sw_stack_size = ALIGN(sw_stack_size, 64);
-
-   /* Currently it's always the case that sw_stack_size is a power of
-    * two, but power-of-two SW stack sizes are prone to causing
-    * collisions in the hashing function used by the L3 to map memory
-    * addresses to banks, which can cause stack accesses from most
-    * DSSes to bottleneck on a single L3 bank.  Fix it by padding the
-    * SW stack by a single cacheline if it was a power of two.
-    */
-   if (layout->sw_stack_size > 64 &&
-       util_is_power_of_two_nonzero(layout->sw_stack_size))
-      layout->sw_stack_size += 64;
-
    size += num_stack_ids * layout->sw_stack_size;
 
    layout->total_size = size;

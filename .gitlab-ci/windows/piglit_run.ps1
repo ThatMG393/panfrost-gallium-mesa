@@ -1,20 +1,27 @@
 $env:PIGLIT_NO_FAST_SKIP = 1
-$env:PIGLIT_SPIRV_AS_BINARY = "C:\VulkanSDK\$env:VULKAN_SDK_VERSION\Bin\spirv-as.exe"
 
-Copy-Item -Path _install\bin\opengl32.dll -Destination C:\Piglit\bin\opengl32.dll
-Copy-Item -Path _install\bin\libgallium_wgl.dll -Destination C:\Piglit\bin\libgallium_wgl.dll
-Copy-Item -Path _install\bin\libglapi.dll -Destination C:\Piglit\bin\libglapi.dll
+Copy-Item -Path _install\bin\opengl32.dll -Destination C:\Piglit\lib\piglit\bin\opengl32.dll
+Copy-Item -Path _install\bin\libgallium_wgl.dll -Destination C:\Piglit\lib\piglit\bin\libgallium_wgl.dll
+Copy-Item -Path _install\bin\libglapi.dll -Destination C:\Piglit\lib\piglit\bin\libglapi.dll
 
-$jobs = ""
-if ($null -ne $env:FDO_CI_CONCURRENT) {
-  $jobs = "--jobs", "$($env:FDO_CI_CONCURRENT)"
-}
+cmd.exe /C "py -3 C:\Piglit\bin\piglit.py run --timeout 240 `"$env:PIGLIT_PROFILE`" $env:PIGLIT_OPTIONS $env:PIGLIT_TESTS .\results"
 
-deqp-runner suite --output .\logs --suite "_install/$env:PIGLIT_SUITE" `
-  --skips "_install/$env:PIGLIT_SKIPS" `
-  --baseline "_install/$env:PIGLIT_BASELINE" `
-  --flakes "_install/$env:PIGLIT_FLAKES" `
-  $jobs
-if (!$?) {
+py -3 C:\Piglit\bin\piglit.py summary console .\results | Select -SkipLast 1 | Select-String -NotMatch -Pattern ': pass' | Set-Content -Path .\result.txt
+
+$reference = Get-Content ".\_install\$env:PIGLIT_RESULTS.txt"
+$result = Get-Content .\result.txt
+if (-Not ($reference -And $result)) {
   Exit 1
 }
+
+$diff = Compare-Object -ReferenceObject $reference -DifferenceObject $result
+if (-Not $diff) {
+  Exit 0
+}
+
+py -3 C:\Piglit\bin\piglit.py summary html --exclude-details=pass .\summary .\results
+
+Write-Host "Unexpected change in results:"
+Write-Output $diff | Format-Table -Property SideIndicator,InputObject -Wrap
+
+Exit 1

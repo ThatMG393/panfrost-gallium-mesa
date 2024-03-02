@@ -33,17 +33,16 @@ extern "C" {
 
 struct d3d12_shader;
 struct d3d12_image_format_conversion_info;
-struct d3d12_image_format_conversion_info_arr;
 enum d3d12_state_var;
 
-nir_def *
+nir_ssa_def *
 d3d12_get_state_var(nir_builder *b,
                     enum d3d12_state_var var_enum,
                     const char *var_name,
                     const struct glsl_type *var_type,
                     nir_variable **out_var);
 
-nir_def *
+nir_ssa_def *
 d3d12_get_state_var(nir_builder *b,
                     enum d3d12_state_var var_enum,
                     const char *var_name,
@@ -62,6 +61,9 @@ d3d12_lower_state_vars(struct nir_shader *s, struct d3d12_shader *shader);
 
 void
 d3d12_lower_yflip(nir_shader *s);
+
+void
+d3d12_forward_front_face(nir_shader *nir);
 
 void
 d3d12_lower_depth_range(nir_shader *nir);
@@ -88,6 +90,9 @@ d3d12_fix_io_uint_type(struct nir_shader *s, uint64_t in_mask, uint64_t out_mask
 void
 d3d12_nir_invert_depth(nir_shader *s, unsigned viewport_mask, bool clip_halfz);
 
+bool
+nir_lower_packed_ubo_loads(struct nir_shader *nir);
+
 void
 d3d12_lower_primitive_id(nir_shader *shader);
 
@@ -95,13 +100,13 @@ void
 d3d12_lower_triangle_strip(nir_shader *shader);
 
 bool
-d3d12_lower_image_casts(nir_shader *s, struct d3d12_image_format_conversion_info_arr *info);
+d3d12_lower_image_casts(nir_shader *s, struct d3d12_image_format_conversion_info *info);
 
 bool
 d3d12_disable_multisampling(nir_shader *s);
 
 bool
-d3d12_split_needed_varyings(nir_shader *s);
+d3d12_split_multistream_varyings(nir_shader *s);
 
 void
 d3d12_write_0_to_new_varying(nir_shader *s, nir_variable *var);

@@ -186,13 +186,6 @@ st_texture_image_insert_transfer(struct gl_texture_image *stImage,
                                  unsigned index,
                                  struct pipe_transfer *transfer);
 
-/**
- * Returns the level of the gl_texture_image with respect to the resource it
- * is allocated within. Example: returns 0 for non-finalized texture.
- */
-GLuint
-st_texture_image_resource_level(struct gl_texture_image *stImage);
-
 /* Return a pointer to an image within a texture.  Return image stride as
  * well.
  */
@@ -240,13 +233,13 @@ st_compressed_format_fallback(struct st_context *st, mesa_format format);
 
 void
 st_convert_image(const struct st_context *st, const struct gl_image_unit *u,
-                 struct pipe_image_view *img, enum gl_access_qualifier shader_access);
+                 struct pipe_image_view *img, unsigned shader_access);
 
 void
 st_convert_image_from_unit(const struct st_context *st,
                            struct pipe_image_view *img,
                            GLuint imgUnit,
-                           enum gl_access_qualifier shader_access);
+                           unsigned shader_access);
 
 void
 st_convert_sampler(const struct st_context *st,

@@ -476,7 +476,7 @@ do_blit_framebuffer(struct gl_context *ctx,
 
    blit.filter = pFilter;
    blit.render_condition_enable = st->has_conditional_render;
-   blit.alpha_blend = false;
+   blit.alpha_blend = FALSE;
 
    if (mask & GL_COLOR_BUFFER_BIT) {
       struct gl_renderbuffer_attachment *srcAtt =

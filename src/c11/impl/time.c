@@ -30,24 +30,14 @@
 
 #include "c11/time.h"
 
-#ifdef _TIMESPEC_GET_NEED_IMPL
+#ifndef HAVE_TIMESPEC_GET
 
 #if defined(_WIN32) && !defined(HAVE_PTHREAD)
 
-#include "c11/threads.h"
 #include <windows.h>
 
-static LARGE_INTEGER frequency;
-
-static
-void
-c23_timespec_get_init(void)
-{
-    QueryPerformanceFrequency(&frequency);
-}
-
 int
-c23_timespec_get(struct timespec *ts, int base)
+timespec_get(struct timespec *ts, int base)
 {
 /* difference between 1970 and 1601 */
 #define _TIMESPEC_IMPL_UNIX_EPOCH_IN_TICKS 116444736000000000ull
@@ -67,25 +57,6 @@ c23_timespec_get(struct timespec *ts, int base)
         ts->tv_sec = ticks / _TIMESPEC_IMPL_TICKS_PER_SECONDS;
         ts->tv_nsec = (ticks % _TIMESPEC_IMPL_TICKS_PER_SECONDS) * 100;
         return base;
-    } else if (base == TIME_MONOTONIC || base == TIME_MONOTONIC_RAW) {
-        if (frequency.QuadPart == 0) {
-            static once_flag once = ONCE_FLAG_INIT;
-            call_once(&once, c23_timespec_get_init);
-        }
-        if (frequency.QuadPart != 0) {
-            LARGE_INTEGER now;
-            LONGLONG sec;
-            LONGLONG nsec;
-            QueryPerformanceCounter(&now);
-            sec = now.QuadPart / frequency.QuadPart;
-            nsec = (now.QuadPart - sec * frequency.QuadPart)
-                * 1000000000UL / frequency.QuadPart;
-            ts->tv_sec = (time_t)sec;
-            ts->tv_nsec = (long)nsec;
-            return base;
-        }
-        /* Otherwise timespec_get with TIME_MONOTONIC or TIME_MONOTONIC_RAW failed */
-        return 0;
     }
     return 0;
 #undef _TIMESPEC_IMPL_UNIX_EPOCH_IN_TICKS
@@ -94,42 +65,14 @@ c23_timespec_get(struct timespec *ts, int base)
 
 #else
 
-int c23_timespec_get(struct timespec *ts, int base)
+int
+timespec_get(struct timespec *ts, int base)
 {
     if (!ts)
         return 0;
-    switch (base)
-    {
-    case TIME_UTC:
-        if (clock_gettime(CLOCK_REALTIME, ts) == 0)
-            return base;
-        break;
-#ifdef CLOCK_MONOTONIC
-    case TIME_MONOTONIC:
-        if (clock_gettime(CLOCK_MONOTONIC, ts) == 0)
-            return base;
-        break;
-#endif
-#ifdef CLOCK_PROCESS_CPUTIME_ID
-    case TIME_ACTIVE:
-        if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, ts) == 0)
-            return base;
-        break;
-#endif
-#ifdef CLOCK_THREAD_CPUTIME_ID
-    case TIME_THREAD_ACTIVE:
-        if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, ts) == 0)
-            return base;
-        break;
-#endif
-#ifdef CLOCK_MONOTONIC_RAW
-    case TIME_MONOTONIC_RAW:
-        if (clock_gettime(CLOCK_MONOTONIC_RAW, ts) == 0)
-            return base;
-        break;
-#endif
-    default:
-        break;
+    if (base == TIME_UTC) {
+        clock_gettime(CLOCK_REALTIME, ts);
+        return base;
     }
     return 0;
 }

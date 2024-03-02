@@ -1,17 +1,12 @@
-#!/usr/bin/env bash
-# shellcheck disable=SC2086 # we want word splitting
+#!/bin/sh
 
 set -ex
 
-INSTALL=$PWD/install
+INSTALL=`pwd`/install
 
 # Set up the driver environment.
-export LD_LIBRARY_PATH=$INSTALL/lib/
-
-RESULTS="$PWD/${GTEST_RESULTS_DIR:-results}"
-mkdir -p "$RESULTS"
-
-export LIBVA_DRIVERS_PATH=$INSTALL/lib/dri/
+export LD_LIBRARY_PATH=`pwd`/install/lib/
+export LIBVA_DRIVERS_PATH=`pwd`/install/lib/dri/
 # libva spams driver open info by default, and that happens per testcase.
 export LIBVA_MESSAGING_LEVEL=1
 
@@ -20,7 +15,7 @@ if [ -e "$INSTALL/$GPU_VERSION-fails.txt" ]; then
 fi
 
 # Default to an empty known flakes file if it doesn't exist.
-touch "$INSTALL/$GPU_VERSION-flakes.txt"
+touch $INSTALL/$GPU_VERSION-flakes.txt
 
 if [ -n "$GALLIUM_DRIVER" ] && [ -e "$INSTALL/$GALLIUM_DRIVER-skips.txt" ]; then
     GTEST_SKIPS="$GTEST_SKIPS --skips $INSTALL/$GALLIUM_DRIVER-skips.txt"
@@ -39,7 +34,7 @@ set +e
 gtest-runner \
     run \
     --gtest $GTEST \
-    --output ${RESULTS} \
+    --output ${GTEST_RESULTS_DIR:-results} \
     --jobs ${FDO_CI_CONCURRENT:-4} \
     $GTEST_SKIPS \
     --flakes $INSTALL/$GPU_VERSION-flakes.txt \
@@ -55,7 +50,7 @@ deqp-runner junit \
    --results $RESULTS/failures.csv \
    --output $RESULTS/junit.xml \
    --limit 50 \
-   --template "See $ARTIFACTS_BASE_URL/results/{{testcase}}.xml"
+   --template "See https://$CI_PROJECT_ROOT_NAMESPACE.pages.freedesktop.org/-/$CI_PROJECT_NAME/-/jobs/$CI_JOB_ID/artifacts/results/{{testcase}}.xml"
 
 # Report the flakes to the IRC channel for monitoring (if configured):
 if [ -n "$FLAKES_CHANNEL" ]; then
@@ -69,7 +64,7 @@ if [ -n "$FLAKES_CHANNEL" ]; then
          --job "$CI_JOB_ID" \
          --url "$CI_JOB_URL" \
          --branch "${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME:-$CI_COMMIT_BRANCH}" \
-         --branch-title "${CI_MERGE_REQUEST_TITLE:-$CI_COMMIT_TITLE}" || true
+         --branch-title "${CI_MERGE_REQUEST_TITLE:-$CI_COMMIT_TITLE}"
 fi
 
 exit $GTEST_EXITCODE

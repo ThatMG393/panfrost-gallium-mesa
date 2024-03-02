@@ -35,17 +35,13 @@ void
 nir_lower_pstipple_fs(struct nir_shader *shader,
                       unsigned *samplerUnitOut,
                       unsigned fixedUnit,
-                      bool fs_pos_is_sysval,
-                      nir_alu_type bool_type);
+                      bool fs_pos_is_sysval);
 
 void
-nir_lower_aaline_fs(struct nir_shader *shader, int *varying,
-                    nir_variable *stipple_counter,
-                    nir_variable *stipple_pattern);
+nir_lower_aaline_fs(struct nir_shader *shader, int *varying);
 
 void
-nir_lower_aapoint_fs(struct nir_shader *shader, int *varying,
-                     nir_alu_type bool_type);
+nir_lower_aapoint_fs(struct nir_shader *shader, int *varying);
 
 #ifdef __cplusplus
 }

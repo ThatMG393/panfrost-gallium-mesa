@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # shellcheck disable=SC2086 # we want word splitting
 
 set -ex
@@ -6,32 +6,29 @@ set -ex
 git config --global user.email "mesa@example.com"
 git config --global user.name "Mesa CI"
 
-CROSVM_VERSION=e3815e62d675ef436956a992e0ed58b7309c759d
+CROSVM_VERSION=acd262cb42111c53b580a67355e795775545cced
 git clone --single-branch -b main --no-checkout https://chromium.googlesource.com/crosvm/crosvm /platform/crosvm
 pushd /platform/crosvm
 git checkout "$CROSVM_VERSION"
 git submodule update --init
 
-VIRGLRENDERER_VERSION=66049f6b101438fa9984269893e8def26a3b9b60
+VIRGLRENDERER_VERSION=3c5a9bbb7464e0e91e446991055300f4f989f6a9
 rm -rf third_party/virglrenderer
-git clone --single-branch -b main --no-checkout https://gitlab.freedesktop.org/virgl/virglrenderer.git third_party/virglrenderer
+git clone --single-branch -b master --no-checkout https://gitlab.freedesktop.org/virgl/virglrenderer.git third_party/virglrenderer
 pushd third_party/virglrenderer
 git checkout "$VIRGLRENDERER_VERSION"
-meson setup build/ -D libdir=lib -D render-server-worker=process -D venus=true $EXTRA_MESON_ARGS
-meson install -C build
+meson build/ -Drender-server=true -Drender-server-worker=process -Dvenus-experimental=true $EXTRA_MESON_ARGS
+ninja -C build install
 popd
 
-cargo update -p pkg-config@0.3.26 --precise 0.3.27
-
 RUSTFLAGS='-L native=/usr/local/lib' cargo install \
-  bindgen-cli \
-  --locked \
+  bindgen \
   -j ${FDO_CI_CONCURRENT:-4} \
   --root /usr/local \
-  --version 0.65.1 \
+  --version 0.60.1 \
   $EXTRA_CARGO_ARGS
 
-CROSVM_USE_SYSTEM_VIRGLRENDERER=1 RUSTFLAGS='-L native=/usr/local/lib' cargo install \
+RUSTFLAGS='-L native=/usr/local/lib' cargo install \
   -j ${FDO_CI_CONCURRENT:-4} \
   --locked \
   --features 'default-no-sandbox gpu x virgl_renderer virgl_renderer_next' \

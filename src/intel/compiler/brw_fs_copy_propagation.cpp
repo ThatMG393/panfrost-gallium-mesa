@@ -32,9 +32,10 @@
  * 12.5 (p356).
  */
 
+#define ACP_HASH_SIZE 64
+
 #include "util/bitset.h"
 #include "util/u_math.h"
-#include "util/rb_tree.h"
 #include "brw_fs.h"
 #include "brw_fs_live_variables.h"
 #include "brw_cfg.h"
@@ -43,168 +44,15 @@
 using namespace brw;
 
 namespace { /* avoid conflict with opt_copy_propagation_elements */
-struct acp_entry {
-   struct rb_node by_dst;
-   struct rb_node by_src;
+struct acp_entry : public exec_node {
    fs_reg dst;
    fs_reg src;
    unsigned global_idx;
    unsigned size_written;
    unsigned size_read;
    enum opcode opcode;
+   bool saturate;
    bool is_partial_write;
-   bool force_writemask_all;
-};
-
-/**
- * Compare two acp_entry::src.nr
- *
- * This is intended to be used as the comparison function for rb_tree.
- */
-static int
-cmp_entry_dst_entry_dst(const struct rb_node *a_node, const struct rb_node *b_node)
-{
-   const struct acp_entry *a_entry =
-      rb_node_data(struct acp_entry, a_node, by_dst);
-
-   const struct acp_entry *b_entry =
-      rb_node_data(struct acp_entry, b_node, by_dst);
-
-   return a_entry->dst.nr - b_entry->dst.nr;
-}
-
-static int
-cmp_entry_dst_nr(const struct rb_node *a_node, const void *b_key)
-{
-   const struct acp_entry *a_entry =
-      rb_node_data(struct acp_entry, a_node, by_dst);
-
-   return a_entry->dst.nr - (uintptr_t) b_key;
-}
-
-static int
-cmp_entry_src_entry_src(const struct rb_node *a_node, const struct rb_node *b_node)
-{
-   const struct acp_entry *a_entry =
-      rb_node_data(struct acp_entry, a_node, by_src);
-
-   const struct acp_entry *b_entry =
-      rb_node_data(struct acp_entry, b_node, by_src);
-
-   return a_entry->src.nr - b_entry->src.nr;
-}
-
-/**
- * Compare an acp_entry::src.nr with a raw nr.
- *
- * This is intended to be used as the comparison function for rb_tree.
- */
-static int
-cmp_entry_src_nr(const struct rb_node *a_node, const void *b_key)
-{
-   const struct acp_entry *a_entry =
-      rb_node_data(struct acp_entry, a_node, by_src);
-
-   return a_entry->src.nr - (uintptr_t) b_key;
-}
-
-class acp_forward_iterator {
-public:
-   acp_forward_iterator(struct rb_node *n, unsigned offset)
-      : curr(n), next(nullptr), offset(offset)
-   {
-      next = rb_node_next_or_null(curr);
-   }
-
-   acp_forward_iterator &operator++()
-   {
-      curr = next;
-      next = rb_node_next_or_null(curr);
-
-      return *this;
-   }
-
-   bool operator!=(const acp_forward_iterator &other) const
-   {
-      return curr != other.curr;
-   }
-
-   struct acp_entry *operator*() const
-   {
-      /* This open-codes part of rb_node_data. */
-      return curr != NULL ? (struct acp_entry *)(((char *)curr) - offset)
-                          : NULL;
-   }
-
-private:
-   struct rb_node *curr;
-   struct rb_node *next;
-   unsigned offset;
-};
-
-struct acp {
-   struct rb_tree by_dst;
-   struct rb_tree by_src;
-
-   acp()
-   {
-      rb_tree_init(&by_dst);
-      rb_tree_init(&by_src);
-   }
-
-   acp_forward_iterator begin()
-   {
-      return acp_forward_iterator(rb_tree_first(&by_src),
-                                  rb_tree_offsetof(struct acp_entry, by_src, 0));
-   }
-
-   const acp_forward_iterator end() const
-   {
-      return acp_forward_iterator(nullptr, 0);
-   }
-
-   unsigned length()
-   {
-      unsigned l = 0;
-
-      for (rb_node *iter = rb_tree_first(&by_src);
-           iter != NULL; iter = rb_node_next(iter))
-         l++;
-
-      return l;
-   }
-
-   void add(acp_entry *entry)
-   {
-      rb_tree_insert(&by_dst, &entry->by_dst, cmp_entry_dst_entry_dst);
-      rb_tree_insert(&by_src, &entry->by_src, cmp_entry_src_entry_src);
-   }
-
-   void remove(acp_entry *entry)
-   {
-      rb_tree_remove(&by_dst, &entry->by_dst);
-      rb_tree_remove(&by_src, &entry->by_src);
-   }
-
-   acp_forward_iterator find_by_src(unsigned nr)
-   {
-      struct rb_node *rbn = rb_tree_search(&by_src,
-                                           (void *)(uintptr_t) nr,
-                                           cmp_entry_src_nr);
-
-      return acp_forward_iterator(rbn, rb_tree_offsetof(struct acp_entry,
-                                                        by_src, rbn));
-   }
-
-   acp_forward_iterator find_by_dst(unsigned nr)
-   {
-      struct rb_node *rbn = rb_tree_search(&by_dst,
-                                           (void *)(uintptr_t) nr,
-                                           cmp_entry_dst_nr);
-
-      return acp_forward_iterator(rbn, rb_tree_offsetof(struct acp_entry,
-                                                        by_dst, rbn));
-   }
 };
 
 struct block_data {
@@ -241,39 +89,21 @@ struct block_data {
     * have a fully uninitialized destination at the end of this block.
     */
    BITSET_WORD *undef;
-
-   /**
-    * Which entries in the fs_copy_prop_dataflow acp table can the
-    * start of this block be reached from.  Note that this is a weaker
-    * condition than livein.
-    */
-   BITSET_WORD *reachin;
-
-   /**
-    * Which entries in the fs_copy_prop_dataflow acp table are
-    * overwritten by an instruction with channel masks inconsistent
-    * with the copy instruction (e.g. due to force_writemask_all).
-    * Such an overwrite can cause the copy entry to become invalid
-    * even if the copy instruction is subsequently re-executed for any
-    * given channel i, since the execution of the overwrite for
-    * channel i may corrupt other channels j!=i inactive for the
-    * subsequent copy.
-    */
-   BITSET_WORD *exec_mismatch;
 };
 
 class fs_copy_prop_dataflow
 {
 public:
-   fs_copy_prop_dataflow(linear_ctx *lin_ctx, cfg_t *cfg,
+   fs_copy_prop_dataflow(void *mem_ctx, cfg_t *cfg,
                          const fs_live_variables &live,
-                         struct acp *out_acp);
+                         exec_list *out_acp[ACP_HASH_SIZE]);
 
    void setup_initial_values();
    void run();
 
    void dump_block_data() const UNUSED;
 
+   void *mem_ctx;
    cfg_t *cfg;
    const fs_live_variables &live;
 
@@ -285,46 +115,46 @@ public:
 };
 } /* anonymous namespace */
 
-fs_copy_prop_dataflow::fs_copy_prop_dataflow(linear_ctx *lin_ctx, cfg_t *cfg,
+fs_copy_prop_dataflow::fs_copy_prop_dataflow(void *mem_ctx, cfg_t *cfg,
                                              const fs_live_variables &live,
-                                             struct acp *out_acp)
-   : cfg(cfg), live(live)
+                                             exec_list *out_acp[ACP_HASH_SIZE])
+   : mem_ctx(mem_ctx), cfg(cfg), live(live)
 {
-   bd = linear_zalloc_array(lin_ctx, struct block_data, cfg->num_blocks);
+   bd = rzalloc_array(mem_ctx, struct block_data, cfg->num_blocks);
 
    num_acp = 0;
-   foreach_block (block, cfg)
-      num_acp += out_acp[block->num].length();
+   foreach_block (block, cfg) {
+      for (int i = 0; i < ACP_HASH_SIZE; i++) {
+         num_acp += out_acp[block->num][i].length();
+      }
+   }
+
+   acp = rzalloc_array(mem_ctx, struct acp_entry *, num_acp);
 
    bitset_words = BITSET_WORDS(num_acp);
 
-   foreach_block (block, cfg) {
-      bd[block->num].livein = linear_zalloc_array(lin_ctx, BITSET_WORD, bitset_words);
-      bd[block->num].liveout = linear_zalloc_array(lin_ctx, BITSET_WORD, bitset_words);
-      bd[block->num].copy = linear_zalloc_array(lin_ctx, BITSET_WORD, bitset_words);
-      bd[block->num].kill = linear_zalloc_array(lin_ctx, BITSET_WORD, bitset_words);
-      bd[block->num].undef = linear_zalloc_array(lin_ctx, BITSET_WORD, bitset_words);
-      bd[block->num].reachin = linear_zalloc_array(lin_ctx, BITSET_WORD, bitset_words);
-      bd[block->num].exec_mismatch = linear_zalloc_array(lin_ctx, BITSET_WORD, bitset_words);
-   }
-
-   acp = linear_zalloc_array(lin_ctx, struct acp_entry *, num_acp);
-
    int next_acp = 0;
    foreach_block (block, cfg) {
-      for (auto iter = out_acp[block->num].begin();
-           iter != out_acp[block->num].end(); ++iter) {
-         acp[next_acp] = *iter;
+      bd[block->num].livein = rzalloc_array(bd, BITSET_WORD, bitset_words);
+      bd[block->num].liveout = rzalloc_array(bd, BITSET_WORD, bitset_words);
+      bd[block->num].copy = rzalloc_array(bd, BITSET_WORD, bitset_words);
+      bd[block->num].kill = rzalloc_array(bd, BITSET_WORD, bitset_words);
+      bd[block->num].undef = rzalloc_array(bd, BITSET_WORD, bitset_words);
 
-         (*iter)->global_idx = next_acp;
+      for (int i = 0; i < ACP_HASH_SIZE; i++) {
+         foreach_in_list(acp_entry, entry, &out_acp[block->num][i]) {
+            acp[next_acp] = entry;
 
-         /* opt_copy_propagation_local populates out_acp with copies created
-          * in a block which are still live at the end of the block.  This
-          * is exactly what we want in the COPY set.
-          */
-         BITSET_SET(bd[block->num].copy, next_acp);
+            entry->global_idx = next_acp;
 
-         next_acp++;
+            /* opt_copy_propagation_local populates out_acp with copies created
+             * in a block which are still live at the end of the block.  This
+             * is exactly what we want in the COPY set.
+             */
+            BITSET_SET(bd[block->num].copy, next_acp);
+
+            next_acp++;
+         }
       }
    }
 
@@ -332,28 +162,6 @@ fs_copy_prop_dataflow::fs_copy_prop_dataflow(linear_ctx *lin_ctx, cfg_t *cfg,
 
    setup_initial_values();
    run();
-}
-
-/**
- * Like reg_offset, but register must be VGRF or FIXED_GRF.
- */
-static inline unsigned
-grf_reg_offset(const fs_reg &r)
-{
-   return (r.file == VGRF ? 0 : r.nr) * REG_SIZE +
-          r.offset +
-          (r.file == FIXED_GRF ? r.subnr : 0);
-}
-
-/**
- * Like regions_overlap, but register must be VGRF or FIXED_GRF.
- */
-static inline bool
-grf_regions_overlap(const fs_reg &r, unsigned dr, const fs_reg &s, unsigned ds)
-{
-   return reg_space(r) == reg_space(s) &&
-          !(grf_reg_offset(r) + dr <= grf_reg_offset(s) ||
-            grf_reg_offset(s) + ds <= grf_reg_offset(r));
 }
 
 /**
@@ -365,13 +173,57 @@ fs_copy_prop_dataflow::setup_initial_values()
 {
    /* Initialize the COPY and KILL sets. */
    {
-      struct acp acp_table;
+      /* Create a temporary table of ACP entries which we'll use for efficient
+       * look-up.  Unfortunately, we have to do this in two steps because we
+       * have to match both sources and destinations and an ACP entry can only
+       * be in one list at a time.
+       *
+       * We choose to make the table size between num_acp/2 and num_acp/4 to
+       * try and trade off between the time it takes to initialize the table
+       * via exec_list constructors or make_empty() and the cost of
+       * collisions.  In practice, it doesn't appear to matter too much what
+       * size we make the table as long as it's roughly the same order of
+       * magnitude as num_acp.  We get most of the benefit of the table
+       * approach even if we use a table of size ACP_HASH_SIZE though a
+       * full-sized table is 1-2% faster in practice.
+       */
+      unsigned acp_table_size = util_next_power_of_two(num_acp) / 4;
+      acp_table_size = MAX2(acp_table_size, ACP_HASH_SIZE);
+      exec_list *acp_table = new exec_list[acp_table_size];
 
       /* First, get all the KILLs for instructions which overwrite ACP
        * destinations.
        */
-      for (int i = 0; i < num_acp; i++)
-         acp_table.add(acp[i]);
+      for (int i = 0; i < num_acp; i++) {
+         unsigned idx = reg_space(acp[i]->dst) & (acp_table_size - 1);
+         acp_table[idx].push_tail(acp[i]);
+      }
+
+      foreach_block (block, cfg) {
+         foreach_inst_in_block(fs_inst, inst, block) {
+            if (inst->dst.file != VGRF)
+               continue;
+
+            unsigned idx = reg_space(inst->dst) & (acp_table_size - 1);
+            foreach_in_list(acp_entry, entry, &acp_table[idx]) {
+               if (regions_overlap(inst->dst, inst->size_written,
+                                   entry->dst, entry->size_written))
+                  BITSET_SET(bd[block->num].kill, entry->global_idx);
+            }
+         }
+      }
+
+      /* Clear the table for the second pass */
+      for (unsigned i = 0; i < acp_table_size; i++)
+         acp_table[i].make_empty();
+
+      /* Next, get all the KILLs for instructions which overwrite ACP
+       * sources.
+       */
+      for (int i = 0; i < num_acp; i++) {
+         unsigned idx = reg_space(acp[i]->src) & (acp_table_size - 1);
+         acp_table[idx].push_tail(acp[i]);
+      }
 
       foreach_block (block, cfg) {
          foreach_inst_in_block(fs_inst, inst, block) {
@@ -379,32 +231,16 @@ fs_copy_prop_dataflow::setup_initial_values()
                 inst->dst.file != FIXED_GRF)
                continue;
 
-            for (auto iter = acp_table.find_by_src(inst->dst.nr);
-              iter != acp_table.end() && (*iter)->src.nr == inst->dst.nr;
-              ++iter) {
-               if (grf_regions_overlap(inst->dst, inst->size_written,
-                                       (*iter)->src, (*iter)->size_read)) {
-                  BITSET_SET(bd[block->num].kill, (*iter)->global_idx);
-                  if (inst->force_writemask_all && !(*iter)->force_writemask_all)
-                     BITSET_SET(bd[block->num].exec_mismatch, (*iter)->global_idx);
-               }
-            }
-
-            if (inst->dst.file != VGRF)
-               continue;
-
-            for (auto iter = acp_table.find_by_dst(inst->dst.nr);
-              iter != acp_table.end() && (*iter)->dst.nr == inst->dst.nr;
-              ++iter) {
-               if (grf_regions_overlap(inst->dst, inst->size_written,
-                                       (*iter)->dst, (*iter)->size_written)) {
-                  BITSET_SET(bd[block->num].kill, (*iter)->global_idx);
-                  if (inst->force_writemask_all && !(*iter)->force_writemask_all)
-                     BITSET_SET(bd[block->num].exec_mismatch, (*iter)->global_idx);
-               }
+            unsigned idx = reg_space(inst->dst) & (acp_table_size - 1);
+            foreach_in_list(acp_entry, entry, &acp_table[idx]) {
+               if (regions_overlap(inst->dst, inst->size_written,
+                                   entry->src, entry->size_read))
+                  BITSET_SET(bd[block->num].kill, entry->global_idx);
             }
          }
       }
+
+      delete [] acp_table;
    }
 
    /* Populate the initial values for the livein and liveout sets.  For the
@@ -456,7 +292,6 @@ fs_copy_prop_dataflow::run()
 
          for (int i = 0; i < bitset_words; i++) {
             const BITSET_WORD old_liveout = bd[block->num].liveout[i];
-            const BITSET_WORD old_reachin = bd[block->num].reachin[i];
             BITSET_WORD livein_from_any_block = 0;
 
             /* Update livein for this block.  If a copy is live out of all
@@ -474,13 +309,6 @@ fs_copy_prop_dataflow::run()
                bd[block->num].livein[i] &= (bd[parent->num].liveout[i] |
                                             bd[parent->num].undef[i]);
                livein_from_any_block |= bd[parent->num].liveout[i];
-
-               /* Update reachin for this block.  If the end of any
-                * parent block is reachable from the copy, the start
-                * of this block is reachable from it as well.
-                */
-               bd[block->num].reachin[i] |= (bd[parent->num].reachin[i] |
-                                             bd[parent->num].copy[i]);
             }
 
             /* Limit to the set of ACP entries that can possibly be available
@@ -496,44 +324,7 @@ fs_copy_prop_dataflow::run()
                bd[block->num].copy[i] | (bd[block->num].livein[i] &
                                          ~bd[block->num].kill[i]);
 
-            if (old_liveout != bd[block->num].liveout[i] ||
-                old_reachin != bd[block->num].reachin[i])
-               progress = true;
-         }
-      }
-   } while (progress);
-
-   /* Perform a second fixed-point pass in order to propagate the
-    * exec_mismatch bitsets.  Note that this requires an accurate
-    * value of the reachin bitsets as input, which isn't available
-    * until the end of the first propagation pass, so this loop cannot
-    * be folded into the previous one.
-    */
-   do {
-      progress = false;
-
-      foreach_block (block, cfg) {
-         for (int i = 0; i < bitset_words; i++) {
-            const BITSET_WORD old_exec_mismatch = bd[block->num].exec_mismatch[i];
-
-            /* Update exec_mismatch for this block.  If the end of a
-             * parent block is reachable by an overwrite with
-             * inconsistent execution masking, the start of this block
-             * is reachable by such an overwrite as well.
-             */
-            foreach_list_typed(bblock_link, parent_link, link, &block->parents) {
-               bblock_t *parent = parent_link->block;
-               bd[block->num].exec_mismatch[i] |= (bd[parent->num].exec_mismatch[i] &
-                                                   bd[parent->num].reachin[i]);
-            }
-
-            /* Only consider overwrites with inconsistent execution
-             * masking if they are reachable from the copy, since
-             * overwrites unreachable from a copy are harmless to that
-             * copy.
-             */
-            bd[block->num].exec_mismatch[i] &= bd[block->num].reachin[i];
-            if (old_exec_mismatch != bd[block->num].exec_mismatch[i])
+            if (old_liveout != bd[block->num].liveout[i])
                progress = true;
          }
       }
@@ -619,9 +410,25 @@ can_take_stride(fs_inst *inst, brw_reg_type dst_type,
     *     The following restrictions apply for align1 mode: Scalar source is
     *     supported. Source and destination horizontal stride must be the
     *     same.
+    *
+    * From the Haswell PRM Volume 2b "Command Reference - Instructions", page
+    * 134 ("Extended Math Function"):
+    *
+    *    Scalar source is supported. Source and destination horizontal stride
+    *    must be 1.
+    *
+    * and similar language exists for IVB and SNB. Pre-SNB, math instructions
+    * are sends, so the sources are moved to MRF's and there are no
+    * restrictions.
     */
-   if (inst->is_math())
-      return stride == inst->dst.stride || stride == 0;
+   if (inst->is_math()) {
+      if (devinfo->ver == 6 || devinfo->ver == 7) {
+         assert(inst->dst.stride == 1);
+         return stride == 1 || stride == 0;
+      } else if (devinfo->ver >= 8) {
+         return stride == inst->dst.stride || stride == 0;
+      }
+   }
 
    return true;
 }
@@ -641,17 +448,14 @@ instruction_requires_packed_data(fs_inst *inst)
    }
 }
 
-static bool
-try_copy_propagate(const brw_compiler *compiler, fs_inst *inst,
-                   acp_entry *entry, int arg,
-                   const brw::simple_allocator &alloc,
-                   uint8_t max_polygons)
+bool
+fs_visitor::try_copy_propagate(fs_inst *inst, int arg, acp_entry *entry)
 {
    if (inst->src[arg].file != VGRF)
       return false;
 
-   const struct intel_device_info *devinfo = compiler->devinfo;
-
+   if (entry->src.file == IMM)
+      return false;
    assert(entry->src.file == VGRF || entry->src.file == UNIFORM ||
           entry->src.file == ATTR || entry->src.file == FIXED_GRF);
 
@@ -709,6 +513,15 @@ try_copy_propagate(const brw_compiler *compiler, fs_inst *inst,
       }
    }
 
+   /* Avoid propagating odd-numbered FIXED_GRF registers into the first source
+    * of a LINTERP instruction on platforms where the PLN instruction has
+    * register alignment restrictions.
+    */
+   if (devinfo->has_pln && devinfo->ver <= 6 &&
+       entry->src.file == FIXED_GRF && (entry->src.nr & 1) &&
+       inst->opcode == FS_OPCODE_LINTERP && arg == 0)
+      return false;
+
    /* we can't generally copy-propagate UD negations because we
     * can end up accessing the resulting values as signed integers
     * instead. See also resolve_ud_negate() and comment in
@@ -725,10 +538,15 @@ try_copy_propagate(const brw_compiler *compiler, fs_inst *inst,
 
    /* Reject cases that would violate register regioning restrictions. */
    if ((entry->src.file == UNIFORM || !entry->src.is_contiguous()) &&
-       (inst->is_send_from_grf() ||
+       ((devinfo->ver == 6 && inst->is_math()) ||
+        inst->is_send_from_grf() ||
         inst->uses_indirect_addressing())) {
       return false;
    }
+
+   if (has_source_modifiers &&
+       inst->opcode == SHADER_OPCODE_GFX4_SCRATCH_WRITE)
+      return false;
 
    /* Some instructions implemented in the generator backend, such as
     * derivatives, assume that their operands are packed so we can't
@@ -771,17 +589,6 @@ try_copy_propagate(const brw_compiler *compiler, fs_inst *inst,
    if (has_dst_aligned_region_restriction(devinfo, inst, dst_type) &&
        entry_stride != 0 &&
        (reg_offset(inst->dst) % REG_SIZE) != (reg_offset(entry->src) % REG_SIZE))
-      return false;
-
-   /* The <8;8,0> regions used for FS attributes in multipolygon
-    * dispatch mode could violate regioning restrictions, don't copy
-    * propagate them in such cases.
-    */
-   if (entry->src.file == ATTR && max_polygons > 1 &&
-       (has_dst_aligned_region_restriction(devinfo, inst, dst_type) ||
-	instruction_requires_packed_data(inst) ||
-	(inst->is_3src(compiler) && arg == 2) ||
-	entry->dst.type != inst->src[arg].type))
       return false;
 
    /* Bail if the source FIXED_GRF region of the copy cannot be trivially
@@ -837,9 +644,25 @@ try_copy_propagate(const brw_compiler *compiler, fs_inst *inst,
         type_sz(entry->dst.type) != type_sz(inst->src[arg].type)))
       return false;
 
-   if ((entry->src.negate || entry->src.abs) &&
+   if (devinfo->ver >= 8 && (entry->src.negate || entry->src.abs) &&
        is_logic_op(inst->opcode)) {
       return false;
+   }
+
+   if (entry->saturate) {
+      switch(inst->opcode) {
+      case BRW_OPCODE_SEL:
+         if ((inst->conditional_mod != BRW_CONDITIONAL_GE &&
+              inst->conditional_mod != BRW_CONDITIONAL_L) ||
+             inst->src[1].file != IMM ||
+             inst->src[1].f < 0.0 ||
+             inst->src[1].f > 1.0) {
+            return false;
+         }
+         break;
+      default:
+         return false;
+      }
    }
 
    /* Save the offset of inst->src[arg] relative to entry->dst for it to be
@@ -876,6 +699,9 @@ try_copy_propagate(const brw_compiler *compiler, fs_inst *inst,
       inst->src[arg].stride *= entry->src.stride;
    }
 
+   /* Compose any saturate modifiers. */
+   inst->saturate = inst->saturate || entry->saturate;
+
    /* Compute the first component of the copy that the instruction is
     * reading, and the base byte offset within that component.
     */
@@ -896,6 +722,7 @@ try_copy_propagate(const brw_compiler *compiler, fs_inst *inst,
           * type.  If we got here, then we can just change the source and
           * destination types of the instruction and keep going.
           */
+         assert(inst->can_change_types());
          for (int i = 0; i < inst->sources; i++) {
             inst->src[i].type = entry->dst.type;
          }
@@ -912,215 +739,207 @@ try_copy_propagate(const brw_compiler *compiler, fs_inst *inst,
 }
 
 
-static bool
-try_constant_propagate(const brw_compiler *compiler, fs_inst *inst,
-                       acp_entry *entry, int arg)
+bool
+fs_visitor::try_constant_propagate(fs_inst *inst, acp_entry *entry)
 {
    bool progress = false;
 
+   if (entry->src.file != IMM)
+      return false;
    if (type_sz(entry->src.type) > 4)
       return false;
-
-   if (inst->src[arg].file != VGRF)
+   if (entry->saturate)
       return false;
 
-   assert(entry->dst.file == VGRF);
-   if (inst->src[arg].nr != entry->dst.nr)
-      return false;
+   for (int i = inst->sources - 1; i >= 0; i--) {
+      if (inst->src[i].file != VGRF)
+         continue;
 
-   /* Bail if inst is reading a range that isn't contained in the range
-    * that entry is writing.
-    */
-   if (!region_contained_in(inst->src[arg], inst->size_read(arg),
-                            entry->dst, entry->size_written))
-      return false;
+      assert(entry->dst.file == VGRF);
+      if (inst->src[i].nr != entry->dst.nr)
+         continue;
 
-   /* If the size of the use type is larger than the size of the entry
-    * type, the entry doesn't contain all of the data that the user is
-    * trying to use.
-    */
-   if (type_sz(inst->src[arg].type) > type_sz(entry->dst.type))
-      return false;
-
-   fs_reg val = entry->src;
-
-   /* If the size of the use type is smaller than the size of the entry,
-    * clamp the value to the range of the use type.  This enables constant
-    * copy propagation in cases like
-    *
-    *
-    *    mov(8)          g12<1>UD        0x0000000cUD
-    *    ...
-    *    mul(8)          g47<1>D         g86<8,8,1>D     g12<16,8,2>W
-    */
-   if (type_sz(inst->src[arg].type) < type_sz(entry->dst.type)) {
-      if (type_sz(inst->src[arg].type) != 2 || type_sz(entry->dst.type) != 4)
-         return false;
-
-      assert(inst->src[arg].subnr == 0 || inst->src[arg].subnr == 2);
-
-      /* When subnr is 0, we want the lower 16-bits, and when it's 2, we
-       * want the upper 16-bits. No other values of subnr are valid for a
-       * UD source.
+      /* Bail if inst is reading a range that isn't contained in the range
+       * that entry is writing.
        */
-      const uint16_t v = inst->src[arg].subnr == 2 ? val.ud >> 16 : val.ud;
+      if (!region_contained_in(inst->src[i], inst->size_read(i),
+                               entry->dst, entry->size_written))
+         continue;
 
-      val.ud = v | (uint32_t(v) << 16);
-   }
-
-   val.type = inst->src[arg].type;
-
-   if (inst->src[arg].abs) {
-      if (is_logic_op(inst->opcode) ||
-          !brw_abs_immediate(val.type, &val.as_brw_reg())) {
-         return false;
-      }
-   }
-
-   if (inst->src[arg].negate) {
-      if (is_logic_op(inst->opcode) ||
-          !brw_negate_immediate(val.type, &val.as_brw_reg())) {
-         return false;
-      }
-   }
-
-   switch (inst->opcode) {
-   case BRW_OPCODE_MOV:
-   case SHADER_OPCODE_LOAD_PAYLOAD:
-   case FS_OPCODE_PACK:
-      inst->src[arg] = val;
-      progress = true;
-      break;
-
-   case SHADER_OPCODE_POW:
-      if (arg == 1) {
-         inst->src[arg] = val;
-         progress = true;
-      }
-      break;
-
-   case BRW_OPCODE_SUBB:
-      if (arg == 1) {
-         inst->src[arg] = val;
-         progress = true;
-      }
-      break;
-
-   case BRW_OPCODE_MACH:
-   case BRW_OPCODE_MUL:
-   case SHADER_OPCODE_MULH:
-   case BRW_OPCODE_ADD:
-   case BRW_OPCODE_XOR:
-   case BRW_OPCODE_ADDC:
-      if (arg == 1) {
-         inst->src[arg] = val;
-         progress = true;
-      } else if (arg == 0 && inst->src[1].file != IMM) {
-         /* Don't copy propagate the constant in situations like
-          *
-          *    mov(8)          g8<1>D          0x7fffffffD
-          *    mul(8)          g16<1>D         g8<8,8,1>D      g15<16,8,2>W
-          *
-          * On platforms that only have a 32x16 multiplier, this will
-          * result in lowering the multiply to
-          *
-          *    mul(8)          g15<1>D         g14<8,8,1>D     0xffffUW
-          *    mul(8)          g16<1>D         g14<8,8,1>D     0x7fffUW
-          *    add(8)          g15.1<2>UW      g15.1<16,8,2>UW g16<16,8,2>UW
-          *
-          * On Gfx8 and Gfx9, which have the full 32x32 multiplier, it
-          * results in
-          *
-          *    mul(8)          g16<1>D         g15<16,8,2>W    0x7fffffffD
-          *
-          * Volume 2a of the Skylake PRM says:
-          *
-          *    When multiplying a DW and any lower precision integer, the
-          *    DW operand must on src0.
-          */
-         if (inst->opcode == BRW_OPCODE_MUL &&
-             type_sz(inst->src[1].type) < 4 &&
-             type_sz(val.type) == 4)
-            break;
-
-         /* Fit this constant in by commuting the operands.
-          * Exception: we can't do this for 32-bit integer MUL/MACH
-          * because it's asymmetric.
-          *
-          * The BSpec says for Broadwell that
-          *
-          *    "When multiplying DW x DW, the dst cannot be accumulator."
-          *
-          * Integer MUL with a non-accumulator destination will be lowered
-          * by lower_integer_multiplication(), so don't restrict it.
-          */
-         if (((inst->opcode == BRW_OPCODE_MUL &&
-               inst->dst.is_accumulator()) ||
-              inst->opcode == BRW_OPCODE_MACH) &&
-             (inst->src[1].type == BRW_REGISTER_TYPE_D ||
-              inst->src[1].type == BRW_REGISTER_TYPE_UD))
-            break;
-         inst->src[0] = inst->src[1];
-         inst->src[1] = val;
-         progress = true;
-      }
-      break;
-
-   case BRW_OPCODE_ADD3:
-      /* add3 can have a single imm16 source. Proceed if the source type is
-       * already W or UW or the value can be coerced to one of those types.
+      /* If the size of the use type is larger than the size of the entry
+       * type, the entry doesn't contain all of the data that the user is
+       * trying to use.
        */
-      if (val.type == BRW_REGISTER_TYPE_W || val.type == BRW_REGISTER_TYPE_UW)
-         ; /* Nothing to do. */
-      else if (val.ud <= 0xffff)
-         val = brw_imm_uw(val.ud);
-      else if (val.d >= -0x8000 && val.d <= 0x7fff)
-         val = brw_imm_w(val.d);
-      else
-         break;
+      if (type_sz(inst->src[i].type) > type_sz(entry->dst.type))
+         continue;
 
-      if (arg == 2) {
-         inst->src[arg] = val;
-         progress = true;
-      } else if (inst->src[2].file != IMM) {
-         inst->src[arg] = inst->src[2];
-         inst->src[2] = val;
-         progress = true;
+      fs_reg val = entry->src;
+
+      /* If the size of the use type is smaller than the size of the entry,
+       * clamp the value to the range of the use type.  This enables constant
+       * copy propagation in cases like
+       *
+       *
+       *    mov(8)          g12<1>UD        0x0000000cUD
+       *    ...
+       *    mul(8)          g47<1>D         g86<8,8,1>D     g12<16,8,2>W
+       */
+      if (type_sz(inst->src[i].type) < type_sz(entry->dst.type)) {
+         if (type_sz(inst->src[i].type) != 2 || type_sz(entry->dst.type) != 4)
+            continue;
+
+         assert(inst->src[i].subnr == 0 || inst->src[i].subnr == 2);
+
+         /* When subnr is 0, we want the lower 16-bits, and when it's 2, we
+          * want the upper 16-bits. No other values of subnr are valid for a
+          * UD source.
+          */
+         const uint16_t v = inst->src[i].subnr == 2 ? val.ud >> 16 : val.ud;
+
+         val.ud = v | (uint32_t(v) << 16);
       }
 
-      break;
+      val.type = inst->src[i].type;
 
-   case BRW_OPCODE_CMP:
-   case BRW_OPCODE_IF:
-      if (arg == 1) {
-         inst->src[arg] = val;
-         progress = true;
-      } else if (arg == 0 && inst->src[1].file != IMM) {
-         enum brw_conditional_mod new_cmod;
-
-         new_cmod = brw_swap_cmod(inst->conditional_mod);
-         if (new_cmod != BRW_CONDITIONAL_NONE) {
-            /* Fit this constant in by swapping the operands and
-             * flipping the test
-             */
-            inst->src[0] = inst->src[1];
-            inst->src[1] = val;
-            inst->conditional_mod = new_cmod;
-            progress = true;
+      if (inst->src[i].abs) {
+         if ((devinfo->ver >= 8 && is_logic_op(inst->opcode)) ||
+             !brw_abs_immediate(val.type, &val.as_brw_reg())) {
+            continue;
          }
       }
-      break;
 
-   case BRW_OPCODE_SEL:
-      if (arg == 1) {
-         inst->src[arg] = val;
+      if (inst->src[i].negate) {
+         if ((devinfo->ver >= 8 && is_logic_op(inst->opcode)) ||
+             !brw_negate_immediate(val.type, &val.as_brw_reg())) {
+            continue;
+         }
+      }
+
+      switch (inst->opcode) {
+      case BRW_OPCODE_MOV:
+      case SHADER_OPCODE_LOAD_PAYLOAD:
+      case FS_OPCODE_PACK:
+         inst->src[i] = val;
          progress = true;
-      } else if (arg == 0) {
-         if (inst->src[1].file != IMM &&
-             (inst->conditional_mod == BRW_CONDITIONAL_NONE ||
-              /* Only GE and L are commutative. */
-              inst->conditional_mod == BRW_CONDITIONAL_GE ||
-              inst->conditional_mod == BRW_CONDITIONAL_L)) {
+         break;
+
+      case SHADER_OPCODE_INT_QUOTIENT:
+      case SHADER_OPCODE_INT_REMAINDER:
+         /* FINISHME: Promote non-float constants and remove this. */
+         if (devinfo->ver < 8)
+            break;
+         FALLTHROUGH;
+      case SHADER_OPCODE_POW:
+         /* Allow constant propagation into src1 (except on Gen 6 which
+          * doesn't support scalar source math), and let constant combining
+          * promote the constant on Gen < 8.
+          */
+         if (devinfo->ver == 6)
+            break;
+         FALLTHROUGH;
+      case BRW_OPCODE_BFI1:
+      case BRW_OPCODE_ASR:
+      case BRW_OPCODE_SHL:
+      case BRW_OPCODE_SHR:
+      case BRW_OPCODE_SUBB:
+         if (i == 1) {
+            inst->src[i] = val;
+            progress = true;
+         }
+         break;
+
+      case BRW_OPCODE_MACH:
+      case BRW_OPCODE_MUL:
+      case SHADER_OPCODE_MULH:
+      case BRW_OPCODE_ADD:
+      case BRW_OPCODE_OR:
+      case BRW_OPCODE_AND:
+      case BRW_OPCODE_XOR:
+      case BRW_OPCODE_ADDC:
+         if (i == 1) {
+            inst->src[i] = val;
+            progress = true;
+         } else if (i == 0 && inst->src[1].file != IMM) {
+            /* Don't copy propagate the constant in situations like
+             *
+             *    mov(8)          g8<1>D          0x7fffffffD
+             *    mul(8)          g16<1>D         g8<8,8,1>D      g15<16,8,2>W
+             *
+             * On platforms that only have a 32x16 multiplier, this will
+             * result in lowering the multiply to
+             *
+             *    mul(8)          g15<1>D         g14<8,8,1>D     0xffffUW
+             *    mul(8)          g16<1>D         g14<8,8,1>D     0x7fffUW
+             *    add(8)          g15.1<2>UW      g15.1<16,8,2>UW g16<16,8,2>UW
+             *
+             * On Gfx8 and Gfx9, which have the full 32x32 multiplier, it
+             * results in
+             *
+             *    mul(8)          g16<1>D         g15<16,8,2>W    0x7fffffffD
+             *
+             * Volume 2a of the Skylake PRM says:
+             *
+             *    When multiplying a DW and any lower precision integer, the
+             *    DW operand must on src0.
+             */
+            if (inst->opcode == BRW_OPCODE_MUL &&
+                type_sz(inst->src[1].type) < 4 &&
+                type_sz(val.type) == 4)
+               break;
+
+            /* Fit this constant in by commuting the operands.
+             * Exception: we can't do this for 32-bit integer MUL/MACH
+             * because it's asymmetric.
+             *
+             * The BSpec says for Broadwell that
+             *
+             *    "When multiplying DW x DW, the dst cannot be accumulator."
+             *
+             * Integer MUL with a non-accumulator destination will be lowered
+             * by lower_integer_multiplication(), so don't restrict it.
+             */
+            if (((inst->opcode == BRW_OPCODE_MUL &&
+                  inst->dst.is_accumulator()) ||
+                 inst->opcode == BRW_OPCODE_MACH) &&
+                (inst->src[1].type == BRW_REGISTER_TYPE_D ||
+                 inst->src[1].type == BRW_REGISTER_TYPE_UD))
+               break;
+            inst->src[0] = inst->src[1];
+            inst->src[1] = val;
+            progress = true;
+         }
+         break;
+
+      case BRW_OPCODE_CMP:
+      case BRW_OPCODE_IF:
+         if (i == 1) {
+            inst->src[i] = val;
+            progress = true;
+         } else if (i == 0 && inst->src[1].file != IMM) {
+            enum brw_conditional_mod new_cmod;
+
+            new_cmod = brw_swap_cmod(inst->conditional_mod);
+            if (new_cmod != BRW_CONDITIONAL_NONE) {
+               /* Fit this constant in by swapping the operands and
+                * flipping the test
+                */
+               inst->src[0] = inst->src[1];
+               inst->src[1] = val;
+               inst->conditional_mod = new_cmod;
+               progress = true;
+            }
+         }
+         break;
+
+      case BRW_OPCODE_SEL:
+         if (i == 1) {
+            inst->src[i] = val;
+            progress = true;
+         } else if (i == 0 && inst->src[1].file != IMM &&
+                    (inst->conditional_mod == BRW_CONDITIONAL_NONE ||
+                     /* Only GE and L are commutative. */
+                     inst->conditional_mod == BRW_CONDITIONAL_GE ||
+                     inst->conditional_mod == BRW_CONDITIONAL_L)) {
             inst->src[0] = inst->src[1];
             inst->src[1] = val;
 
@@ -1131,78 +950,70 @@ try_constant_propagate(const brw_compiler *compiler, fs_inst *inst,
                inst->predicate_inverse =
                   !inst->predicate_inverse;
             }
-         } else {
-            inst->src[0] = val;
+            progress = true;
          }
+         break;
 
+      case FS_OPCODE_FB_WRITE_LOGICAL:
+         /* The stencil and omask sources of FS_OPCODE_FB_WRITE_LOGICAL are
+          * bit-cast using a strided region so they cannot be immediates.
+          */
+         if (i != FB_WRITE_LOGICAL_SRC_SRC_STENCIL &&
+             i != FB_WRITE_LOGICAL_SRC_OMASK) {
+            inst->src[i] = val;
+            progress = true;
+         }
+         break;
+
+      case SHADER_OPCODE_TEX_LOGICAL:
+      case SHADER_OPCODE_TXD_LOGICAL:
+      case SHADER_OPCODE_TXF_LOGICAL:
+      case SHADER_OPCODE_TXL_LOGICAL:
+      case SHADER_OPCODE_TXS_LOGICAL:
+      case FS_OPCODE_TXB_LOGICAL:
+      case SHADER_OPCODE_TXF_CMS_LOGICAL:
+      case SHADER_OPCODE_TXF_CMS_W_LOGICAL:
+      case SHADER_OPCODE_TXF_CMS_W_GFX12_LOGICAL:
+      case SHADER_OPCODE_TXF_UMS_LOGICAL:
+      case SHADER_OPCODE_TXF_MCS_LOGICAL:
+      case SHADER_OPCODE_LOD_LOGICAL:
+      case SHADER_OPCODE_TG4_LOGICAL:
+      case SHADER_OPCODE_TG4_OFFSET_LOGICAL:
+      case SHADER_OPCODE_SAMPLEINFO_LOGICAL:
+      case SHADER_OPCODE_IMAGE_SIZE_LOGICAL:
+      case SHADER_OPCODE_UNTYPED_ATOMIC_LOGICAL:
+      case SHADER_OPCODE_UNTYPED_ATOMIC_FLOAT_LOGICAL:
+      case SHADER_OPCODE_UNTYPED_SURFACE_READ_LOGICAL:
+      case SHADER_OPCODE_UNTYPED_SURFACE_WRITE_LOGICAL:
+      case SHADER_OPCODE_TYPED_ATOMIC_LOGICAL:
+      case SHADER_OPCODE_TYPED_SURFACE_READ_LOGICAL:
+      case SHADER_OPCODE_TYPED_SURFACE_WRITE_LOGICAL:
+      case SHADER_OPCODE_BYTE_SCATTERED_WRITE_LOGICAL:
+      case SHADER_OPCODE_BYTE_SCATTERED_READ_LOGICAL:
+         inst->src[i] = val;
          progress = true;
-      }
-      break;
+         break;
 
-   case FS_OPCODE_FB_WRITE_LOGICAL:
-      /* The stencil and omask sources of FS_OPCODE_FB_WRITE_LOGICAL are
-       * bit-cast using a strided region so they cannot be immediates.
-       */
-      if (arg != FB_WRITE_LOGICAL_SRC_SRC_STENCIL &&
-          arg != FB_WRITE_LOGICAL_SRC_OMASK) {
-         inst->src[arg] = val;
+      case FS_OPCODE_UNIFORM_PULL_CONSTANT_LOAD:
+      case SHADER_OPCODE_BROADCAST:
+         inst->src[i] = val;
          progress = true;
+         break;
+
+      case BRW_OPCODE_MAD:
+      case BRW_OPCODE_LRP:
+         inst->src[i] = val;
+         progress = true;
+         break;
+
+      case FS_OPCODE_PACK_HALF_2x16_SPLIT:
+         inst->src[i] = val;
+         progress = true;
+         break;
+
+      default:
+         break;
       }
-      break;
-
-   case SHADER_OPCODE_INT_QUOTIENT:
-   case SHADER_OPCODE_INT_REMAINDER:
-   case BRW_OPCODE_AND:
-   case BRW_OPCODE_ASR:
-   case BRW_OPCODE_BFE:
-   case BRW_OPCODE_BFI1:
-   case BRW_OPCODE_BFI2:
-   case BRW_OPCODE_ROL:
-   case BRW_OPCODE_ROR:
-   case BRW_OPCODE_SHL:
-   case BRW_OPCODE_SHR:
-   case BRW_OPCODE_OR:
-   case SHADER_OPCODE_TEX_LOGICAL:
-   case SHADER_OPCODE_TXD_LOGICAL:
-   case SHADER_OPCODE_TXF_LOGICAL:
-   case SHADER_OPCODE_TXL_LOGICAL:
-   case SHADER_OPCODE_TXS_LOGICAL:
-   case FS_OPCODE_TXB_LOGICAL:
-   case SHADER_OPCODE_TXF_CMS_LOGICAL:
-   case SHADER_OPCODE_TXF_CMS_W_LOGICAL:
-   case SHADER_OPCODE_TXF_CMS_W_GFX12_LOGICAL:
-   case SHADER_OPCODE_TXF_UMS_LOGICAL:
-   case SHADER_OPCODE_TXF_MCS_LOGICAL:
-   case SHADER_OPCODE_LOD_LOGICAL:
-   case SHADER_OPCODE_TG4_BIAS_LOGICAL:
-   case SHADER_OPCODE_TG4_EXPLICIT_LOD_LOGICAL:
-   case SHADER_OPCODE_TG4_IMPLICIT_LOD_LOGICAL:
-   case SHADER_OPCODE_TG4_LOGICAL:
-   case SHADER_OPCODE_TG4_OFFSET_LOGICAL:
-   case SHADER_OPCODE_TG4_OFFSET_LOD_LOGICAL:
-   case SHADER_OPCODE_TG4_OFFSET_BIAS_LOGICAL:
-   case SHADER_OPCODE_SAMPLEINFO_LOGICAL:
-   case SHADER_OPCODE_IMAGE_SIZE_LOGICAL:
-   case SHADER_OPCODE_UNTYPED_ATOMIC_LOGICAL:
-   case SHADER_OPCODE_UNTYPED_SURFACE_READ_LOGICAL:
-   case SHADER_OPCODE_UNTYPED_SURFACE_WRITE_LOGICAL:
-   case SHADER_OPCODE_TYPED_ATOMIC_LOGICAL:
-   case SHADER_OPCODE_TYPED_SURFACE_READ_LOGICAL:
-   case SHADER_OPCODE_TYPED_SURFACE_WRITE_LOGICAL:
-   case SHADER_OPCODE_BYTE_SCATTERED_WRITE_LOGICAL:
-   case SHADER_OPCODE_BYTE_SCATTERED_READ_LOGICAL:
-   case FS_OPCODE_UNIFORM_PULL_CONSTANT_LOAD:
-   case SHADER_OPCODE_BROADCAST:
-   case BRW_OPCODE_MAD:
-   case BRW_OPCODE_LRP:
-   case FS_OPCODE_PACK_HALF_2x16_SPLIT:
-   case SHADER_OPCODE_SHUFFLE:
-      inst->src[arg] = val;
-      progress = true;
-      break;
-
-   default:
-      break;
    }
 
    return progress;
@@ -1214,116 +1025,80 @@ can_propagate_from(fs_inst *inst)
    return (inst->opcode == BRW_OPCODE_MOV &&
            inst->dst.file == VGRF &&
            ((inst->src[0].file == VGRF &&
-             !grf_regions_overlap(inst->dst, inst->size_written,
-                                  inst->src[0], inst->size_read(0))) ||
+             !regions_overlap(inst->dst, inst->size_written,
+                              inst->src[0], inst->size_read(0))) ||
             inst->src[0].file == ATTR ||
             inst->src[0].file == UNIFORM ||
             inst->src[0].file == IMM ||
             (inst->src[0].file == FIXED_GRF &&
              inst->src[0].is_contiguous())) &&
            inst->src[0].type == inst->dst.type &&
-           !inst->saturate &&
            /* Subset of !is_partial_write() conditions. */
-           !inst->predicate && inst->dst.is_contiguous()) ||
+           !((inst->predicate && inst->opcode != BRW_OPCODE_SEL) ||
+             !inst->dst.is_contiguous())) ||
           is_identity_payload(FIXED_GRF, inst);
 }
 
 /* Walks a basic block and does copy propagation on it using the acp
  * list.
  */
-static bool
-opt_copy_propagation_local(const brw_compiler *compiler, linear_ctx *lin_ctx,
-                           bblock_t *block, struct acp &acp,
-                           const brw::simple_allocator &alloc,
-                           uint8_t max_polygons)
+bool
+fs_visitor::opt_copy_propagation_local(void *copy_prop_ctx, bblock_t *block,
+                                       exec_list *acp)
 {
    bool progress = false;
 
    foreach_inst_in_block(fs_inst, inst, block) {
       /* Try propagating into this instruction. */
-      bool instruction_progress = false;
-      for (int i = inst->sources - 1; i >= 0; i--) {
+      for (int i = 0; i < inst->sources; i++) {
          if (inst->src[i].file != VGRF)
             continue;
 
-         for (auto iter = acp.find_by_dst(inst->src[i].nr);
-              iter != acp.end() && (*iter)->dst.nr == inst->src[i].nr;
-              ++iter) {
-            if ((*iter)->src.file == IMM) {
-               if (try_constant_propagate(compiler, inst, *iter, i)) {
-                  instruction_progress = true;
-                  break;
-               }
-            } else {
-               if (try_copy_propagate(compiler, inst, *iter, i, alloc,
-                                      max_polygons)) {
-                  instruction_progress = true;
-                  break;
-               }
-            }
-         }
-      }
-
-      if (instruction_progress) {
-         progress = true;
-
-         /* ADD3 can only have the immediate as src0. */
-         if (inst->opcode == BRW_OPCODE_ADD3) {
-            if (inst->src[2].file == IMM) {
-               const auto src0 = inst->src[0];
-               inst->src[0] = inst->src[2];
-               inst->src[2] = src0;
-            }
-         }
-
-         /* If only one of the sources of a 2-source, commutative instruction (e.g.,
-          * AND) is immediate, it must be src1. If both are immediate, opt_algebraic
-          * should fold it away.
-          */
-         if (inst->sources == 2 && inst->is_commutative() &&
-             inst->src[0].file == IMM && inst->src[1].file != IMM) {
-            const auto src1 = inst->src[1];
-            inst->src[1] = inst->src[0];
-            inst->src[0] = src1;
+         foreach_in_list(acp_entry, entry, &acp[inst->src[i].nr % ACP_HASH_SIZE]) {
+            if (try_constant_propagate(inst, entry))
+               progress = true;
+            else if (try_copy_propagate(inst, i, entry))
+               progress = true;
          }
       }
 
       /* kill the destination from the ACP */
       if (inst->dst.file == VGRF || inst->dst.file == FIXED_GRF) {
-         for (auto iter = acp.find_by_dst(inst->dst.nr);
-              iter != acp.end() && (*iter)->dst.nr == inst->dst.nr;
-              ++iter) {
-            if (grf_regions_overlap((*iter)->dst, (*iter)->size_written,
-                                    inst->dst, inst->size_written))
-               acp.remove(*iter);
+         foreach_in_list_safe(acp_entry, entry, &acp[inst->dst.nr % ACP_HASH_SIZE]) {
+            if (regions_overlap(entry->dst, entry->size_written,
+                                inst->dst, inst->size_written))
+               entry->remove();
          }
 
-         for (auto iter = acp.find_by_src(inst->dst.nr);
-              iter != acp.end() && (*iter)->src.nr == inst->dst.nr;
-              ++iter) {
-            /* Make sure we kill the entry if this instruction overwrites
-             * _any_ of the registers that it reads
-             */
-            if (grf_regions_overlap((*iter)->src, (*iter)->size_read,
-                                    inst->dst, inst->size_written))
-               acp.remove(*iter);
-         }
+         /* Oops, we only have the chaining hash based on the destination, not
+          * the source, so walk across the entire table.
+          */
+         for (int i = 0; i < ACP_HASH_SIZE; i++) {
+            foreach_in_list_safe(acp_entry, entry, &acp[i]) {
+               /* Make sure we kill the entry if this instruction overwrites
+                * _any_ of the registers that it reads
+                */
+               if (regions_overlap(entry->src, entry->size_read,
+                                   inst->dst, inst->size_written))
+                  entry->remove();
+            }
+	 }
       }
 
       /* If this instruction's source could potentially be folded into the
        * operand of another instruction, add it to the ACP.
        */
       if (can_propagate_from(inst)) {
-         acp_entry *entry = linear_zalloc(lin_ctx, acp_entry);
+         acp_entry *entry = rzalloc(copy_prop_ctx, acp_entry);
          entry->dst = inst->dst;
          entry->src = inst->src[0];
          entry->size_written = inst->size_written;
          for (unsigned i = 0; i < inst->sources; i++)
             entry->size_read += inst->size_read(i);
          entry->opcode = inst->opcode;
+         entry->saturate = inst->saturate;
          entry->is_partial_write = inst->is_partial_write();
-         entry->force_writemask_all = inst->force_writemask_all;
-         acp.add(entry);
+         acp[entry->dst.nr % ACP_HASH_SIZE].push_tail(entry);
       } else if (inst->opcode == SHADER_OPCODE_LOAD_PAYLOAD &&
                  inst->dst.file == VGRF) {
          int offset = 0;
@@ -1334,18 +1109,16 @@ opt_copy_propagation_local(const brw_compiler *compiler, linear_ctx *lin_ctx,
             if (inst->src[i].file == VGRF ||
                 (inst->src[i].file == FIXED_GRF &&
                  inst->src[i].is_contiguous())) {
-               const brw_reg_type t = i < inst->header_size ?
-                  BRW_REGISTER_TYPE_UD : inst->src[i].type;
-               fs_reg dst = byte_offset(retype(inst->dst, t), offset);
-               if (!dst.equals(inst->src[i])) {
-                  acp_entry *entry = linear_zalloc(lin_ctx, acp_entry);
-                  entry->dst = dst;
-                  entry->src = retype(inst->src[i], t);
-                  entry->size_written = size_written;
-                  entry->size_read = inst->size_read(i);
-                  entry->opcode = inst->opcode;
-                  entry->force_writemask_all = inst->force_writemask_all;
-                  acp.add(entry);
+               acp_entry *entry = rzalloc(copy_prop_ctx, acp_entry);
+               entry->dst = byte_offset(inst->dst, offset);
+               entry->src = inst->src[i];
+               entry->size_written = size_written;
+               entry->size_read = inst->size_read(i);
+               entry->opcode = inst->opcode;
+               if (!entry->dst.equals(inst->src[i])) {
+                  acp[entry->dst.nr % ACP_HASH_SIZE].push_tail(entry);
+               } else {
+                  ralloc_free(entry);
                }
             }
             offset += size_written;
@@ -1357,22 +1130,23 @@ opt_copy_propagation_local(const brw_compiler *compiler, linear_ctx *lin_ctx,
 }
 
 bool
-brw_fs_opt_copy_propagation(fs_visitor &s)
+fs_visitor::opt_copy_propagation()
 {
    bool progress = false;
    void *copy_prop_ctx = ralloc_context(NULL);
-   linear_ctx *lin_ctx = linear_context(copy_prop_ctx);
-   struct acp out_acp[s.cfg->num_blocks];
+   exec_list *out_acp[cfg->num_blocks];
 
-   const fs_live_variables &live = s.live_analysis.require();
+   for (int i = 0; i < cfg->num_blocks; i++)
+      out_acp[i] = new exec_list [ACP_HASH_SIZE];
+
+   const fs_live_variables &live = live_analysis.require();
 
    /* First, walk through each block doing local copy propagation and getting
     * the set of copies available at the end of the block.
     */
-   foreach_block (block, s.cfg) {
-      progress = opt_copy_propagation_local(s.compiler, lin_ctx, block,
-                                            out_acp[block->num], s.alloc,
-                                            s.max_polygons) || progress;
+   foreach_block (block, cfg) {
+      progress = opt_copy_propagation_local(copy_prop_ctx, block,
+                                            out_acp[block->num]) || progress;
 
       /* If the destination of an ACP entry exists only within this block,
        * then there's no need to keep it for dataflow analysis.  We can delete
@@ -1384,43 +1158,43 @@ brw_fs_opt_copy_propagation(fs_visitor &s)
        * extending the live range of an ACP destination beyond the block,
        * it's safe to use the liveness information in this way.
        */
-      for (auto iter = out_acp[block->num].begin();
-           iter != out_acp[block->num].end(); ++iter) {
-         assert((*iter)->dst.file == VGRF);
-         if (block->start_ip <= live.vgrf_start[(*iter)->dst.nr] &&
-             live.vgrf_end[(*iter)->dst.nr] <= block->end_ip) {
-            out_acp[block->num].remove(*iter);
+      for (unsigned a = 0; a < ACP_HASH_SIZE; a++) {
+         foreach_in_list_safe(acp_entry, entry, &out_acp[block->num][a]) {
+            assert(entry->dst.file == VGRF);
+            if (block->start_ip <= live.vgrf_start[entry->dst.nr] &&
+                live.vgrf_end[entry->dst.nr] <= block->end_ip)
+               entry->remove();
          }
       }
    }
 
    /* Do dataflow analysis for those available copies. */
-   fs_copy_prop_dataflow dataflow(lin_ctx, s.cfg, live, out_acp);
+   fs_copy_prop_dataflow dataflow(copy_prop_ctx, cfg, live, out_acp);
 
    /* Next, re-run local copy propagation, this time with the set of copies
     * provided by the dataflow analysis available at the start of a block.
     */
-   foreach_block (block, s.cfg) {
-      struct acp in_acp;
+   foreach_block (block, cfg) {
+      exec_list in_acp[ACP_HASH_SIZE];
 
       for (int i = 0; i < dataflow.num_acp; i++) {
-         if (BITSET_TEST(dataflow.bd[block->num].livein, i) &&
-             !BITSET_TEST(dataflow.bd[block->num].exec_mismatch, i)) {
+         if (BITSET_TEST(dataflow.bd[block->num].livein, i)) {
             struct acp_entry *entry = dataflow.acp[i];
-            in_acp.add(entry);
+            in_acp[entry->dst.nr % ACP_HASH_SIZE].push_tail(entry);
          }
       }
 
-      progress = opt_copy_propagation_local(s.compiler, lin_ctx, block,
-                                            in_acp, s.alloc, s.max_polygons) ||
+      progress = opt_copy_propagation_local(copy_prop_ctx, block, in_acp) ||
                  progress;
    }
 
+   for (int i = 0; i < cfg->num_blocks; i++)
+      delete [] out_acp[i];
    ralloc_free(copy_prop_ctx);
 
    if (progress)
-      s.invalidate_analysis(DEPENDENCY_INSTRUCTION_DATA_FLOW |
-                            DEPENDENCY_INSTRUCTION_DETAIL);
+      invalidate_analysis(DEPENDENCY_INSTRUCTION_DATA_FLOW |
+                          DEPENDENCY_INSTRUCTION_DETAIL);
 
    return progress;
 }

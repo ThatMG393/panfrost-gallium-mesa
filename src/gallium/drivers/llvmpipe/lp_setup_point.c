@@ -37,6 +37,7 @@
 #include "lp_state_fs.h"
 #include "lp_state_setup.h"
 #include "lp_context.h"
+#include "tgsi/tgsi_scan.h"
 #include "draw/draw_context.h"
 
 #define NUM_CHANNELS 4
@@ -52,7 +53,7 @@ struct point_info {
    float (*dadx)[4];
    float (*dady)[4];
 
-   bool frontfacing;
+   boolean frontfacing;
 };
 
 
@@ -109,7 +110,7 @@ texcoord_coef(struct lp_setup_context *setup,
               unsigned slot,
               unsigned i,
               unsigned sprite_coord_origin,
-              bool perspective)
+              boolean perspective)
 {
    float w0 = info->v0[0][3];
 
@@ -215,7 +216,7 @@ setup_point_coefficients(struct lp_setup_context *setup,
       unsigned vert_attr = key->inputs[slot].src_index;
       unsigned usage_mask = key->inputs[slot].usage_mask;
       enum lp_interp interp = key->inputs[slot].interp;
-      bool perspective = !!(interp == LP_INTERP_PERSPECTIVE);
+      boolean perspective = !!(interp == LP_INTERP_PERSPECTIVE);
       unsigned i;
 
       if (perspective && usage_mask) {
@@ -321,7 +322,7 @@ print_point(struct lp_setup_context *setup,
 }
 
 
-static bool
+static boolean
 try_setup_point(struct lp_setup_context *setup,
                 const float (*v0)[4])
 {
@@ -449,16 +450,10 @@ try_setup_point(struct lp_setup_context *setup,
       lp_context->pipeline_statistics.c_primitives++;
    }
 
-   if (lp_setup_zero_sample_mask(setup)) {
-      if (0) debug_printf("zero sample mask\n");
-      LP_COUNT(nr_culled_tris);
-      return true;
-   }
-
    if (!u_rect_test_intersection(&setup->draw_regions[viewport_index], &bbox)) {
       if (0) debug_printf("no intersection\n");
       LP_COUNT(nr_culled_tris);
-      return true;
+      return TRUE;
    }
 
    u_rect_find_intersection(&setup->draw_regions[viewport_index], &bbox);
@@ -467,13 +462,15 @@ try_setup_point(struct lp_setup_context *setup,
    if (!setup->legacy_points || setup->multisample) {
       struct lp_rast_triangle *point;
       struct lp_rast_plane *plane;
+      unsigned bytes;
       unsigned nr_planes = 4;
 
       point = lp_setup_alloc_triangle(scene,
                                       key->num_inputs,
-                                      nr_planes);
+                                      nr_planes,
+                                      &bytes);
      if (!point)
-        return false;
+        return FALSE;
 
 #ifdef DEBUG
       point->v[0][0] = v0[0][0];
@@ -486,7 +483,7 @@ try_setup_point(struct lp_setup_context *setup,
           setup->face_slot > 0) {
          point->inputs.frontfacing = v0[setup->face_slot][0];
       } else {
-         point->inputs.frontfacing = true;
+         point->inputs.frontfacing = TRUE;
       }
 
       struct point_info info;
@@ -504,8 +501,8 @@ try_setup_point(struct lp_setup_context *setup,
        */
       setup_point_coefficients(setup, &info);
 
-      point->inputs.disable = false;
-      point->inputs.is_blit = false;
+      point->inputs.disable = FALSE;
+      point->inputs.is_blit = FALSE;
       point->inputs.layer = layer;
       point->inputs.viewport_index = viewport_index;
       point->inputs.view_index = setup->view_index;
@@ -543,7 +540,7 @@ try_setup_point(struct lp_setup_context *setup,
 
       int max_szorig = ((bbox.x1 - (bbox.x0 & ~3)) |
                         (bbox.y1 - (bbox.y0 & ~3)));
-      bool use_32bits = max_szorig <= MAX_FIXED_LENGTH32;
+      boolean use_32bits = max_szorig <= MAX_FIXED_LENGTH32;
 
       return lp_setup_bin_triangle(setup, point, use_32bits,
                                    setup->fs.current.variant->opaque,
@@ -553,7 +550,7 @@ try_setup_point(struct lp_setup_context *setup,
       struct lp_rast_rectangle *point =
          lp_setup_alloc_rectangle(scene, key->num_inputs);
       if (!point)
-         return false;
+         return FALSE;
 #ifdef DEBUG
       point->v[0][0] = v0[0][0];
       point->v[0][1] = v0[0][1];
@@ -570,7 +567,7 @@ try_setup_point(struct lp_setup_context *setup,
           setup->face_slot > 0) {
          point->inputs.frontfacing = v0[setup->face_slot][0];
       } else {
-         point->inputs.frontfacing = true;
+         point->inputs.frontfacing = TRUE;
       }
 
       struct point_info info;
@@ -588,8 +585,8 @@ try_setup_point(struct lp_setup_context *setup,
        */
       setup_point_coefficients(setup, &info);
 
-      point->inputs.disable = false;
-      point->inputs.is_blit = false;
+      point->inputs.disable = FALSE;
+      point->inputs.is_blit = FALSE;
       point->inputs.layer = layer;
       point->inputs.viewport_index = viewport_index;
       point->inputs.view_index = setup->view_index;

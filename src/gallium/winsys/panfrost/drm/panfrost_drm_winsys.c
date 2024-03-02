@@ -23,29 +23,27 @@
  */
 
 #include <errno.h>
-#include <fcntl.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 #include "util/format/u_format.h"
 #include "util/os_file.h"
 #include "util/u_math.h"
 #include "util/u_memory.h"
-#include "util/u_screen.h"
 
 #include "drm-uapi/drm.h"
-#include "panfrost/pan_public.h"
 #include "renderonly/renderonly.h"
 #include "panfrost_drm_public.h"
+#include "panfrost/pan_public.h"
 #include "xf86drm.h"
 
-struct renderonly_scanout *
+static struct renderonly_scanout *
 panfrost_create_kms_dumb_buffer_for_resource(struct pipe_resource *rsc,
                                              struct renderonly *ro,
                                              struct winsys_handle *out_handle)
 {
    /* Find the smallest width alignment that gives us a 64byte aligned stride */
    unsigned blk_sz = util_format_get_blocksize(rsc->format);
-   struct renderonly_scanout *scanout = NULL;
 
    assert(blk_sz);
 
@@ -53,7 +51,7 @@ panfrost_create_kms_dumb_buffer_for_resource(struct pipe_resource *rsc,
    for (unsigned i = 1; i <= blk_sz; i++) {
       if (!((64 * i) % blk_sz)) {
          align_w = (64 * i) / blk_sz;
-         break;
+	 break;
       }
    }
 
@@ -64,29 +62,25 @@ panfrost_create_kms_dumb_buffer_for_resource(struct pipe_resource *rsc,
    };
    struct drm_mode_destroy_dumb destroy_dumb = {0};
 
+   /* Align width to end up with a buffer that's aligned on 64 bytes. */
+
+   struct renderonly_scanout *scanout = CALLOC_STRUCT(renderonly_scanout);
+   if (!scanout)
+      return NULL;
+
    /* create dumb buffer at scanout GPU */
    int err = drmIoctl(ro->kms_fd, DRM_IOCTL_MODE_CREATE_DUMB, &create_dumb);
    if (err < 0) {
       fprintf(stderr, "DRM_IOCTL_MODE_CREATE_DUMB failed: %s\n",
-              strerror(errno));
-      return NULL;
+            strerror(errno));
+      goto free_scanout;
    }
 
    if (create_dumb.pitch % 64)
       goto free_dumb;
 
-   simple_mtx_lock(&ro->bo_map_lock);
-   scanout = util_sparse_array_get(&ro->bo_map, create_dumb.handle);
-   simple_mtx_unlock(&ro->bo_map_lock);
-
-   if (!scanout)
-      goto free_dumb;
-
    scanout->handle = create_dumb.handle;
    scanout->stride = create_dumb.pitch;
-
-   assert(p_atomic_read(&scanout->refcnt) == 0);
-   p_atomic_set(&scanout->refcnt, 1);
 
    if (!out_handle)
       return scanout;
@@ -106,29 +100,25 @@ panfrost_create_kms_dumb_buffer_for_resource(struct pipe_resource *rsc,
    return scanout;
 
 free_dumb:
-   /* If an error occured, make sure we reset the scanout object before
-    * leaving.
-    */
-   if (scanout)
-      memset(scanout, 0, sizeof(*scanout));
-
-   destroy_dumb.handle = create_dumb.handle;
+   destroy_dumb.handle = scanout->handle;
    drmIoctl(ro->kms_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_dumb);
 
+free_scanout:
+   FREE(scanout);
+
    return NULL;
+
 }
 
 struct pipe_screen *
 panfrost_drm_screen_create(int fd)
 {
-   return u_pipe_screen_lookup_or_create(os_dupfd_cloexec(fd), NULL, NULL,
-                                         panfrost_create_screen);
+   return panfrost_create_screen(os_dupfd_cloexec(fd), NULL);
 }
 
 struct pipe_screen *
-panfrost_drm_screen_create_renderonly(int fd, struct renderonly *ro,
-                                      const struct pipe_screen_config *config)
+panfrost_drm_screen_create_renderonly(struct renderonly *ro)
 {
-   return u_pipe_screen_lookup_or_create(os_dupfd_cloexec(fd), config, ro,
-                                         panfrost_create_screen);
+   ro->create_for_resource = panfrost_create_kms_dumb_buffer_for_resource;
+   return panfrost_create_screen(os_dupfd_cloexec(ro->gpu_fd), ro);
 }

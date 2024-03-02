@@ -1,5 +1,5 @@
 /**********************************************************
- * Copyright 2008-2023 VMware, Inc.  All rights reserved.
+ * Copyright 2008-2009 VMware, Inc.  All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -43,7 +43,6 @@
 #include "svga_resource_texture.h"
 #include "svga_resource_buffer.h"
 #include "svga_sampler_view.h"
-#include "svga_surface.h"
 #include "svga_winsys.h"
 #include "svga_debug.h"
 
@@ -123,7 +122,7 @@ svga_transfer_dma(struct svga_context *svga,
 
       if (transfer == SVGA3D_READ_HOST_VRAM) {
          svga_context_flush(svga, &fence);
-         sws->fence_finish(sws, fence, OS_TIMEOUT_INFINITE, 0);
+         sws->fence_finish(sws, fence, PIPE_TIMEOUT_INFINITE, 0);
          sws->fence_reference(sws, &fence, NULL);
       }
    }
@@ -178,11 +177,11 @@ svga_transfer_dma(struct svga_context *svga,
           * Prevent the texture contents to be discarded on the next band
           * upload.
           */
-         flags.discard = false;
+         flags.discard = FALSE;
 
          if (transfer == SVGA3D_READ_HOST_VRAM) {
             svga_context_flush(svga, &fence);
-            sws->fence_finish(sws, fence, OS_TIMEOUT_INFINITE, 0);
+            sws->fence_finish(sws, fence, PIPE_TIMEOUT_INFINITE, 0);
 
             hw = sws->buffer_map(sws, st->hwbuf, PIPE_MAP_READ);
             assert(hw);
@@ -210,9 +209,7 @@ svga_resource_get_handle(struct pipe_screen *screen,
    if (texture->target == PIPE_BUFFER)
       return false;
 
-   SVGA_DBG(DEBUG_DMA, "%s: texture=%p cachable=%d\n", __FUNCTION__,
-            texture, svga_texture(texture)->key.cachable);
-
+   assert(svga_texture(texture)->key.cachable == 0);
    svga_texture(texture)->key.cachable = 0;
 
    stride = util_format_get_nblocksx(texture->format, texture->width0) *
@@ -226,18 +223,18 @@ svga_resource_get_handle(struct pipe_screen *screen,
 /**
  * Determine if we need to read back a texture image before mapping it.
  */
-static inline bool
+static inline boolean
 need_tex_readback(struct svga_transfer *st)
 {
    if (st->base.usage & PIPE_MAP_READ)
-      return true;
+      return TRUE;
 
    if ((st->base.usage & PIPE_MAP_WRITE) &&
        ((st->base.usage & PIPE_MAP_DISCARD_WHOLE_RESOURCE) == 0)) {
       return svga_was_texture_rendered_to(svga_texture(st->base.resource));
    }
 
-   return false;
+   return FALSE;
 }
 
 
@@ -358,7 +355,7 @@ svga_texture_transfer_map_direct(struct svga_context *svga,
    else {
       assert(usage & PIPE_MAP_WRITE);
       if ((usage & PIPE_MAP_UNSYNCHRONIZED) == 0) {
-         if (svga_is_texture_level_dirty(tex, st->slice, level)) {
+         if (svga_is_texture_dirty(tex, st->slice, level)) {
             /*
              * do a surface flush if the subresource has been modified
              * in this command buffer.
@@ -388,7 +385,7 @@ svga_texture_transfer_map_direct(struct svga_context *svga,
    {
       SVGA3dSize baseLevelSize;
       uint8_t *map;
-      bool retry, rebind;
+      boolean retry, rebind;
       unsigned offset, mip_width, mip_height;
       struct svga_winsys_context *swc = svga->swc;
 
@@ -481,8 +478,8 @@ svga_texture_transfer_map(struct pipe_context *pipe,
    struct svga_texture *tex = svga_texture(texture);
    struct svga_transfer *st;
    struct svga_winsys_surface *surf = tex->handle;
-   bool use_direct_map = svga_have_gb_objects(svga) &&
-                         (!svga_have_gb_dma(svga) || (usage & PIPE_MAP_WRITE));
+   boolean use_direct_map = svga_have_gb_objects(svga) &&
+       (!svga_have_gb_dma(svga) || (usage & PIPE_MAP_WRITE));
    void *map = NULL;
    int64_t begin = svga_get_time(svga);
 
@@ -494,7 +491,7 @@ svga_texture_transfer_map(struct pipe_context *pipe,
    /* We can't map texture storage directly unless we have GB objects */
    if (usage & PIPE_MAP_DIRECTLY) {
       if (svga_have_gb_objects(svga))
-         use_direct_map = true;
+         use_direct_map = TRUE;
       else
          goto done;
    }
@@ -543,7 +540,7 @@ svga_texture_transfer_map(struct pipe_context *pipe,
     * makes it impossible to support both at the same time.
     */
    if (svga_have_gb_objects(svga)) {
-      use_direct_map = true;
+      use_direct_map = TRUE;
    }
 
    st->use_direct_map = use_direct_map;
@@ -564,19 +561,18 @@ svga_texture_transfer_map(struct pipe_context *pipe,
       map = svga_texture_transfer_map_dma(svga, st);
    }
    else {
-      bool can_use_upload = tex->can_use_upload &&
-                            !(st->base.usage & PIPE_MAP_READ);
-      bool was_rendered_to =
+      boolean can_use_upload = tex->can_use_upload &&
+                               !(st->base.usage & PIPE_MAP_READ);
+      boolean was_rendered_to =
          svga_was_texture_rendered_to(svga_texture(texture));
-      bool is_dirty = svga_is_texture_dirty(svga_texture(texture));
 
-      /* If the texture was already rendered to or has pending changes and
-       * upload buffer is supported, then we will use upload buffer to
+      /* If the texture was already rendered to and upload buffer
+       * is supported, then we will use upload buffer to
        * avoid the need to read back the texture content; otherwise,
        * we'll first try to map directly to the GB surface, if it is blocked,
        * then we'll try the upload buffer.
        */
-      if ((was_rendered_to || is_dirty) && can_use_upload) {
+      if (was_rendered_to && can_use_upload) {
          map = svga_texture_transfer_map_upload(svga, st);
       }
       else {
@@ -637,7 +633,7 @@ svga_texture_surface_unmap(struct svga_context *svga,
 {
    struct svga_winsys_surface *surf = svga_texture(transfer->resource)->handle;
    struct svga_winsys_context *swc = svga->swc;
-   bool rebind;
+   boolean rebind;
 
    assert(surf);
 
@@ -697,10 +693,10 @@ svga_texture_transfer_unmap_dma(struct svga_context *svga,
 
       memset(&flags, 0, sizeof flags);
       if (st->base.usage & PIPE_MAP_DISCARD_WHOLE_RESOURCE) {
-         flags.discard = true;
+         flags.discard = TRUE;
       }
       if (st->base.usage & PIPE_MAP_UNSYNCHRONIZED) {
-         flags.unsynchronized = true;
+         flags.unsynchronized = TRUE;
       }
 
       svga_transfer_dma(svga, st, SVGA3D_WRITE_HOST_VRAM, flags);
@@ -819,7 +815,7 @@ svga_texture_transfer_unmap(struct pipe_context *pipe,
 /**
  * Does format store depth values?
  */
-static inline bool
+static inline boolean
 format_has_depth(enum pipe_format format)
 {
    const struct util_format_description *desc = util_format_description(format);
@@ -1042,7 +1038,7 @@ svga_texture_create(struct pipe_screen *screen,
       goto fail;
    }
 
-   bool use_typeless = false;
+   bool use_typeless = FALSE;
    if (svgascreen->sws->have_gl43) {
       /* Do not use typeless for SHARED, SCANOUT or DISPLAY_TARGET surfaces. */
       use_typeless = !(bindings & (PIPE_BIND_SHARED | PIPE_BIND_SCANOUT |
@@ -1095,7 +1091,7 @@ svga_texture_create(struct pipe_screen *screen,
    }
 
    SVGA_DBG(DEBUG_DMA, "surface_create for texture\n");
-   bool invalidated;
+   boolean invalidated;
    tex->handle = svga_screen_surface_create(svgascreen, bindings,
                                             tex->b.usage,
                                             &invalidated, &tex->key);
@@ -1212,7 +1208,7 @@ svga_texture_from_handle(struct pipe_screen *screen,
    if (!tex->dirty)
       goto out_no_dirty;
 
-   tex->imported = true;
+   tex->imported = TRUE;
 
    ss->hud.num_resources++;
 
@@ -1296,7 +1292,7 @@ svga_texture_generate_mipmap(struct pipe_context *pipe,
 /**
  * Create a texture upload buffer
  */
-bool
+boolean
 svga_texture_transfer_map_upload_create(struct svga_context *svga)
 {
    svga->tex_upload = u_upload_create(&svga->pipe, TEX_UPLOAD_DEFAULT_SIZE,
@@ -1321,74 +1317,29 @@ svga_texture_transfer_map_upload_destroy(struct svga_context *svga)
 /**
  * Returns true if this transfer map request can use the upload buffer.
  */
-bool
+boolean
 svga_texture_transfer_map_can_upload(const struct svga_screen *svgascreen,
                                      const struct pipe_resource *texture)
 {
-   if (svgascreen->sws->have_transfer_from_buffer_cmd == false)
-      return false;
+   if (svgascreen->sws->have_transfer_from_buffer_cmd == FALSE)
+      return FALSE;
 
    /* TransferFromBuffer command is not well supported with multi-samples surface */
    if (texture->nr_samples > 1)
-      return false;
+      return FALSE;
 
    if (util_format_is_compressed(texture->format)) {
       /* XXX Need to take a closer look to see why texture upload
        * with 3D texture with compressed format fails
        */ 
       if (texture->target == PIPE_TEXTURE_3D)
-          return false;
+          return FALSE;
    }
    else if (texture->format == PIPE_FORMAT_R9G9B9E5_FLOAT) {
-      return false;
+      return FALSE;
    }
 
-   return true;
-}
-
-
-/**
- *  Return TRUE if the same texture is bound to the specified
- *  surface view and a backing resource is created for the surface view.
- */
-static bool
-need_update_texture_resource(struct pipe_surface *surf,
-		             struct svga_texture *tex)
-{
-   struct svga_texture *stex = svga_texture(surf->texture);
-   struct svga_surface *s = svga_surface(surf);
-
-   return (stex == tex && s->handle != tex->handle);
-}
-
-
-/**
- *  Make sure the texture resource is up-to-date. If the texture is
- *  currently bound to a render target view and a backing resource is
- *  created, we will need to update the original resource with the
- *  changes in the backing resource.
- */
-static void
-svga_validate_texture_resource(struct svga_context *svga,
-		               struct svga_texture *tex)
-{
-   if (svga_was_texture_rendered_to(tex) == false)
-      return;
-
-   if ((svga->state.hw_draw.has_backed_views == false) ||
-       (tex->backed_handle == NULL))
-      return;
-
-   struct pipe_surface *s;
-   for (unsigned i = 0; i < svga->state.hw_clear.num_rendertargets; i++) {
-      s = svga->state.hw_clear.rtv[i];
-      if (s && need_update_texture_resource(s, tex))
-         svga_propagate_surface(svga, s, true);
-   }
-
-   s = svga->state.hw_clear.dsv;
-   if (s && need_update_texture_resource(s, tex))
-      svga_propagate_surface(svga, s, true);
+   return TRUE;
 }
 
 
@@ -1401,21 +1352,12 @@ svga_texture_transfer_map_upload(struct svga_context *svga,
 {
    struct pipe_resource *texture = st->base.resource;
    struct pipe_resource *tex_buffer = NULL;
-   struct svga_texture *tex = svga_texture(texture);
    void *tex_map;
    unsigned nblocksx, nblocksy;
    unsigned offset;
    unsigned upload_size;
 
    assert(svga->tex_upload);
-
-   /* Validate the texture resource in case there is any changes
-    * in the backing resource that needs to be updated to the original
-    * texture resource first before the transfer upload occurs, otherwise,
-    * the later update from backing resource to original will overwrite the
-    * changes in this transfer map update.
-    */
-   svga_validate_texture_resource(svga, tex);
 
    st->upload.box.x = st->base.box.x;
    st->upload.box.y = st->base.box.y;
@@ -1462,6 +1404,7 @@ svga_texture_transfer_map_upload(struct svga_context *svga,
 
 #ifdef DEBUG
    if (util_format_is_compressed(texture->format)) {
+      struct svga_texture *tex = svga_texture(texture);
       unsigned blockw, blockh, bytesPerBlock;
 
       svga_format_size(tex->key.format, &blockw, &blockh, &bytesPerBlock);
@@ -1553,7 +1496,7 @@ svga_texture_transfer_unmap_upload(struct svga_context *svga,
  * or not. However, for textures backed by imported svga surfaces that is
  * not always true, and we have to look at the SVGA3D utilities.
  */
-bool
+boolean
 svga_texture_device_format_has_alpha(struct pipe_resource *texture)
 {
    /* the svga_texture() call below is invalid for PIPE_BUFFER resources */

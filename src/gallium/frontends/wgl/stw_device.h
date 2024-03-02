@@ -29,13 +29,12 @@
 #define STW_DEVICE_H_
 
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "frontend/api.h"
 #include "util/u_handle_table.h"
 #include "util/u_dynarray.h"
 #include "util/xmlconfig.h"
 #include <GL/gl.h>
-#include "stw_gdishim.h"
 #include "gldrv.h"
 #include "stw_pixelformat.h"
 
@@ -44,7 +43,7 @@ extern "C" {
 #endif
 
 struct pipe_screen;
-struct pipe_frontend_screen;
+struct st_manager;
 struct stw_framebuffer;
 
 struct stw_device
@@ -58,7 +57,7 @@ struct stw_device
    /* Cache some PIPE_CAP_* */
    unsigned max_2d_length;
 
-   struct pipe_frontend_screen *fscreen;
+   struct st_manager *smapi;
 
    LUID AdapterLuid;
 
@@ -96,7 +95,7 @@ struct stw_device
 
 extern struct stw_device *stw_dev;
 
-bool
+boolean
 stw_init_screen(HDC hdc);
 
 struct stw_device *

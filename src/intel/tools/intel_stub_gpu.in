@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # -*- mode: sh -*-
 
 function show_help() {
@@ -18,8 +18,7 @@ EOF
     exit 0
 }
 
-gdb=
-valgrind=
+gdb=""
 platform="skl"
 
 while true; do
@@ -30,10 +29,6 @@ while true; do
             ;;
         -g)
             gdb=1
-            shift
-            ;;
-        --valgrind)
-            valgrind=1
             shift
             ;;
         -p)
@@ -71,10 +66,8 @@ done
 INTEL_STUB_GPU_PLATFORM=$platform
 
 ld_preload="@install_libdir@/libintel_noop_drm_shim.so${LD_PRELOAD:+:$LD_PRELOAD}"
-if [ -n "$gdb" ]; then
-    gdb -iex "set exec-wrapper env LD_PRELOAD=$ld_preload INTEL_STUB_GPU_PLATFORM=$platform" --args "$@"
-elif [ -n "$valgrind" ]; then
-    LD_PRELOAD=$ld_preload INTEL_STUB_GPU_PLATFORM=$platform exec valgrind "$@"
-else
+if [ -z $gdb ]; then
     LD_PRELOAD=$ld_preload INTEL_STUB_GPU_PLATFORM=$platform exec "$@"
+else
+    gdb -iex "set exec-wrapper env LD_PRELOAD=$ld_preload INTEL_STUB_GPU_PLATFORM=$platform" --args "$@"
 fi

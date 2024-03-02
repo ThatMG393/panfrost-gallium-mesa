@@ -210,7 +210,7 @@ xcb_glx_set_client_info_2arb(xcb_connection_t *c,
 }
 
 extern "C" char *
-__glXGetClientGLExtensionString(int screen)
+__glXGetClientGLExtensionString()
 {
    char *str = (char *) malloc(sizeof(ext));
 
@@ -279,7 +279,7 @@ glX_send_client_info_test::common_protocol_expected_false_test(unsigned major,
 							       bool *value)
 {
    create_single_screen_display(major, minor, glx_ext);
-   glxSendClientInfo(this->glx_dpy, -1);
+   __glX_send_client_info(this->glx_dpy);
    EXPECT_FALSE(*value);
 }
 
@@ -290,18 +290,26 @@ glX_send_client_info_test::common_protocol_expected_true_test(unsigned major,
 							      bool *value)
 {
    create_single_screen_display(major, minor, glx_ext);
-   glxSendClientInfo(this->glx_dpy, -1);
+   __glX_send_client_info(this->glx_dpy);
    EXPECT_TRUE(*value);
 }
 
-TEST_F(glX_send_client_info_test, doesnt_send_SetClientInfoARB_for_1_3)
+TEST_F(glX_send_client_info_test, doesnt_send_ClientInfo_for_1_0)
+{
+   /* The glXClientInfo protocol was added in GLX 1.1.  Verify that no
+    * glXClientInfo is sent to a GLX server that only has GLX 1.0.
+    */
+   common_protocol_expected_false_test(1, 0, "", &ClientInfo_was_sent);
+}
+
+TEST_F(glX_send_client_info_test, doesnt_send_SetClientInfoARB_for_1_0)
 {
    /* The glXSetClientInfoARB protocol was added in GLX 1.4 with the
     * GLX_ARB_create_context extension.  Verify that no glXSetClientInfoARB is
-    * sent to a GLX server that only has GLX 1.3 regardless of the extension
+    * sent to a GLX server that only has GLX 1.0 regardless of the extension
     * setting.
     */
-   common_protocol_expected_false_test(1, 3,
+   common_protocol_expected_false_test(1, 0,
 				       "GLX_ARB_create_context",
 				       &SetClientInfoARB_was_sent);
 }
@@ -310,10 +318,10 @@ TEST_F(glX_send_client_info_test, doesnt_send_SetClientInfoARB_for_1_1)
 {
    /* The glXSetClientInfoARB protocol was added in GLX 1.4 with the
     * GLX_ARB_create_context extension.  Verify that no glXSetClientInfoARB is
-    * sent to a GLX server that only has GLX 1.3 regardless of the extension
+    * sent to a GLX server that only has GLX 1.0 regardless of the extension
     * setting.
     */
-   common_protocol_expected_false_test(1, 3,
+   common_protocol_expected_false_test(1, 1,
 				       "GLX_ARB_create_context",
 				       &SetClientInfoARB_was_sent);
 }
@@ -371,14 +379,14 @@ TEST_F(glX_send_client_info_test, doesnt_send_SetClientInfoARB_for_1_4_with_prof
 				       &SetClientInfoARB_was_sent);
 }
 
-TEST_F(glX_send_client_info_test, doesnt_send_SetClientInfo2ARB_for_1_3)
+TEST_F(glX_send_client_info_test, doesnt_send_SetClientInfo2ARB_for_1_0)
 {
    /* The glXSetClientInfo2ARB protocol was added in GLX 1.4 with the
     * GLX_ARB_create_context_profile extension.  Verify that no
-    * glXSetClientInfo2ARB is sent to a GLX server that only has GLX 1.3
+    * glXSetClientInfo2ARB is sent to a GLX server that only has GLX 1.0
     * regardless of the extension setting.
     */
-   common_protocol_expected_false_test(1, 3,
+   common_protocol_expected_false_test(1, 0,
 				       "GLX_ARB_create_context_profile",
 				       &SetClientInfo2ARB_was_sent);
 }
@@ -494,14 +502,14 @@ TEST_F(glX_send_client_info_test, does_send_SetClientInfo2ARB_for_1_4_with_both_
 TEST_F(glX_send_client_info_test, uses_correct_connection)
 {
    create_single_screen_display(1, 1, "");
-   glxSendClientInfo(this->glx_dpy, -1);
+   __glX_send_client_info(this->glx_dpy);
    EXPECT_EQ((xcb_connection_t *) 0xdeadbeef, connection_used);
 }
 
 TEST_F(glX_send_client_info_test, sends_correct_gl_extension_string)
 {
    create_single_screen_display(1, 1, "");
-   glxSendClientInfo(this->glx_dpy, -1);
+   __glX_send_client_info(this->glx_dpy);
 
    ASSERT_EQ((int) sizeof(ext), gl_ext_length);
    ASSERT_NE((char *) 0, gl_ext_string);
@@ -511,7 +519,7 @@ TEST_F(glX_send_client_info_test, sends_correct_gl_extension_string)
 TEST_F(glX_send_client_info_test, gl_versions_are_sane)
 {
    create_single_screen_display(1, 4, "GLX_ARB_create_context");
-   glxSendClientInfo(this->glx_dpy, -1);
+   __glX_send_client_info(this->glx_dpy);
 
    ASSERT_NE(0, num_gl_versions);
 
@@ -552,7 +560,7 @@ TEST_F(glX_send_client_info_test, gl_versions_are_sane)
 TEST_F(glX_send_client_info_test, gl_versions_and_profiles_are_sane)
 {
    create_single_screen_display(1, 4, "GLX_ARB_create_context_profile");
-   glxSendClientInfo(this->glx_dpy, -1);
+   __glX_send_client_info(this->glx_dpy);
 
    ASSERT_NE(0, num_gl_versions);
 
@@ -621,7 +629,7 @@ TEST_F(glX_send_client_info_test, gl_versions_and_profiles_are_sane)
 TEST_F(glX_send_client_info_test, glx_version_is_1_4_for_1_1)
 {
    create_single_screen_display(1, 1, "");
-   glxSendClientInfo(this->glx_dpy, -1);
+   __glX_send_client_info(this->glx_dpy);
 
    EXPECT_EQ(1, glx_major);
    EXPECT_EQ(4, glx_minor);
@@ -630,7 +638,7 @@ TEST_F(glX_send_client_info_test, glx_version_is_1_4_for_1_1)
 TEST_F(glX_send_client_info_test, glx_version_is_1_4_for_1_4)
 {
    create_single_screen_display(1, 4, "");
-   glxSendClientInfo(this->glx_dpy, -1);
+   __glX_send_client_info(this->glx_dpy);
 
    EXPECT_EQ(1, glx_major);
    EXPECT_EQ(4, glx_minor);
@@ -639,7 +647,7 @@ TEST_F(glX_send_client_info_test, glx_version_is_1_4_for_1_4)
 TEST_F(glX_send_client_info_test, glx_version_is_1_4_for_1_4_with_ARB_create_context)
 {
    create_single_screen_display(1, 4, "GLX_ARB_create_context");
-   glxSendClientInfo(this->glx_dpy, -1);
+   __glX_send_client_info(this->glx_dpy);
 
    EXPECT_EQ(1, glx_major);
    EXPECT_EQ(4, glx_minor);
@@ -648,7 +656,7 @@ TEST_F(glX_send_client_info_test, glx_version_is_1_4_for_1_4_with_ARB_create_con
 TEST_F(glX_send_client_info_test, glx_version_is_1_4_for_1_4_with_ARB_create_context_profile)
 {
    create_single_screen_display(1, 4, "GLX_ARB_create_context_profile");
-   glxSendClientInfo(this->glx_dpy, -1);
+   __glX_send_client_info(this->glx_dpy);
 
    EXPECT_EQ(1, glx_major);
    EXPECT_EQ(4, glx_minor);
@@ -657,7 +665,7 @@ TEST_F(glX_send_client_info_test, glx_version_is_1_4_for_1_4_with_ARB_create_con
 TEST_F(glX_send_client_info_test, glx_version_is_1_4_for_1_5)
 {
    create_single_screen_display(1, 5, "");
-   glxSendClientInfo(this->glx_dpy, -1);
+   __glX_send_client_info(this->glx_dpy);
 
    EXPECT_EQ(1, glx_major);
    EXPECT_EQ(4, glx_minor);
@@ -666,7 +674,7 @@ TEST_F(glX_send_client_info_test, glx_version_is_1_4_for_1_5)
 TEST_F(glX_send_client_info_test, glx_extensions_has_GLX_ARB_create_context)
 {
    create_single_screen_display(1, 4, "GLX_ARB_create_context");
-   glxSendClientInfo(this->glx_dpy, -1);
+   __glX_send_client_info(this->glx_dpy);
 
    ASSERT_NE(0, glx_ext_length);
    ASSERT_NE((char *) 0, glx_ext_string);
@@ -692,7 +700,7 @@ TEST_F(glX_send_client_info_test, glx_extensions_has_GLX_ARB_create_context)
 TEST_F(glX_send_client_info_test, glx_extensions_has_GLX_ARB_create_context_profile)
 {
    create_single_screen_display(1, 4, "GLX_ARB_create_context_profile");
-   glxSendClientInfo(this->glx_dpy, -1);
+   __glX_send_client_info(this->glx_dpy);
 
    ASSERT_NE(0, glx_ext_length);
    ASSERT_NE((char *) 0, glx_ext_string);

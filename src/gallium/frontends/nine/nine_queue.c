@@ -247,7 +247,7 @@ nine_queue_create(void)
     (void) mtx_init(&ctx->mutex_push, mtx_plain);
 
     /* Block until first cmdbuf has been flushed. */
-    ctx->worker_wait = true;
+    ctx->worker_wait = TRUE;
 
     return ctx;
 failed:

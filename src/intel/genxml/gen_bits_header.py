@@ -20,8 +20,8 @@
 # SOFTWARE.
 
 import argparse
-import intel_genxml
 import os
+import xml.parsers.expat
 
 from mako.template import Template
 from util import *
@@ -82,7 +82,6 @@ static inline uint32_t ATTRIBUTE_PURE
 ${item.token_name}_${prop}(const struct intel_device_info *devinfo)
 {
    switch (devinfo->verx10) {
-   case 200: return ${item.get_prop(prop, 20)};
    case 125: return ${item.get_prop(prop, 12.5)};
    case 120: return ${item.get_prop(prop, 12)};
    case 110: return ${item.get_prop(prop, 11)};
@@ -241,36 +240,43 @@ class Field(object):
 class XmlParser(object):
 
     def __init__(self, containers):
+        self.parser = xml.parsers.expat.ParserCreate()
+        self.parser.StartElementHandler = self.start_element
+        self.parser.EndElementHandler = self.end_element
+
         self.gen = None
         self.containers = containers
         self.container_stack = []
         self.container_stack.append(None)
 
-    def emit_genxml(self, genxml):
-        root = genxml.et.getroot()
-        self.gen = Gen(root.attrib['gen'])
-        for item in root:
-            self.process_item(item)
+    def parse(self, filename):
+        with open(filename, 'rb') as f:
+            self.parser.ParseFile(f)
 
-    def process_item(self, item):
-        name = item.tag
-        attrs = item.attrib
-        if name in ('instruction', 'struct', 'register'):
+    def start_element(self, name, attrs):
+        if name == 'genxml':
+            self.gen = Gen(attrs['gen'])
+        elif name in ('instruction', 'struct', 'register'):
+            if name == 'instruction' and 'engine' in attrs:
+                engines = set(attrs['engine'].split('|'))
+                if not engines & self.engines:
+                    self.container_stack.append(None)
+                    return
             self.start_container(attrs)
-            for struct_item in item:
-                self.process_item(struct_item)
-            self.container_stack.pop()
         elif name == 'group':
             self.container_stack.append(None)
-            for group_item in item:
-                self.process_item(group_item)
-            self.container_stack.pop()
         elif name == 'field':
-            self.process_field(attrs)
-        elif name in ('enum', 'import'):
-            pass
+            self.start_field(attrs)
         else:
-            assert False
+            pass
+
+    def end_element(self, name):
+        if name == 'genxml':
+            self.gen = None
+        elif name in ('instruction', 'struct', 'register', 'group'):
+            self.container_stack.pop()
+        else:
+            pass
 
     def start_container(self, attrs):
         assert self.container_stack[-1] is None
@@ -280,7 +286,7 @@ class XmlParser(object):
         self.container_stack.append(self.containers[name])
         self.container_stack[-1].add_gen(self.gen, attrs)
 
-    def process_field(self, attrs):
+    def start_field(self, attrs):
         if self.container_stack[-1] is None:
             return
 
@@ -316,9 +322,9 @@ def parse_args():
 def main():
     pargs = parse_args()
 
-    engines = set(pargs.engines.split(','))
+    engines = pargs.engines.split(',')
     valid_engines = [ 'render', 'blitter', 'video' ]
-    if engines - set(valid_engines):
+    if set(engines) - set(valid_engines):
         print("Invalid engine specified, valid engines are:\n")
         for e in valid_engines:
             print("\t%s" % e)
@@ -329,10 +335,8 @@ def main():
 
     for source in pargs.xml_sources:
         p = XmlParser(containers)
-        genxml = intel_genxml.GenXml(source)
-        genxml.filter_engines(engines)
-        genxml.merge_imported()
-        p.emit_genxml(genxml)
+        p.engines = set(engines)
+        p.parse(source)
 
     included_symbols_list = pargs.include_symbols.split(',')
     for _name_field in included_symbols_list:
@@ -344,7 +348,7 @@ def main():
             assert field
             field.allowed = True
 
-    with open(pargs.output, 'w', encoding='utf-8') as f:
+    with open(pargs.output, 'w') as f:
         f.write(TEMPLATE.render(containers=containers, guard=pargs.cpp_guard))
 
 if __name__ == '__main__':

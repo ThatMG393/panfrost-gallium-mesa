@@ -42,7 +42,6 @@
 #include <GL/gl.h>
 
 #include "util/u_debug.h"
-#include "stw_gdishim.h"
 #include "gldrv.h"
 #include "stw_context.h"
 #include "stw_pixelformat.h"
@@ -104,7 +103,7 @@ wglMakeCurrent(
    HDC hdc,
    HGLRC hglrc )
 {
-   return DrvSetContext( hdc, (DHGLRC)(UINT_PTR)hglrc, NULL ) ? true : false;
+   return DrvSetContext( hdc, (DHGLRC)(UINT_PTR)hglrc, NULL ) ? TRUE : FALSE;
 }
 
 
@@ -224,12 +223,11 @@ wglUseFontBitmapsW(
    DWORD count,
    DWORD listBase )
 {
-#ifndef _GAMING_XBOX
    GLYPHMETRICS gm;
    MAT2 tra;
    FIXED one, minus_one, zero;
    void *buffer = NULL;
-   BOOL result = true;
+   BOOL result = TRUE;
 
    one.value = 1;
    one.fract = 0;
@@ -266,7 +264,7 @@ wglUseFontBitmapsW(
          }
       }
       else {
-         result = false;
+         result = FALSE;
       }
 
       glEndList();
@@ -275,9 +273,6 @@ wglUseFontBitmapsW(
    free(buffer);
 
    return result;
-#else
-   return false;
-#endif /* _GAMING_XBOX */
 }
 
 WINGDIAPI BOOL APIENTRY
@@ -302,7 +297,7 @@ wglUseFontOutlinesA(
 
    assert( 0 );
 
-   return false;
+   return FALSE;
 }
 
 WINGDIAPI BOOL APIENTRY
@@ -327,7 +322,7 @@ wglUseFontOutlinesW(
 
    assert( 0 );
 
-   return false;
+   return FALSE;
 }
 
 WINGDIAPI BOOL APIENTRY
@@ -375,7 +370,7 @@ wglRealizeLayerPalette(
 
    assert( 0 );
 
-   return false;
+   return FALSE;
 }
 
 

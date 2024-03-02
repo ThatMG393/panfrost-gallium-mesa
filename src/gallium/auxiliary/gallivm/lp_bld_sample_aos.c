@@ -82,7 +82,7 @@ lp_build_sample_wrap_nearest_int(struct lp_build_sample_context *bld,
                                  LLVMValueRef length,
                                  LLVMValueRef stride,
                                  LLVMValueRef offset,
-                                 bool is_pot,
+                                 boolean is_pot,
                                  unsigned wrap_mode,
                                  LLVMValueRef *out_offset,
                                  LLVMValueRef *out_i)
@@ -219,7 +219,7 @@ lp_build_sample_wrap_linear_int(struct lp_build_sample_context *bld,
                                 LLVMValueRef length,
                                 LLVMValueRef stride,
                                 LLVMValueRef offset,
-                                bool is_pot,
+                                boolean is_pot,
                                 unsigned wrap_mode,
                                 LLVMValueRef *offset0,
                                 LLVMValueRef *offset1,
@@ -409,8 +409,8 @@ lp_build_sample_fetch_image_nearest(struct lp_build_sample_context *bld,
                               bld->texel_type.length,
                               bld->format_desc->block.bits,
                               fetch_type,
-                              true,
-                              data_ptr, offset, true);
+                              TRUE,
+                              data_ptr, offset, TRUE);
 
       rgba8 = LLVMBuildBitCast(builder, rgba8, u8n_vec_type, "");
    }
@@ -418,7 +418,7 @@ lp_build_sample_fetch_image_nearest(struct lp_build_sample_context *bld,
       rgba8 = lp_build_fetch_rgba_aos(bld->gallivm,
                                       bld->format_desc,
                                       u8n.type,
-                                      true,
+                                      TRUE,
                                       data_ptr, offset,
                                       x_subcoord,
                                       y_subcoord,
@@ -662,8 +662,8 @@ lp_build_sample_fetch_image_linear(struct lp_build_sample_context *bld,
                                        bld->texel_type.length,
                                        bld->format_desc->block.bits,
                                        fetch_type,
-                                       true,
-                                       data_ptr, offset[k][j][i], true);
+                                       TRUE,
+                                       data_ptr, offset[k][j][i], TRUE);
 
                rgba8 = LLVMBuildBitCast(builder, rgba8, u8n_vec_type, "");
             }
@@ -671,7 +671,7 @@ lp_build_sample_fetch_image_linear(struct lp_build_sample_context *bld,
                rgba8 = lp_build_fetch_rgba_aos(bld->gallivm,
                                                bld->format_desc,
                                                u8n.type,
-                                               true,
+                                               TRUE,
                                                data_ptr, offset[k][j][i],
                                                x_subcoord[i],
                                                y_subcoord[j],

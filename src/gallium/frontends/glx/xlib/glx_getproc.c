@@ -32,7 +32,7 @@
 #define GLX_GLXEXT_PROTOTYPES
 
 #include <string.h>
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "GL/glx.h"
 #include "glapi/glapi.h"
 

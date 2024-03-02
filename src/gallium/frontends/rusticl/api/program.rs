@@ -1,31 +1,25 @@
 use crate::api::icd::*;
 use crate::api::types::*;
 use crate::api::util::*;
-use crate::core::context::*;
 use crate::core::device::*;
-use crate::core::platform::*;
 use crate::core::program::*;
 
 use mesa_rust::compiler::clc::*;
 use mesa_rust_util::string::*;
 use rusticl_opencl_gen::*;
-use rusticl_proc_macros::cl_entrypoint;
-use rusticl_proc_macros::cl_info_entrypoint;
 
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::iter;
-use std::mem::MaybeUninit;
 use std::num::NonZeroUsize;
 use std::os::raw::c_char;
 use std::ptr;
 use std::slice;
 use std::sync::Arc;
 
-#[cl_info_entrypoint(cl_get_program_info)]
 impl CLInfo<cl_program_info> for cl_program {
-    fn query(&self, q: cl_program_info, vals: &[u8]) -> CLResult<Vec<MaybeUninit<u8>>> {
-        let prog = Program::ref_from_raw(*self)?;
+    fn query(&self, q: cl_program_info, vals: &[u8]) -> CLResult<Vec<u8>> {
+        let prog = self.get_ref()?;
         Ok(match q {
             CL_PROGRAM_BINARIES => cl_prop::<Vec<*mut u8>>(prog.binaries(vals)),
             CL_PROGRAM_BINARY_SIZES => cl_prop::<Vec<usize>>(prog.bin_sizes()),
@@ -34,55 +28,54 @@ impl CLInfo<cl_program_info> for cl_program {
                 let ptr = Arc::as_ptr(&prog.context);
                 cl_prop::<cl_context>(cl_context::from_ptr(ptr))
             }
-            CL_PROGRAM_DEVICES => cl_prop::<Vec<cl_device_id>>(
-                prog.devs
-                    .iter()
-                    .map(|&d| cl_device_id::from_ptr(d))
-                    .collect(),
-            ),
-            CL_PROGRAM_IL => match &prog.src {
-                ProgramSourceType::Il(il) => to_maybeuninit_vec(il.to_bin().to_vec()),
-                _ => Vec::new(),
-            },
-            CL_PROGRAM_KERNEL_NAMES => cl_prop::<&str>(&*prog.kernels().join(";")),
+            CL_PROGRAM_DEVICES => {
+                cl_prop::<&Vec<cl_device_id>>(
+                    &prog
+                        .devs
+                        .iter()
+                        .map(|d| {
+                            // Note we use as_ptr here which doesn't increase the reference count.
+                            cl_device_id::from_ptr(Arc::as_ptr(d))
+                        })
+                        .collect(),
+                )
+            }
+            CL_PROGRAM_IL => prog.il.clone(),
+            CL_PROGRAM_KERNEL_NAMES => cl_prop::<String>(prog.kernels().join(";")),
             CL_PROGRAM_NUM_DEVICES => cl_prop::<cl_uint>(prog.devs.len() as cl_uint),
             CL_PROGRAM_NUM_KERNELS => cl_prop::<usize>(prog.kernels().len()),
-            CL_PROGRAM_REFERENCE_COUNT => cl_prop::<cl_uint>(Program::refcnt(*self)?),
+            CL_PROGRAM_REFERENCE_COUNT => cl_prop::<cl_uint>(self.refcnt()?),
             CL_PROGRAM_SCOPE_GLOBAL_CTORS_PRESENT => cl_prop::<cl_bool>(CL_FALSE),
             CL_PROGRAM_SCOPE_GLOBAL_DTORS_PRESENT => cl_prop::<cl_bool>(CL_FALSE),
-            CL_PROGRAM_SOURCE => match &prog.src {
-                ProgramSourceType::Src(src) => cl_prop::<&CStr>(src.as_c_str()),
-                _ => Vec::new(),
-            },
+            CL_PROGRAM_SOURCE => cl_prop::<&CStr>(prog.src.as_c_str()),
             // CL_INVALID_VALUE if param_name is not one of the supported values
             _ => return Err(CL_INVALID_VALUE),
         })
     }
 }
 
-#[cl_info_entrypoint(cl_get_program_build_info)]
 impl CLInfoObj<cl_program_build_info, cl_device_id> for cl_program {
-    fn query(&self, d: cl_device_id, q: cl_program_build_info) -> CLResult<Vec<MaybeUninit<u8>>> {
-        let prog = Program::ref_from_raw(*self)?;
-        let dev = Device::ref_from_raw(d)?;
+    fn query(&self, d: cl_device_id, q: cl_program_build_info) -> CLResult<Vec<u8>> {
+        let prog = self.get_ref()?;
+        let dev = d.get_arc()?;
         Ok(match q {
-            CL_PROGRAM_BINARY_TYPE => cl_prop::<cl_program_binary_type>(prog.bin_type(dev)),
+            CL_PROGRAM_BINARY_TYPE => cl_prop::<cl_program_binary_type>(prog.bin_type(&dev)),
             CL_PROGRAM_BUILD_GLOBAL_VARIABLE_TOTAL_SIZE => cl_prop::<usize>(0),
-            CL_PROGRAM_BUILD_LOG => cl_prop::<&str>(&prog.log(dev)),
-            CL_PROGRAM_BUILD_OPTIONS => cl_prop::<&str>(&prog.options(dev)),
-            CL_PROGRAM_BUILD_STATUS => cl_prop::<cl_build_status>(prog.status(dev)),
+            CL_PROGRAM_BUILD_LOG => cl_prop::<String>(prog.log(&dev)),
+            CL_PROGRAM_BUILD_OPTIONS => cl_prop::<String>(prog.options(&dev)),
+            CL_PROGRAM_BUILD_STATUS => cl_prop::<cl_build_status>(prog.status(&dev)),
             // CL_INVALID_VALUE if param_name is not one of the supported values
             _ => return Err(CL_INVALID_VALUE),
         })
     }
 }
 
-fn validate_devices<'a>(
+fn validate_devices(
     device_list: *const cl_device_id,
     num_devices: cl_uint,
-    default: &[&'a Device],
-) -> CLResult<Vec<&'a Device>> {
-    let mut devs = Device::refs_from_arr(device_list, num_devices)?;
+    default: &[Arc<Device>],
+) -> CLResult<Vec<Arc<Device>>> {
+    let mut devs = cl_device_id::get_arc_vec_from_arr(device_list, num_devices)?;
 
     // If device_list is a NULL value, the compile is performed for all devices associated with
     // program.
@@ -93,14 +86,23 @@ fn validate_devices<'a>(
     Ok(devs)
 }
 
-#[cl_entrypoint]
-fn create_program_with_source(
+fn call_cb(
+    pfn_notify: Option<ProgramCB>,
+    program: cl_program,
+    user_data: *mut ::std::os::raw::c_void,
+) {
+    if let Some(cb) = pfn_notify {
+        unsafe { cb(program, user_data) };
+    }
+}
+
+pub fn create_program_with_source(
     context: cl_context,
     count: cl_uint,
     strings: *mut *const c_char,
     lengths: *const usize,
 ) -> CLResult<cl_program> {
-    let c = Context::arc_from_raw(context)?;
+    let c = context.get_arc()?;
 
     // CL_INVALID_VALUE if count is zero or if strings ...
     if count == 0 || strings.is_null() {
@@ -164,16 +166,15 @@ fn create_program_with_source(
         source.extend_from_slice(arr);
     }
 
-    Ok(Program::new(
-        c,
+    Ok(cl_program::from_arc(Program::new(
+        &c,
+        &c.devs,
         // SAFETY: We've constructed `source` such that it contains no nul bytes.
         unsafe { CString::from_vec_unchecked(source) },
-    )
-    .into_cl())
+    )))
 }
 
-#[cl_entrypoint]
-fn create_program_with_binary(
+pub fn create_program_with_binary(
     context: cl_context,
     num_devices: cl_uint,
     device_list: *const cl_device_id,
@@ -181,8 +182,8 @@ fn create_program_with_binary(
     binaries: *mut *const ::std::os::raw::c_uchar,
     binary_status: *mut cl_int,
 ) -> CLResult<cl_program> {
-    let c = Context::arc_from_raw(context)?;
-    let devs = Device::refs_from_arr(device_list, num_devices)?;
+    let c = context.get_arc()?;
+    let devs = cl_device_id::get_arc_vec_from_arr(device_list, num_devices)?;
 
     // CL_INVALID_VALUE if device_list is NULL or num_devices is zero.
     if devs.is_empty() {
@@ -220,74 +221,48 @@ fn create_program_with_binary(
 
         // just return the last one
         err = dev_err;
-        bins[i] = unsafe { slice::from_raw_parts(binaries[i], lengths[i]) };
+        bins[i] = unsafe { slice::from_raw_parts(binaries[i], lengths[i] as usize) };
     }
 
     if err != 0 {
         return Err(err);
     }
 
-    let prog = Program::from_bins(c, devs, &bins);
-
-    Ok(prog.into_cl())
+    Ok(cl_program::from_arc(Program::from_bins(c, devs, &bins)))
     //• CL_INVALID_BINARY if an invalid program binary was encountered for any device. binary_status will return specific status for each device.
 }
 
-#[cl_entrypoint]
-fn create_program_with_il(
+pub fn create_program_with_il(
     context: cl_context,
     il: *const ::std::os::raw::c_void,
     length: usize,
 ) -> CLResult<cl_program> {
-    let c = Context::arc_from_raw(context)?;
+    let _c = context.get_arc()?;
 
     // CL_INVALID_VALUE if il is NULL or if length is zero.
     if il.is_null() || length == 0 {
         return Err(CL_INVALID_VALUE);
     }
 
-    // SAFETY: according to API spec
-    let spirv = unsafe { slice::from_raw_parts(il.cast(), length) };
-    Ok(Program::from_spirv(c, spirv).into_cl())
+    //    let spirv = unsafe { slice::from_raw_parts(il.cast(), length) };
+    // TODO SPIR-V
+    //    Ok(cl_program::from_arc(Program::from_spirv(c, spirv)))
+    Err(CL_INVALID_OPERATION)
 }
 
-#[cl_entrypoint]
-fn retain_program(program: cl_program) -> CLResult<()> {
-    Program::retain(program)
-}
-
-#[cl_entrypoint]
-fn release_program(program: cl_program) -> CLResult<()> {
-    Program::release(program)
-}
-
-fn debug_logging(p: &Program, devs: &[&Device]) {
-    if Platform::dbg().program {
-        for dev in devs {
-            let msg = p.log(dev);
-            if !msg.is_empty() {
-                eprintln!("{}", msg);
-            }
-        }
-    }
-}
-
-#[cl_entrypoint]
-fn build_program(
+pub fn build_program(
     program: cl_program,
     num_devices: cl_uint,
     device_list: *const cl_device_id,
     options: *const c_char,
-    pfn_notify: Option<FuncProgramCB>,
+    pfn_notify: Option<ProgramCB>,
     user_data: *mut ::std::os::raw::c_void,
 ) -> CLResult<()> {
     let mut res = true;
-    let p = Program::ref_from_raw(program)?;
+    let p = program.get_ref()?;
     let devs = validate_devices(device_list, num_devices, &p.devs)?;
 
-    // SAFETY: The requirements on `ProgramCB::try_new` match the requirements
-    // imposed by the OpenCL specification. It is the caller's duty to uphold them.
-    let cb_opt = unsafe { ProgramCB::try_new(pfn_notify, user_data)? };
+    check_cb(&pfn_notify, user_data)?;
 
     // CL_INVALID_OPERATION if there are kernel objects attached to program.
     if p.active_kernels() {
@@ -296,20 +271,17 @@ fn build_program(
 
     // CL_BUILD_PROGRAM_FAILURE if there is a failure to build the program executable. This error
     // will be returned if clBuildProgram does not return until the build has completed.
-    for dev in &devs {
-        res &= p.build(dev, c_string_to_string(options));
+    for dev in devs {
+        res &= p.build(&dev, c_string_to_string(options));
     }
 
-    if let Some(cb) = cb_opt {
-        cb.call(p);
-    }
+    call_cb(pfn_notify, program, user_data);
 
     //• CL_INVALID_BINARY if program is created with clCreateProgramWithBinary and devices listed in device_list do not have a valid program binary loaded.
     //• CL_INVALID_BUILD_OPTIONS if the build options specified by options are invalid.
     //• CL_INVALID_OPERATION if the build of a program executable for any of the devices listed in device_list by a previous call to clBuildProgram for program has not completed.
     //• CL_INVALID_OPERATION if program was not created with clCreateProgramWithSource, clCreateProgramWithIL or clCreateProgramWithBinary.
 
-    debug_logging(p, &devs);
     if res {
         Ok(())
     } else {
@@ -317,8 +289,7 @@ fn build_program(
     }
 }
 
-#[cl_entrypoint]
-fn compile_program(
+pub fn compile_program(
     program: cl_program,
     num_devices: cl_uint,
     device_list: *const cl_device_id,
@@ -326,16 +297,14 @@ fn compile_program(
     num_input_headers: cl_uint,
     input_headers: *const cl_program,
     header_include_names: *mut *const c_char,
-    pfn_notify: Option<FuncProgramCB>,
+    pfn_notify: Option<ProgramCB>,
     user_data: *mut ::std::os::raw::c_void,
 ) -> CLResult<()> {
     let mut res = true;
-    let p = Program::ref_from_raw(program)?;
+    let p = program.get_ref()?;
     let devs = validate_devices(device_list, num_devices, &p.devs)?;
 
-    // SAFETY: The requirements on `ProgramCB::try_new` match the requirements
-    // imposed by the OpenCL specification. It is the caller's duty to uphold them.
-    let cb_opt = unsafe { ProgramCB::try_new(pfn_notify, user_data)? };
+    check_cb(&pfn_notify, user_data)?;
 
     // CL_INVALID_VALUE if num_input_headers is zero and header_include_names or input_headers are
     // not NULL or if num_input_headers is not zero and header_include_names or input_headers are
@@ -347,27 +316,18 @@ fn compile_program(
     }
 
     let mut headers = Vec::new();
-
-    // If program was created using clCreateProgramWithIL, then num_input_headers, input_headers,
-    // and header_include_names are ignored.
-    if !p.is_il() {
-        for h in 0..num_input_headers as usize {
-            // SAFETY: have to trust the application here
-            let header = Program::ref_from_raw(unsafe { *input_headers.add(h) })?;
-            match &header.src {
-                ProgramSourceType::Src(src) => headers.push(spirv::CLCHeader {
-                    // SAFETY: have to trust the application here
-                    name: unsafe { CStr::from_ptr(*header_include_names.add(h)).to_owned() },
-                    source: src,
-                }),
-                _ => return Err(CL_INVALID_OPERATION),
-            }
+    for h in 0..num_input_headers as usize {
+        unsafe {
+            headers.push(spirv::CLCHeader {
+                name: CStr::from_ptr(*header_include_names.add(h)).to_owned(),
+                source: &(*input_headers.add(h)).get_ref()?.src,
+            });
         }
     }
 
     // CL_INVALID_OPERATION if program has no source or IL available, i.e. it has not been created
     // with clCreateProgramWithSource or clCreateProgramWithIL.
-    if !(p.is_src() || p.is_il()) {
+    if p.is_binary() {
         return Err(CL_INVALID_OPERATION);
     }
 
@@ -378,18 +338,15 @@ fn compile_program(
 
     // CL_COMPILE_PROGRAM_FAILURE if there is a failure to compile the program source. This error
     // will be returned if clCompileProgram does not return until the compile has completed.
-    for dev in &devs {
-        res &= p.compile(dev, c_string_to_string(options), &headers);
+    for dev in devs {
+        res &= p.compile(&dev, c_string_to_string(options), &headers);
     }
 
-    if let Some(cb) = cb_opt {
-        cb.call(p);
-    }
+    call_cb(pfn_notify, program, user_data);
 
     // • CL_INVALID_COMPILER_OPTIONS if the compiler options specified by options are invalid.
     // • CL_INVALID_OPERATION if the compilation or build of a program executable for any of the devices listed in device_list by a previous call to clCompileProgram or clBuildProgram for program has not completed.
 
-    debug_logging(p, &devs);
     if res {
         Ok(())
     } else {
@@ -404,16 +361,14 @@ pub fn link_program(
     options: *const ::std::os::raw::c_char,
     num_input_programs: cl_uint,
     input_programs: *const cl_program,
-    pfn_notify: Option<FuncProgramCB>,
+    pfn_notify: Option<ProgramCB>,
     user_data: *mut ::std::os::raw::c_void,
 ) -> CLResult<(cl_program, cl_int)> {
-    let c = Context::arc_from_raw(context)?;
+    let c = context.get_arc()?;
     let devs = validate_devices(device_list, num_devices, &c.devs)?;
-    let progs = Program::arcs_from_arr(input_programs, num_input_programs)?;
+    let progs = cl_program::get_arc_vec_from_arr(input_programs, num_input_programs)?;
 
-    // SAFETY: The requirements on `ProgramCB::try_new` match the requirements
-    // imposed by the OpenCL specification. It is the caller's duty to uphold them.
-    let cb_opt = unsafe { ProgramCB::try_new(pfn_notify, user_data)? };
+    check_cb(&pfn_notify, user_data)?;
 
     // CL_INVALID_VALUE if num_input_programs is zero and input_programs is NULL
     if progs.is_empty() {
@@ -451,56 +406,45 @@ pub fn link_program(
         CL_LINK_PROGRAM_FAILURE
     };
 
-    if let Some(cb) = cb_opt {
-        cb.call(&res);
-    }
+    let res = cl_program::from_arc(res);
 
-    debug_logging(&res, &devs);
-    Ok((res.into_cl(), code))
+    call_cb(pfn_notify, res, user_data);
+    Ok((res, code))
 
     //• CL_INVALID_LINKER_OPTIONS if the linker options specified by options are invalid.
     //• CL_INVALID_OPERATION if the rules for devices containing compiled binaries or libraries as described in input_programs argument above are not followed.
 }
 
-#[cl_entrypoint]
-fn set_program_specialization_constant(
+pub fn set_program_specialization_constant(
     program: cl_program,
-    spec_id: cl_uint,
-    spec_size: usize,
+    _spec_id: cl_uint,
+    _spec_size: usize,
     spec_value: *const ::std::os::raw::c_void,
 ) -> CLResult<()> {
-    let program = Program::ref_from_raw(program)?;
+    let _program = program.get_ref()?;
 
     // CL_INVALID_PROGRAM if program is not a valid program object created from an intermediate
     // language (e.g. SPIR-V)
     // TODO: or if the intermediate language does not support specialization constants.
-    if !program.is_il() {
-        return Err(CL_INVALID_PROGRAM);
-    }
+    //    if program.il.is_empty() {
+    //        Err(CL_INVALID_PROGRAM)?
+    //    }
 
-    if spec_size != program.get_spec_constant_size(spec_id).into() {
-        // CL_INVALID_VALUE if spec_size does not match the size of the specialization constant in
-        // the module,
-        return Err(CL_INVALID_VALUE);
-    }
+    // TODO: CL_INVALID_VALUE if spec_size does not match the size of the specialization constant in the module,
 
     // or if spec_value is NULL.
     if spec_value.is_null() {
         return Err(CL_INVALID_VALUE);
     }
 
-    // SAFETY: according to API spec
-    program.set_spec_constant(spec_id, unsafe {
-        slice::from_raw_parts(spec_value.cast(), spec_size)
-    });
+    Err(CL_INVALID_OPERATION)
 
-    Ok(())
+    //• CL_INVALID_SPEC_ID if spec_id is not a valid specialization constant identifier.
 }
 
-#[cl_entrypoint]
-fn set_program_release_callback(
+pub fn set_program_release_callback(
     _program: cl_program,
-    _pfn_notify: ::std::option::Option<FuncProgramCB>,
+    _pfn_notify: ::std::option::Option<ProgramCB>,
     _user_data: *mut ::std::os::raw::c_void,
 ) -> CLResult<()> {
     Err(CL_INVALID_OPERATION)

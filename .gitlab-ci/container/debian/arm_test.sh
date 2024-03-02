@@ -1,44 +1,38 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # shellcheck disable=SC2154 # arch is assigned in previous scripts
-# When changing this file, you need to bump the following
-# .gitlab-ci/image-tags.yml tags:
-# DEBIAN_BASE_TAG
-# KERNEL_ROOTFS_TAG
 
 set -e
 set -o xtrace
 
 ############### Install packages for baremetal testing
-DEPS=(
-    cpio
-    curl
-    fastboot
-    netcat-openbsd
-    openssh-server
-    procps
-    python3-distutils
-    python3-filelock
-    python3-fire
-    python3-minimal
-    python3-serial
-    rsync
-    snmp
-    zstd
-)
-
 apt-get install -y ca-certificates
-sed -i -e 's/http:\/\/deb/https:\/\/deb/g' /etc/apt/sources.list.d/*
-echo "deb [trusted=yes] https://gitlab.freedesktop.org/gfx-ci/ci-deb-repo/-/raw/${PKG_REPO_REV}/ ${FDO_DISTRIBUTION_VERSION%-*} main" | tee /etc/apt/sources.list.d/gfx-ci_.list
+sed -i -e 's/http:\/\/deb/https:\/\/deb/g' /etc/apt/sources.list
 apt-get update
 
-apt-get install -y --no-remove "${DEPS[@]}"
+apt-get install -y --no-remove \
+        cpio \
+        fastboot \
+        netcat \
+        procps \
+        python3-distutils \
+        python3-minimal \
+        python3-serial \
+        rsync \
+        snmp \
+        wget \
+        zstd
 
 # setup SNMPv2 SMI MIB
-curl -L --retry 4 -f --retry-all-errors --retry-delay 60 \
-    https://raw.githubusercontent.com/net-snmp/net-snmp/master/mibs/SNMPv2-SMI.txt \
-    -o /usr/share/snmp/mibs/SNMPv2-SMI.txt
+wget https://raw.githubusercontent.com/net-snmp/net-snmp/master/mibs/SNMPv2-SMI.txt \
+    -O /usr/share/snmp/mibs/SNMPv2-SMI.txt
 
 . .gitlab-ci/container/baremetal_build.sh
+
+if [[ "$arch" == "arm64" ]]; then
+    # This firmware file from Debian bullseye causes hangs
+    wget https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/qcom/a530_pfp.fw?id=d5f9eea5a251d43412b07f5295d03e97b89ac4a5 \
+      -O /rootfs-arm64/lib/firmware/qcom/a530_pfp.fw
+fi
 
 mkdir -p /baremetal-files/jetson-nano/boot/
 ln -s \

@@ -25,11 +25,7 @@
 #ifndef BRW_IR_ALLOCATOR_H
 #define BRW_IR_ALLOCATOR_H
 
-#include "util/compiler.h"
-#include "util/glheader.h"
-#include "util/macros.h"
-#include "util/rounding.h"
-#include "util/u_math.h"
+#include "main/macros.h"
 
 namespace brw {
    /**

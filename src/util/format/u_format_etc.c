@@ -1,4 +1,4 @@
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "util/u_debug.h"
 #include "util/u_math.h"
 #include "util/format/u_format_etc.h"

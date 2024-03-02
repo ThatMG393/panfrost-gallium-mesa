@@ -45,20 +45,11 @@ lst_enum_include = [
     "pipe_texture_target",
     "pipe_shader_cap",
     "pipe_shader_ir",
-    "pipe_map_flags",
     "pipe_cap",
     "pipe_capf",
     "pipe_compute_cap",
-    "pipe_video_cap",
-    "pipe_video_profile",
-    "pipe_video_entrypoint",
-    "pipe_video_vpp_orientation",
-    "pipe_video_vpp_blend_mode",
     "pipe_resource_param",
     "pipe_fd_type",
-    "pipe_blendfactor",
-    "pipe_blend_func",
-    "pipe_logicop",
 ]
 
 
@@ -96,11 +87,10 @@ def pkk_get_argparser():
         "example: %(prog)s ../../include/pipe/p_defines.h -C tr_util.c -H tr_util.h"
         )
 
-    optparser.add_argument("in_files",
+    optparser.add_argument("in_file",
         type=str,
-        metavar="infiles",
-        nargs="+",
-        help="path to input header files (or '-' for stdin)")
+        metavar="infile",
+        help="path to input header file p_defines.h (or '-' for stdin)")
 
     optparser.add_argument("-C",
         type=str,
@@ -133,26 +123,11 @@ class PKKHeaderParser:
         self.mdata = []
         self.start = 0
         self.name = None
-        self.in_multiline_comment = False
 
     def error(self, msg):
         pkk_fatal(f"{self.filename}:{self.nline} : {msg}")
 
-    def parse_line(self, sline: str):
-        start = sline.find('/*')
-        end = sline.find('*/')
-        if not self.in_multiline_comment and start >= 0:
-            if end >= 0:
-                assert end > start
-                sline = sline[:start] + sline[end + 2:]
-            else:
-                sline = sline[:start]
-                self.in_multiline_comment = True
-        elif self.in_multiline_comment and end >= 0:
-            self.in_multiline_comment = False
-            sline = sline[end + 2:]
-        elif self.in_multiline_comment:
-            return
+    def parse_line(self, sline):
         # A kingdom for Py3.8 := operator ...
         smatch = re.match(r'^enum\s+([A-Za-z0-9_]+)\s+.*;', sline)
         if smatch:
@@ -217,7 +192,6 @@ def pkk_output_header(fh):
 
 
         #include "pipe/p_defines.h"
-        #include "pipe/p_video_enums.h"
 
 
         #ifdef __cplusplus
@@ -283,20 +257,18 @@ if __name__ == "__main__":
     optparser = pkk_get_argparser()
     pkk_cfg = optparser.parse_args()
 
-    ### Parse input files
-    enums = {}
-    for file in pkk_cfg.in_files:
-        hdrparser = PKKHeaderParser(file)
+    ### Parse input
+    hdrparser = PKKHeaderParser(pkk_cfg.in_file)
 
-        try:
-            if file != "-":
-                with open(file, "r", encoding="UTF-8") as fh:
-                    enums.update(hdrparser.parse_file(fh))
-            else:
-                enums.update(hdrparser.parse_file(sys.stdin))
-                break
-        except OSError as e:
-            pkk_fatal(str(e))
+    try:
+        if pkk_cfg.in_file != "-":
+            with open(pkk_cfg.in_file, "r", encoding="UTF-8") as fh:
+                enums = hdrparser.parse_file(fh)
+        else:
+            enums = hdrparser.parse_file(sys.stdin)
+
+    except OSError as e:
+        pkk_fatal(str(e))
 
     ### Check if any of the required enums are missing
     errors = False

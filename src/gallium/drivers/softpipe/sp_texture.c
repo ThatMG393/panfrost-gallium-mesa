@@ -51,10 +51,10 @@
  * Conventional allocation path for non-display textures:
  * Use a simple, maximally packed layout.
  */
-static bool
+static boolean
 softpipe_resource_layout(struct pipe_screen *screen,
                          struct softpipe_resource *spr,
-                         bool allocate)
+                         boolean allocate)
 {
    struct pipe_resource *pt = &spr->base;
    unsigned level;
@@ -83,7 +83,7 @@ softpipe_resource_layout(struct pipe_screen *screen,
       /* if row_stride * height > SP_MAX_TEXTURE_SIZE */
       if ((uint64_t)spr->stride[level] * nblocksy > SP_MAX_TEXTURE_SIZE) {
          /* image too large */
-         return false;
+         return FALSE;
       }
 
       spr->img_stride[level] = spr->stride[level] * nblocksy;
@@ -96,14 +96,14 @@ softpipe_resource_layout(struct pipe_screen *screen,
    }
 
    if (buffer_size > SP_MAX_TEXTURE_SIZE)
-      return false;
+      return FALSE;
 
    if (allocate) {
       spr->data = align_malloc(buffer_size, 64);
       return spr->data != NULL;
    }
    else {
-      return true;
+      return TRUE;
    }
 }
 
@@ -119,14 +119,14 @@ softpipe_can_create_resource(struct pipe_screen *screen,
    struct softpipe_resource spr;
    memset(&spr, 0, sizeof(spr));
    spr.base = *res;
-   return softpipe_resource_layout(screen, &spr, false);
+   return softpipe_resource_layout(screen, &spr, FALSE);
 }
 
 
 /**
  * Texture layout for simple color buffers.
  */
-static bool
+static boolean
 softpipe_displaytarget_layout(struct pipe_screen *screen,
                               struct softpipe_resource *spr,
                               const void *map_front_private)
@@ -177,7 +177,7 @@ softpipe_resource_create_front(struct pipe_screen *screen,
          goto fail;
    }
    else {
-      if (!softpipe_resource_layout(screen, spr, true))
+      if (!softpipe_resource_layout(screen, spr, TRUE))
          goto fail;
    }
     
@@ -395,13 +395,13 @@ softpipe_transfer_map(struct pipe_context *pipe,
     * context if necessary.
     */
    if (!(usage & PIPE_MAP_UNSYNCHRONIZED)) {
-      bool read_only = !(usage & PIPE_MAP_WRITE);
-      bool do_not_block = !!(usage & PIPE_MAP_DONTBLOCK);
+      boolean read_only = !(usage & PIPE_MAP_WRITE);
+      boolean do_not_block = !!(usage & PIPE_MAP_DONTBLOCK);
       if (!softpipe_flush_resource(pipe, resource,
                                    level, box->depth > 1 ? -1 : box->z,
                                    0, /* flush_flags */
                                    read_only,
-                                   true, /* cpu_access */
+                                   TRUE, /* cpu_access */
                                    do_not_block)) {
          /*
           * It would have blocked, but state tracker requested no to.
@@ -502,7 +502,7 @@ softpipe_user_buffer_create(struct pipe_screen *screen,
    spr->base.height0 = 1;
    spr->base.depth0 = 1;
    spr->base.array_size = 1;
-   spr->userBuffer = true;
+   spr->userBuffer = TRUE;
    spr->data = ptr;
 
    return &spr->base;
@@ -523,7 +523,7 @@ softpipe_init_texture_funcs(struct pipe_context *pipe)
 
    pipe->create_surface = softpipe_create_surface;
    pipe->surface_destroy = softpipe_surface_destroy;
-   pipe->clear_texture = util_clear_texture_sw;
+   pipe->clear_texture = util_clear_texture;
 }
 
 

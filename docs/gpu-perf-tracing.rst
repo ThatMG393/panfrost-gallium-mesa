@@ -8,4 +8,3 @@ TODO: Add general tips for performance measurement.
 
    u_trace
    perfetto
-   gpuvis

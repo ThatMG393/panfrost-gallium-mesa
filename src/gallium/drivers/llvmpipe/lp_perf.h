@@ -33,7 +33,7 @@
 #ifndef LP_PERF_H
 #define LP_PERF_H
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 
 /**
  * Various counters

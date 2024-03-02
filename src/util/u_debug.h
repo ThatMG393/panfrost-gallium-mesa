@@ -39,7 +39,6 @@
 #define U_DEBUG_H_
 
 #include <stdarg.h>
-#include <stdlib.h>
 #include <string.h>
 #if !defined(_WIN32)
 #include <sys/types.h>
@@ -188,6 +187,9 @@ debug_disable_win32_error_dialogs(void);
 #endif /* !DEBUG */
 
 
+long
+debug_get_num_option(const char *name, long dfault);
+
 void
 debug_get_version_option(const char *name, unsigned *major, unsigned *minor);
 
@@ -263,9 +265,11 @@ debug_get_version_option(const char *name, unsigned *major, unsigned *minor);
  */
 #define util_debug_message(cb, type, fmt, ...) do { \
    static unsigned id = 0; \
-   _util_debug_message(cb, &id, \
-                        UTIL_DEBUG_TYPE_ ## type, \
-                        fmt, ##__VA_ARGS__); \
+   if ((cb) && (cb)->debug_message) { \
+      _util_debug_message(cb, &id, \
+                          UTIL_DEBUG_TYPE_ ## type, \
+                          fmt, ##__VA_ARGS__); \
+   } \
 } while (0)
 
 void
@@ -306,8 +310,8 @@ struct debug_named_value
  *    ...
  * @endcode
  */
-#define DEBUG_NAMED_VALUE(__symbol) {#__symbol, (uint64_t)__symbol, NULL}
-#define DEBUG_NAMED_VALUE_WITH_DESCRIPTION(__symbol, __desc) {#__symbol, (uint64_t)__symbol, __desc}
+#define DEBUG_NAMED_VALUE(__symbol) {#__symbol, (unsigned long)__symbol, NULL}
+#define DEBUG_NAMED_VALUE_WITH_DESCRIPTION(__symbol, __desc) {#__symbol, (unsigned long)__symbol, __desc}
 #define DEBUG_NAMED_VALUE_END {NULL, 0, NULL}
 
 
@@ -316,14 +320,14 @@ struct debug_named_value
  */
 const char *
 debug_dump_enum(const struct debug_named_value *names,
-                uint64_t value);
+                unsigned long value);
 
 /**
  * Convert binary flags value to a string.
  */
 const char *
 debug_dump_flags(const struct debug_named_value *names,
-                 uint64_t value);
+                 unsigned long value);
 
 
 struct debug_control {
@@ -354,26 +358,11 @@ comma_separated_list_contains(const char *list, const char *s);
 const char *
 debug_get_option(const char *name, const char *dfault);
 
-const char *
-debug_get_option_cached(const char *name, const char *dfault);
-
-bool
-debug_parse_bool_option(const char *str, bool dfault);
-
 bool
 debug_get_bool_option(const char *name, bool dfault);
 
-int64_t
-debug_parse_num_option(const char *str, int64_t dfault);
-
-int64_t
-debug_get_num_option(const char *name, int64_t dfault);
-
-uint64_t
-debug_parse_flags_option(const char *name,
-                         const char *str,
-                         const struct debug_named_value *flags,
-                         uint64_t dfault);
+long
+debug_get_num_option(const char *name, long dfault);
 
 uint64_t
 debug_get_flags_option(const char *name,
@@ -387,29 +376,21 @@ debug_get_option_ ## suffix (void) \
    static bool initialized = false; \
    static const char * value; \
    if (unlikely(!p_atomic_read_relaxed(&initialized))) { \
-      const char *str = debug_get_option_cached(name, dfault); \
-      p_atomic_set(&value, str); \
+      value = debug_get_option(name, dfault); \
       p_atomic_set(&initialized, true); \
    } \
    return value; \
 }
 
 static inline bool
-__normal_user(void)
+__check_suid(void)
 {
-#if defined(_WIN32)
-   return true;
-#else
-   return geteuid() == getuid() && getegid() == getgid();
+#if !defined(_WIN32)
+   if (geteuid() != getuid())
+      return true;
 #endif
+   return false;
 }
-
-#ifndef HAVE_SECURE_GETENV
-static inline char *secure_getenv(const char *name)
-{
-   return getenv(name);
-}
-#endif
 
 #define DEBUG_GET_ONCE_BOOL_OPTION(sufix, name, dfault) \
 static bool \
@@ -418,39 +399,33 @@ debug_get_option_ ## sufix (void) \
    static bool initialized = false; \
    static bool value; \
    if (unlikely(!p_atomic_read_relaxed(&initialized))) { \
-      const char *str = debug_get_option_cached(name, NULL); \
-      bool parsed_value = debug_parse_bool_option(str, dfault); \
-      p_atomic_set(&value, parsed_value); \
+      value = debug_get_bool_option(name, dfault); \
       p_atomic_set(&initialized, true); \
    } \
    return value; \
 }
 
 #define DEBUG_GET_ONCE_NUM_OPTION(sufix, name, dfault) \
-static int64_t \
+static long \
 debug_get_option_ ## sufix (void) \
 { \
    static bool initialized = false; \
-   static int64_t value; \
+   static long value; \
    if (unlikely(!p_atomic_read_relaxed(&initialized))) { \
-      const char *str = debug_get_option_cached(name, NULL); \
-      int64_t parsed_value = debug_parse_num_option(str, dfault); \
-      p_atomic_set(&value, parsed_value); \
+      value = debug_get_num_option(name, dfault); \
       p_atomic_set(&initialized, true); \
    } \
    return value; \
 }
 
 #define DEBUG_GET_ONCE_FLAGS_OPTION(sufix, name, flags, dfault) \
-static uint64_t \
+static unsigned long \
 debug_get_option_ ## sufix (void) \
 { \
    static bool initialized = false; \
-   static uint64_t value; \
+   static unsigned long value; \
    if (unlikely(!p_atomic_read_relaxed(&initialized))) { \
-      const char *str = debug_get_option_cached(name, NULL); \
-      uint64_t parsed_value = debug_parse_flags_option(name, str, flags, dfault); \
-      p_atomic_set(&value, parsed_value); \
+      value = debug_get_flags_option(name, flags, dfault); \
       p_atomic_set(&initialized, true); \
    } \
    return value; \

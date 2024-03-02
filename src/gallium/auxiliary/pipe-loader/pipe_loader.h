@@ -33,7 +33,7 @@
 #ifndef PIPE_LOADER_H
 #define PIPE_LOADER_H
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "frontend/drm_driver.h"
 #include "util/xmlconfig.h"
 
@@ -74,14 +74,13 @@ struct pipe_loader_device {
 /**
  * Get a list of known devices.
  *
- * \param devs      Array that will be filled with pointers to the devices
- *                  available in the system.
- * \param ndev      Maximum number of devices to return.
- * \param with_zink If devices should also be loaded with zink.
+ * \param devs Array that will be filled with pointers to the devices
+ *             available in the system.
+ * \param ndev Maximum number of devices to return.
  * \return Number of devices available in the system.
  */
 int
-pipe_loader_probe(struct pipe_loader_device **devs, int ndev, bool with_zink);
+pipe_loader_probe(struct pipe_loader_device **devs, int ndev);
 
 /**
  * Create a pipe_screen for the specified device.
@@ -200,7 +199,7 @@ pipe_loader_sw_probe(struct pipe_loader_device **devs, int ndev);
  *
  * \sa pipe_loader_probe
  */
-bool
+boolean
 pipe_loader_sw_probe_wrapped(struct pipe_loader_device **dev,
                              struct pipe_screen *screen);
 
@@ -214,25 +213,6 @@ pipe_loader_sw_probe_wrapped(struct pipe_loader_device **dev,
 int
 pipe_loader_drm_probe(struct pipe_loader_device **devs, int ndev);
 
-#ifdef HAVE_ZINK
-/**
- * Get a list of known DRM devices compatible with zink.
- *
- * This function is platform-specific.
- *
- * \sa pipe_loader_probe
- */
-int
-pipe_loader_drm_zink_probe(struct pipe_loader_device **devs, int ndev);
-#endif
-
-/**
- * Get the fd of a render-capable device compatible with a given display-only
- * device fd.
- */
-int
-pipe_loader_get_compatible_render_capable_device_fd(int kms_only_fd);
-
 /**
  * Initialize a DRM device in an already opened fd.
  *
@@ -241,7 +221,7 @@ pipe_loader_get_compatible_render_capable_device_fd(int kms_only_fd);
  * \sa pipe_loader_probe
  */
 bool
-pipe_loader_drm_probe_fd(struct pipe_loader_device **dev, int fd, bool zink);
+pipe_loader_drm_probe_fd(struct pipe_loader_device **dev, int fd);
 
 /**
  * Get the dri options used for the DRM driver of the given name, if any.

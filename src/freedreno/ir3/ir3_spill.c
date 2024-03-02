@@ -1193,23 +1193,20 @@ is_last_pcopy_src(struct ir3_instruction *pcopy, unsigned src_n)
 static void
 handle_pcopy(struct ra_spill_ctx *ctx, struct ir3_instruction *pcopy)
 {
-   ra_foreach_dst (dst, pcopy) {
+   foreach_dst (dst, pcopy) {
       struct ra_spill_interval *dst_interval = ctx->intervals[dst->name];
       ra_spill_interval_init(dst_interval, dst);
    }
 
    foreach_src_n (src, i, pcopy) {
-      struct ir3_register *dst = pcopy->dsts[i];
-      if (!(dst->flags & IR3_REG_SSA))
-         continue;
-
       d("processing src %u", i);
+      struct ir3_register *dst = pcopy->dsts[i];
 
       /* Skip the intermediate copy for cases where the source is merged with
        * the destination. Crucially this means that we also don't reload/spill
        * it if it's been spilled, because it shares the same spill slot.
        */
-      if ((src->flags & IR3_REG_SSA) && src->def->merge_set &&
+      if (src->def && src->def->merge_set &&
           src->def->merge_set == dst->merge_set &&
           src->def->merge_set_offset == dst->merge_set_offset) {
          struct ra_spill_interval *src_interval = ctx->intervals[src->def->name];
@@ -1224,7 +1221,7 @@ handle_pcopy(struct ra_spill_ctx *ctx, struct ir3_instruction *pcopy)
             dst_interval->cant_spill = false;
             dst_interval->dst = src_interval->dst;
          }
-      } else if (src->flags & IR3_REG_SSA) {
+      } else if (src->def) {
          struct ra_spill_interval *temp_interval =
             create_temp_interval(ctx, dst);
          struct ir3_register *temp = temp_interval->interval.reg;
@@ -1254,17 +1251,15 @@ handle_pcopy(struct ra_spill_ctx *ctx, struct ir3_instruction *pcopy)
 
    foreach_src_n (src, i, pcopy) {
       struct ir3_register *dst = pcopy->dsts[i];
-      if (!(dst->flags & IR3_REG_SSA))
-         continue;
 
-      if ((src->flags & IR3_REG_SSA) && src->def->merge_set &&
+      if (src->def && src->def->merge_set &&
           src->def->merge_set == dst->merge_set &&
           src->def->merge_set_offset == dst->merge_set_offset)
          continue;
 
       struct ra_spill_interval *dst_interval = ctx->intervals[dst->name];
 
-      if (!(src->flags & IR3_REG_SSA)) {
+      if (!src->def) {
          dst_interval->cant_spill = true;
          ra_spill_ctx_insert(ctx, dst_interval);
          limit(ctx, pcopy);
@@ -1297,9 +1292,6 @@ handle_pcopy(struct ra_spill_ctx *ctx, struct ir3_instruction *pcopy)
 static void
 handle_input_phi(struct ra_spill_ctx *ctx, struct ir3_instruction *instr)
 {
-   if (!(instr->dsts[0]->flags & IR3_REG_SSA))
-      return;
-
    init_dst(ctx, instr->dsts[0]);
    insert_dst(ctx, instr->dsts[0]);
    finish_dst(ctx, instr->dsts[0]);
@@ -1308,9 +1300,6 @@ handle_input_phi(struct ra_spill_ctx *ctx, struct ir3_instruction *instr)
 static void
 remove_input_phi(struct ra_spill_ctx *ctx, struct ir3_instruction *instr)
 {
-   if (!(instr->dsts[0]->flags & IR3_REG_SSA))
-      return;
-
    if (instr->opc == OPC_META_TEX_PREFETCH) {
       ra_foreach_src (src, instr)
          remove_src(ctx, instr, src);
@@ -1634,9 +1623,6 @@ static void
 rewrite_phi(struct ra_spill_ctx *ctx, struct ir3_instruction *phi,
             struct ir3_block *block)
 {
-   if (!(phi->dsts[0]->flags & IR3_REG_SSA))
-      return;
-
    if (!ctx->intervals[phi->dsts[0]->name]->interval.inserted) {
       phi->flags |= IR3_INSTR_UNUSED;
       return;
@@ -1949,7 +1935,7 @@ simplify_phi_nodes(struct ir3 *ir)
             simplify_phi_srcs(instr);
          }
 
-         /* Visit phi nodes in the successors to make sure that phi sources are
+         /* Visit phi nodes in the sucessors to make sure that phi sources are
           * always visited at least once after visiting the definition they
           * point to. See note in simplify_phi_def() for why this is necessary.
           */
@@ -1991,25 +1977,8 @@ cleanup_dead(struct ir3 *ir)
 {
    foreach_block (block, &ir->block_list) {
       foreach_instr_safe (instr, &block->instr_list) {
-         if (instr->flags & IR3_INSTR_UNUSED) {
-            if (instr->opc == OPC_META_PARALLEL_COPY) {
-               /* There may be non-SSA shared copies, we need to preserve these.
-                */
-               for (unsigned i = 0; i < instr->dsts_count;) {
-                  if (instr->dsts[i]->flags & IR3_REG_SSA) {
-                     instr->dsts[i] = instr->dsts[--instr->dsts_count];
-                     instr->srcs[i] = instr->srcs[--instr->srcs_count];
-                  } else {
-                     i++;
-                  }
-               }
-
-               if (instr->dsts_count == 0)
-                  list_delinit(&instr->node);
-            } else {
-               list_delinit(&instr->node);
-            }
-         }
+         if (instr->flags & IR3_INSTR_UNUSED)
+            list_delinit(&instr->node);
       }
    }
 }

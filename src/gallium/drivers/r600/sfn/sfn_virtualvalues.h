@@ -70,7 +70,6 @@ class Instr;
 class InlineConstant;
 class LiteralConstant;
 class UniformValue;
-class ValueFactory;
 
 using InstructionSet = std::set<Instr *, std::less<Instr *>, Allocator<Instr *>>;
 
@@ -164,7 +163,6 @@ public:
       ssa,
       pin_start,
       pin_end,
-      addr_or_idx,
       flag_count
    };
 
@@ -224,23 +222,6 @@ private:
    std::bitset<flag_count> m_flags{0};
 };
 using PRegister = Register::Pointer;
-
-class AddressRegister : public Register {
-public:
-   enum Type {
-      addr,
-      idx0 = 1,
-      idx1 = 2
-   };
-   AddressRegister(Type type) :  Register(type, 0, pin_fully) {
-      set_flag(addr_or_idx);
-   }
-
-protected:
-   void do_set_chan(UNUSED int c) { unreachable("Address registers must have chan 0");}
-   void set_sel_internal(UNUSED int sel) {unreachable("Address registers don't support sel override");}
-};
-
 
 inline std::ostream&
 operator<<(std::ostream& os, const Register& val)
@@ -406,11 +387,10 @@ public:
    void print(std::ostream& os) const override;
    int kcache_bank() const { return m_kcache_bank; }
    PVirtualValue buf_addr() const;
-   void set_buf_addr(PVirtualValue addr);
    UniformValue *as_uniform() override { return this; }
 
    bool equal_buf_and_cache(const UniformValue& other) const;
-   static Pointer from_string(const std::string& s, ValueFactory *factory);
+   static Pointer from_string(const std::string& s);
 
 private:
    int m_kcache_bank;
@@ -444,16 +424,12 @@ public:
    uint32_t nchannels() const;
    uint32_t frac() const { return m_frac; }
 
-   void add_parent_to_elements(int chan, Instr *instr);
+   void add_parent_to_elements(Instr *instr);
 
    const Register& operator()(size_t idx, size_t chan) const;
 
    Values::iterator begin() { return m_values.begin(); }
    Values::iterator end() { return m_values.end(); }
-   Values::const_iterator begin() const { return m_values.begin(); }
-   Values::const_iterator end() const { return m_values.end(); }
-
-   uint32_t base_sel() const { return m_base_sel;}
 
 private:
    uint32_t m_base_sel;
@@ -484,7 +460,6 @@ public:
    bool ready(int block, int index) const override;
 
    VirtualValue *addr() const override;
-   void set_addr(PRegister addr); 
    const LocalArray& array() const;
 
 private:

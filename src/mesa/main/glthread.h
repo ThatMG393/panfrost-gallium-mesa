@@ -33,12 +33,7 @@
  *   chance of experiencing CPU cache thrashing
  * but it should be high enough so that u_queue overhead remains negligible.
  */
-#define MARSHAL_MAX_CMD_BUFFER_SIZE (8 * 1024)
-
-/* We need to leave 1 slot at the end to insert the END marker for unmarshal
- * calls that look ahead to know where the batch ends.
- */
-#define MARSHAL_MAX_CMD_SIZE (MARSHAL_MAX_CMD_BUFFER_SIZE - 8)
+#define MARSHAL_MAX_CMD_SIZE (8 * 1024)
 
 /* The number of batch slots in memory.
  *
@@ -56,7 +51,6 @@
 #include "util/u_queue.h"
 #include "compiler/shader_enums.h"
 #include "main/config.h"
-#include "main/hash.h"
 #include "util/glheader.h"
 
 #ifdef __cplusplus
@@ -65,43 +59,13 @@ extern "C" {
 
 struct gl_context;
 struct gl_buffer_object;
+struct _mesa_HashTable;
 struct _glapi_table;
 
-/* Used by both glthread and gl_context. */
-union gl_vertex_format_user {
-   struct {
-      GLenum16 Type;        /**< datatype: GL_FLOAT, GL_INT, etc */
-      bool Bgra;            /**< true if GL_BGRA, else GL_RGBA */
-      uint8_t Size:5;       /**< components per element (1,2,3,4) */
-      bool Normalized:1;    /**< GL_ARB_vertex_program */
-      bool Integer:1;       /**< Integer-valued? */
-      bool Doubles:1;       /**< double values are not converted to floats */
-   };
-   uint32_t All;
-};
-
-#define MESA_PACK_VFORMAT(type, size, normalized, integer, doubles) \
-   (union gl_vertex_format_user){{ \
-      .Type = MIN2(type, 0xffff), /* 0xffff means invalid value */ \
-      .Bgra = size == GL_BGRA, \
-      .Size = size == GL_BGRA ? 4 : MIN2(size, 5), /* 5 means invalid value */ \
-      .Normalized = normalized, \
-      .Integer = integer, \
-      .Doubles = doubles \
-   }}
-
-struct glthread_attrib {
-   /* Per attrib: */
-   uint8_t ElementSize;       /**< max 32 */
-   uint8_t BufferIndex;       /**< Referring to Attrib[BufferIndex]. */
-   uint16_t RelativeOffset;   /**< max 0xffff in Mesa */
-   union gl_vertex_format_user Format;
-
-   /* Per buffer binding: */
-   GLuint Divisor;
-   int16_t Stride;            /**< max 2048 */
-   int8_t EnabledAttribCount; /**< Number of enabled attribs using this buffer. */
-   const void *Pointer;
+struct glthread_attrib_binding {
+   struct gl_buffer_object *buffer; /**< where non-VBO data was uploaded */
+   int offset;                      /**< offset to uploaded non-VBO data */
+   const void *original_pointer;    /**< restore this pointer after the draw */
 };
 
 struct glthread_vao {
@@ -112,10 +76,20 @@ struct glthread_vao {
    GLbitfield BufferEnabled; /**< "Enabled" converted to buffer bindings. */
    GLbitfield BufferInterleaved; /**< Bitmask of buffers used by multiple attribs. */
    GLbitfield UserPointerMask; /**< Bitmask of buffer bindings. */
-   GLbitfield NonNullPointerMask; /**< Bitmask of buffer bindings with non-NULL user pointers. */
    GLbitfield NonZeroDivisorMask; /**< Bitmask of buffer bindings. */
 
-   struct glthread_attrib Attrib[VERT_ATTRIB_MAX];
+   struct {
+      /* Per attrib: */
+      GLuint ElementSize;
+      GLuint RelativeOffset;
+      GLuint BufferIndex; /**< Referring to Attrib[BufferIndex]. */
+
+      /* Per buffer binding: */
+      GLsizei Stride;
+      GLuint Divisor;
+      int EnabledAttribCount; /**< Number of enabled attribs using this buffer. */
+      const void *Pointer;
+   } Attrib[VERT_ATTRIB_MAX];
 };
 
 /** A single batch of commands queued up for execution. */
@@ -136,7 +110,7 @@ struct glthread_batch
    unsigned used;
 
    /** Data contained in the command buffer. */
-   uint64_t buffer[MARSHAL_MAX_CMD_BUFFER_SIZE / 8];
+   uint64_t buffer[MARSHAL_MAX_CMD_SIZE / 8];
 };
 
 struct glthread_client_attrib {
@@ -185,7 +159,6 @@ struct glthread_state
    /** Whether GLThread is enabled. */
    bool enabled;
    bool inside_begin_end;
-   bool thread_sched_enabled;
 
    /** Display lists. */
    GLenum16 ListMode; /**< Zero if not inside display list, else list mode. */
@@ -194,7 +167,6 @@ struct glthread_state
 
    /** For L3 cache pinning. */
    unsigned pin_thread_counter;
-   unsigned thread_sched_state;
 
    /** The ring of batches in memory. */
    struct glthread_batch batches[MARSHAL_MAX_BATCHES];
@@ -217,6 +189,9 @@ struct glthread_state
    unsigned upload_offset;
    int upload_buffer_private_refcount;
 
+   /** Caps. */
+   GLboolean SupportsBufferUploads;
+
    /** Primitive restart state. */
    bool PrimitiveRestart;
    bool PrimitiveRestartFixedIndex;
@@ -225,7 +200,7 @@ struct glthread_state
    GLuint _RestartIndex[4]; /**< Restart index for index_size = 1,2,4. */
 
    /** Vertex Array objects tracked by glthread independently of Mesa. */
-   struct _mesa_HashTable VAOs;
+   struct _mesa_HashTable *VAOs;
    struct glthread_vao *CurrentVAO;
    struct glthread_vao *LastLookedUpVAO;
    struct glthread_vao DefaultVAO;
@@ -264,7 +239,6 @@ struct glthread_state
    bool Blend;
    bool DepthTest;
    bool CullFace;
-   bool DebugOutputSynchronous;
    bool Lighting;
    bool PolygonStipple;
 
@@ -274,16 +248,11 @@ struct glthread_state
 
    /** The last added call of the given function. */
    struct marshal_cmd_CallList *LastCallList;
-   struct marshal_cmd_BindBuffer *LastBindBuffer1;
-   struct marshal_cmd_BindBuffer *LastBindBuffer2;
-
-   /** Global mutex update info. */
-   unsigned GlobalLockUpdateBatchCounter;
-   bool LockGlobalMutexes;
+   struct marshal_cmd_BindBuffer *LastBindBuffer;
 };
 
 void _mesa_glthread_init(struct gl_context *ctx);
-void _mesa_glthread_destroy(struct gl_context *ctx);
+void _mesa_glthread_destroy(struct gl_context *ctx, const char *reason);
 
 void _mesa_glthread_init_dispatch0(struct gl_context *ctx,
                                    struct _glapi_table *table);
@@ -302,13 +271,9 @@ void _mesa_glthread_init_dispatch6(struct gl_context *ctx,
 void _mesa_glthread_init_dispatch7(struct gl_context *ctx,
                                    struct _glapi_table *table);
 
-void _mesa_glthread_enable(struct gl_context *ctx);
-void _mesa_glthread_disable(struct gl_context *ctx);
 void _mesa_glthread_flush_batch(struct gl_context *ctx);
 void _mesa_glthread_finish(struct gl_context *ctx);
 void _mesa_glthread_finish_before(struct gl_context *ctx, const char *func);
-bool _mesa_glthread_invalidate_zsbuf(struct gl_context *ctx);
-void _mesa_glthread_release_upload_buffer(struct gl_context *ctx);
 void _mesa_glthread_upload(struct gl_context *ctx, const void *data,
                            GLsizeiptr size, unsigned *out_offset,
                            struct gl_buffer_object **out_buffer,
@@ -335,18 +300,16 @@ void _mesa_glthread_ClientState(struct gl_context *ctx, GLuint *vaobj,
 void _mesa_glthread_AttribDivisor(struct gl_context *ctx, const GLuint *vaobj,
                                   gl_vert_attrib attrib, GLuint divisor);
 void _mesa_glthread_AttribPointer(struct gl_context *ctx, gl_vert_attrib attrib,
-                                  union gl_vertex_format_user format,
-                                  GLsizei stride, const void *pointer);
+                                  GLint size, GLenum type, GLsizei stride,
+                                  const void *pointer);
 void _mesa_glthread_DSAAttribPointer(struct gl_context *ctx, GLuint vao,
                                      GLuint buffer, gl_vert_attrib attrib,
-                                     union gl_vertex_format_user format,
-                                     GLsizei stride, GLintptr offset);
+                                     GLint size, GLenum type, GLsizei stride,
+                                     GLintptr offset);
 void _mesa_glthread_AttribFormat(struct gl_context *ctx, GLuint attribindex,
-                                 union gl_vertex_format_user format,
-                                 GLuint relativeoffset);
+                                 GLint size, GLenum type,  GLuint relativeoffset);
 void _mesa_glthread_DSAAttribFormat(struct gl_context *ctx, GLuint vaobj,
-                                    GLuint attribindex,
-                                    union gl_vertex_format_user format,
+                                    GLuint attribindex, GLint size, GLenum type,
                                     GLuint relativeoffset);
 void _mesa_glthread_VertexBuffer(struct gl_context *ctx, GLuint bindingindex,
                                  GLuint buffer, GLintptr offset, GLsizei stride);
@@ -375,10 +338,6 @@ void _mesa_glthread_ClientAttribDefault(struct gl_context *ctx, GLbitfield mask)
 void _mesa_glthread_InterleavedArrays(struct gl_context *ctx, GLenum format,
                                       GLsizei stride, const GLvoid *pointer);
 void _mesa_glthread_ProgramChanged(struct gl_context *ctx);
-void _mesa_glthread_UnrollDrawElements(struct gl_context *ctx,
-                                       GLenum mode, GLsizei count, GLenum type,
-                                       const GLvoid *indices, GLint basevertex);
-void _mesa_glthread_unbind_uploaded_vbos(struct gl_context *ctx);
 
 #ifdef __cplusplus
 }

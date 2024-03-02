@@ -32,7 +32,7 @@
 #define VMW_CONTEXT_H_
 
 #include <stdio.h>
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 
 struct svga_winsys_screen;
 struct svga_winsys_context;

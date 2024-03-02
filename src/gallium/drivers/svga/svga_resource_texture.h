@@ -1,5 +1,5 @@
 /**********************************************************
- * Copyright 2008-2023 VMware, Inc.  All rights reserved.
+ * Copyright 2008-2009 VMware, Inc.  All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -27,7 +27,7 @@
 #define SVGA_TEXTURE_H
 
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "pipe/p_state.h"
 #include "util/u_inlines.h"
 #include "util/u_memory.h"
@@ -48,14 +48,14 @@ struct svga_texture
 {
    struct pipe_resource b;
 
-   uint16_t *defined;
+   ushort *defined;
 
    struct svga_sampler_view *cached_view;
 
    unsigned view_age[SVGA_MAX_TEXTURE_LEVELS];
    unsigned age;
 
-   bool views_modified;
+   boolean views_modified;
 
    /**
     * Creation key for the host surface handle.
@@ -78,27 +78,22 @@ struct svga_texture
     * Whether the host side surface is imported and not created by this
     * driver.
     */
-   bool imported;
+   boolean imported;
 
    /**
     * Whether texture upload buffer can be used on this texture
     */
-   bool can_use_upload;
-
-   /**
-    * Whether texture is modified.  Set if any of the dirty bits is set.
-    */
-   bool modified;
+   boolean can_use_upload;
 
    unsigned size;  /**< Approximate size in bytes */
 
    /** array indexed by cube face or 3D/array slice, one bit per mipmap level */
-   uint16_t *rendered_to;
+   ushort *rendered_to;
 
    /** array indexed by cube face or 3D/array slice, one bit per mipmap level.
     *  Set if the level is marked as dirty.
     */
-   uint16_t *dirty;
+   ushort *dirty;
 
    enum svga_surface_state surface_state;
 
@@ -136,7 +131,7 @@ struct svga_transfer
    /* True if guest backed surface is supported and we can directly map
     * to the surface for this transfer.
     */
-   bool use_direct_map;
+   boolean use_direct_map;
 
    struct {
       struct pipe_resource *buf;  /* points to the upload buffer if this
@@ -235,7 +230,7 @@ svga_clear_texture_rendered_to(struct svga_texture *tex)
    tex->surface_state = SVGA_SURFACE_STATE_UPDATED;
 }
 
-static inline bool
+static inline boolean
 svga_was_texture_rendered_to(const struct svga_texture *tex)
 {
    return (tex->surface_state == SVGA_SURFACE_STATE_RENDERED);
@@ -247,7 +242,6 @@ svga_set_texture_dirty(struct svga_texture *tex,
 {
    check_face_level(tex, face, level);
    tex->dirty[face] |= 1 << level;
-   tex->modified = true;
 }
 
 static inline void
@@ -257,21 +251,14 @@ svga_clear_texture_dirty(struct svga_texture *tex)
    for (i = 0; i < tex->b.depth0 * tex->b.array_size; i++) {
       tex->dirty[i] = 0;
    }
-   tex->modified = false;
 }
 
-static inline bool
-svga_is_texture_level_dirty(const struct svga_texture *tex,
-                            unsigned face, unsigned level)
+static inline boolean
+svga_is_texture_dirty(const struct svga_texture *tex,
+                      unsigned face, unsigned level)
 {
    check_face_level(tex, face, level);
    return !!(tex->dirty[face] & (1 << level));
-}
-
-static inline bool
-svga_is_texture_dirty(const struct svga_texture *tex)
-{
-   return tex->modified;
 }
 
 struct pipe_resource *
@@ -299,13 +286,13 @@ svga_texture_generate_mipmap(struct pipe_context *pipe,
                              unsigned first_layer,
                              unsigned last_layer);
 
-bool
+boolean
 svga_texture_transfer_map_upload_create(struct svga_context *svga);
 
 void
 svga_texture_transfer_map_upload_destroy(struct svga_context *svga);
 
-bool
+boolean
 svga_texture_transfer_map_can_upload(const struct svga_screen *svgascreen,
                                      const struct pipe_resource *pt);
 
@@ -317,7 +304,7 @@ void
 svga_texture_transfer_unmap_upload(struct svga_context *svga,
                                    struct svga_transfer *st);
 
-bool
+boolean
 svga_texture_device_format_has_alpha(struct pipe_resource *texture);
 
 void *

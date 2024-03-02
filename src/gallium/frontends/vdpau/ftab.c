@@ -115,7 +115,7 @@ static void* ftab_driver[4] =
    &vlVdpOutputSurfaceDMABuf /* VDP_FUNC_ID_OUTPUT_SURFACE_DMA_BUF */
 };
 
-bool vlGetFuncFTAB(VdpFuncId function_id, void **func)
+boolean vlGetFuncFTAB(VdpFuncId function_id, void **func)
 {
    assert(func);
    *func = NULL;

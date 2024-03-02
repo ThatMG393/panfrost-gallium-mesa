@@ -89,10 +89,9 @@ _mesa_init_program(struct gl_context *ctx)
    ctx->Program.ErrorPos = -1;
    ctx->Program.ErrorString = strdup("");
 
-   ctx->VertexProgram._VaryingInputs = VERT_BIT_ALL;
    ctx->VertexProgram.Enabled = GL_FALSE;
    ctx->VertexProgram.PointSizeEnabled =
-      _mesa_is_gles2(ctx) ? GL_TRUE : GL_FALSE;
+      (ctx->API == API_OPENGLES2) ? GL_TRUE : GL_FALSE;
    ctx->VertexProgram.TwoSideEnabled = GL_FALSE;
    _mesa_reference_program(ctx, &ctx->VertexProgram.Current,
                            ctx->Shared->DefaultVertexProgram);
@@ -123,7 +122,7 @@ _mesa_free_program_data(struct gl_context *ctx)
    _mesa_reference_program(ctx, &ctx->VertexProgram.Current, NULL);
    _mesa_delete_program_cache(ctx, ctx->VertexProgram.Cache);
    _mesa_reference_program(ctx, &ctx->FragmentProgram.Current, NULL);
-   _mesa_delete_program_cache(ctx, ctx->FragmentProgram.Cache);
+   _mesa_delete_shader_cache(ctx, ctx->FragmentProgram.Cache);
 
    /* XXX probably move this stuff */
    if (ctx->ATIFragmentShader.Current) {
@@ -288,7 +287,7 @@ struct gl_program *
 _mesa_lookup_program(struct gl_context *ctx, GLuint id)
 {
    if (id)
-      return (struct gl_program *) _mesa_HashLookup(&ctx->Shared->Programs, id);
+      return (struct gl_program *) _mesa_HashLookup(ctx->Shared->Programs, id);
    else
       return NULL;
 }

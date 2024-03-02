@@ -265,8 +265,9 @@ handle_stateobj_relocs(struct msm_submit *submit, struct msm_ringbuffer *ring)
    return relocs;
 }
 
-static struct fd_fence *
-msm_submit_flush(struct fd_submit *submit, int in_fence_fd, bool use_fence_fd)
+static int
+msm_submit_flush(struct fd_submit *submit, int in_fence_fd,
+                 struct fd_submit_fence *out_fence)
 {
    struct msm_submit *msm_submit = to_msm_submit(submit);
    struct msm_pipe *msm_pipe = to_msm_pipe(submit->pipe);
@@ -314,7 +315,7 @@ msm_submit_flush(struct fd_submit *submit, int in_fence_fd, bool use_fence_fd)
 
          cmds[i].type = MSM_SUBMIT_CMD_IB_TARGET_BUF;
          cmds[i].submit_idx = append_bo(msm_submit, msm_ring->ring_bo);
-         cmds[i].submit_offset = submit_offset(msm_ring->ring_bo, msm_ring->offset);
+         cmds[i].submit_offset = msm_ring->offset;
          cmds[i].size = offset_bytes(ring->cur, ring->start);
          cmds[i].pad = 0;
          cmds[i].nr_relocs = msm_ring->cmd->nr_relocs;
@@ -328,9 +329,9 @@ msm_submit_flush(struct fd_submit *submit, int in_fence_fd, bool use_fence_fd)
             } else {
                cmds[i].type = MSM_SUBMIT_CMD_IB_TARGET_BUF;
             }
-            struct fd_bo *ring_bo = msm_ring->u.cmds[j]->ring_bo;
-            cmds[i].submit_idx = append_bo(msm_submit, ring_bo);
-            cmds[i].submit_offset = submit_offset(ring_bo, msm_ring->offset);
+            cmds[i].submit_idx =
+               append_bo(msm_submit, msm_ring->u.cmds[j]->ring_bo);
+            cmds[i].submit_offset = msm_ring->offset;
             cmds[i].size = msm_ring->u.cmds[j]->size;
             cmds[i].pad = 0;
             cmds[i].nr_relocs = msm_ring->u.cmds[j]->nr_relocs;
@@ -341,20 +342,18 @@ msm_submit_flush(struct fd_submit *submit, int in_fence_fd, bool use_fence_fd)
       }
    }
 
-   struct fd_fence *out_fence = fd_fence_new(submit->pipe, use_fence_fd);
-
-   simple_mtx_lock(&fence_lock);
+   simple_mtx_lock(&table_lock);
    for (unsigned j = 0; j < msm_submit->nr_bos; j++) {
-      fd_bo_add_fence(msm_submit->bos[j], out_fence);
+      fd_bo_add_fence(msm_submit->bos[j], submit->pipe, submit->fence);
    }
-   simple_mtx_unlock(&fence_lock);
+   simple_mtx_unlock(&table_lock);
 
    if (in_fence_fd != -1) {
       req.flags |= MSM_SUBMIT_FENCE_FD_IN | MSM_SUBMIT_NO_IMPLICIT;
       req.fence_fd = in_fence_fd;
    }
 
-   if (out_fence->use_fence_fd) {
+   if (out_fence && out_fence->use_fence_fd) {
       req.flags |= MSM_SUBMIT_FENCE_FD_OUT;
    }
 
@@ -369,19 +368,17 @@ msm_submit_flush(struct fd_submit *submit, int in_fence_fd, bool use_fence_fd)
                              sizeof(req));
    if (ret) {
       ERROR_MSG("submit failed: %d (%s)", ret, strerror(errno));
-      fd_fence_del(out_fence);
-      out_fence = NULL;
       msm_dump_submit(&req);
    } else if (!ret && out_fence) {
-      out_fence->kfence = req.fence;
-      out_fence->ufence = submit->fence;
+      out_fence->fence.kfence = req.fence;
+      out_fence->fence.ufence = submit->fence;
       out_fence->fence_fd = req.fence_fd;
    }
 
    for (unsigned o = 0; o < nr_objs; o++)
       free(obj_relocs[o]);
 
-   return out_fence;
+   return ret;
 }
 
 static void
@@ -514,7 +511,7 @@ msm_ringbuffer_emit_reloc(struct fd_ringbuffer *ring,
 
    ring->cur++;
 
-   if (pipe->is_64bit) {
+   if (fd_dev_64b(&pipe->dev_id)) {
       APPEND(msm_ring->cmd, relocs,
              (struct drm_msm_gem_submit_reloc){
                 .reloc_idx = reloc_idx,

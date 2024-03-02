@@ -145,7 +145,7 @@ ir_reader::read_type(s_expression *expr)
 	 return NULL;
       }
 
-      return glsl_array_type(base_type, s_size->value(), 0);
+      return glsl_type::get_array_instance(base_type, s_size->value());
    }
 
    s_symbol *type_sym = SX_AS_SYMBOL(expr);
@@ -638,7 +638,7 @@ ir_reader::read_assignment(s_expression *expr)
       return NULL;
    }
 
-   if (mask == 0 && (glsl_type_is_vector(lhs->type) || glsl_type_is_scalar(lhs->type))) {
+   if (mask == 0 && (lhs->type->is_vector() || lhs->type->is_scalar())) {
       ir_read_error(expr, "non-zero write mask required.");
       return NULL;
    }
@@ -694,10 +694,10 @@ ir_reader::read_call(s_expression *expr)
       return NULL;
    }
 
-   if (callee->return_type == &glsl_type_builtin_void && return_deref) {
+   if (callee->return_type == glsl_type::void_type && return_deref) {
       ir_read_error(expr, "call has return value storage but void type");
       return NULL;
-   } else if (callee->return_type != &glsl_type_builtin_void && !return_deref) {
+   } else if (callee->return_type != glsl_type::void_type && !return_deref) {
       ir_read_error(expr, "call has non-void type but no return value storage");
       return NULL;
    }
@@ -806,7 +806,7 @@ ir_reader::read_constant(s_expression *expr)
       return NULL;
    }
 
-   if (glsl_type_is_array(type)) {
+   if (type->is_array()) {
       unsigned elements_supplied = 0;
       exec_list elements;
       foreach_in_list(s_expression, elt, &values->subexpressions) {
@@ -835,7 +835,7 @@ ir_reader::read_constant(s_expression *expr)
 	 return NULL;
       }
 
-      if (glsl_type_is_float(type)) {
+      if (type->is_float()) {
 	 s_number *value = SX_AS_NUMBER(expr);
 	 if (value == NULL) {
 	    ir_read_error(values, "expected numbers");
@@ -869,9 +869,9 @@ ir_reader::read_constant(s_expression *expr)
       }
       ++k;
    }
-   if (k != glsl_get_components(type)) {
+   if (k != type->components()) {
       ir_read_error(values, "expected %u constant values, found %u",
-		    glsl_get_components(type), k);
+		    type->components(), k);
       return NULL;
    }
 
@@ -1031,8 +1031,8 @@ ir_reader::read_texture(s_expression *expr)
    }
 
    if (is_sparse) {
-      const glsl_type *texel = glsl_get_field_type(type, "texel");
-      if (texel == &glsl_type_builtin_error) {
+      const glsl_type *texel = type->field_type("texel");
+      if (texel == glsl_type::error_type) {
          ir_read_error(NULL, "invalid type for sparse texture");
          return NULL;
       }

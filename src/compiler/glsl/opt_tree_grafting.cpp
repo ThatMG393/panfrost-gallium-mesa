@@ -379,15 +379,14 @@ tree_grafting_basic_block(ir_instruction *bb_first,
        * any image layout qualifiers (including the image format) are set,
        * since we must not lose those.
        */
-      if (glsl_type_is_sampler(lhs_var->type) || glsl_type_is_image(lhs_var->type))
+      if (lhs_var->type->is_sampler() || lhs_var->type->is_image())
          continue;
 
       ir_variable_refcount_entry *entry = info->refs->get_variable_entry(lhs_var);
 
       if (!entry->declaration ||
 	  entry->assigned_count != 1 ||
-          entry->referenced_count != 2 ||
-          entry->is_global)
+	  entry->referenced_count != 2)
 	 continue;
 
       /* Found a possibly graftable assignment.  Now, walk through the

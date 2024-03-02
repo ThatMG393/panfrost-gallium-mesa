@@ -87,7 +87,7 @@ typedef struct {
 
    nir_shader *shader;
 
-   /* Mapping from nir_def * to a struct set of
+   /* Mapping from nir_register * or nir_ssa_def * to a struct set of
     * instructions remaining to be scheduled using the register.
     */
    struct hash_table *remaining_uses;
@@ -95,7 +95,9 @@ typedef struct {
    /* Map from nir_instr to nir_schedule_node * */
    struct hash_table *instr_map;
 
-   /* Set of nir_def * that have had any instruction scheduled on them. */
+   /* Set of nir_register * or nir_ssa_def * that have had any instruction
+    * scheduled on them.
+    */
    struct set *live_values;
 
    /* An abstract approximation of the number of nir_scheduler_node->delay
@@ -115,8 +117,7 @@ typedef struct {
 /* When walking the instructions in reverse, we use this flag to swap
  * before/after in add_dep().
  */
-enum direction { F,
-                 R };
+enum direction { F, R };
 
 struct nir_schedule_class_dep {
    int klass;
@@ -127,7 +128,7 @@ struct nir_schedule_class_dep {
 typedef struct {
    nir_schedule_scoreboard *scoreboard;
 
-   /* Map from registers to nir_schedule_node * */
+   /* Map from nir_register to nir_schedule_node * */
    struct hash_table *reg_map;
 
    /* Scheduler nodes for last instruction involved in some class of dependency.
@@ -159,27 +160,18 @@ nir_schedule_get_node(struct hash_table *instr_map, nir_instr *instr)
 }
 
 static struct set *
-nir_schedule_scoreboard_get_reg(nir_schedule_scoreboard *scoreboard,
-                                nir_def *reg)
-{
-   return _mesa_hash_table_search_data(scoreboard->remaining_uses, reg);
-}
-
-static struct set *
 nir_schedule_scoreboard_get_src(nir_schedule_scoreboard *scoreboard, nir_src *src)
 {
-   return _mesa_hash_table_search_data(scoreboard->remaining_uses, src->ssa);
+   if (src->is_ssa) {
+      return _mesa_hash_table_search_data(scoreboard->remaining_uses, src->ssa);
+   } else {
+      return _mesa_hash_table_search_data(scoreboard->remaining_uses,
+                                          src->reg.reg);
+   }
 }
 
 static int
-nir_schedule_reg_pressure(nir_def *reg)
-{
-   nir_intrinsic_instr *decl = nir_reg_get_decl(reg);
-   return nir_intrinsic_num_components(decl);
-}
-
-static int
-nir_schedule_def_pressure(nir_def *def)
+nir_schedule_def_pressure(nir_ssa_def *def)
 {
    return def->num_components;
 }
@@ -187,7 +179,19 @@ nir_schedule_def_pressure(nir_def *def)
 static int
 nir_schedule_src_pressure(nir_src *src)
 {
-   return nir_schedule_def_pressure(src->ssa);
+   if (src->is_ssa)
+      return nir_schedule_def_pressure(src->ssa);
+   else
+      return src->reg.reg->num_components;
+}
+
+static int
+nir_schedule_dest_pressure(nir_dest *dest)
+{
+   if (dest->is_ssa)
+      return nir_schedule_def_pressure(&dest->ssa);
+   else
+      return dest->reg.reg->num_components;
 }
 
 /**
@@ -213,6 +217,7 @@ add_dep(nir_deps_state *state,
       dag_add_edge(&after->dag, &before->dag, 0);
 }
 
+
 static void
 add_read_dep(nir_deps_state *state,
              nir_schedule_node *before,
@@ -230,46 +235,56 @@ add_write_dep(nir_deps_state *state,
    *before = after;
 }
 
-static void
-nir_schedule_load_reg_deps(nir_intrinsic_instr *load,
-                           nir_deps_state *state)
+static bool
+nir_schedule_reg_src_deps(nir_src *src, void *in_state)
 {
-   nir_def *reg = load->src[0].ssa;
-   (void)nir_reg_get_decl(reg);
+   nir_deps_state *state = in_state;
 
-   struct hash_entry *entry = _mesa_hash_table_search(state->reg_map, reg);
+   if (src->is_ssa)
+      return true;
+
+   struct hash_entry *entry = _mesa_hash_table_search(state->reg_map,
+                                                      src->reg.reg);
    if (!entry)
-      return;
+      return true;
    nir_schedule_node *dst_n = entry->data;
 
    nir_schedule_node *src_n =
-      nir_schedule_get_node(state->scoreboard->instr_map, &load->instr);
+      nir_schedule_get_node(state->scoreboard->instr_map,
+                            src->parent_instr);
 
    add_dep(state, dst_n, src_n);
+
+   return true;
 }
 
-static void
-nir_schedule_store_reg_deps(nir_intrinsic_instr *store,
-                            nir_deps_state *state)
+static bool
+nir_schedule_reg_dest_deps(nir_dest *dest, void *in_state)
 {
-   nir_def *reg = store->src[1].ssa;
-   (void)nir_reg_get_decl(reg);
+   nir_deps_state *state = in_state;
+
+   if (dest->is_ssa)
+      return true;
 
    nir_schedule_node *dest_n =
-      nir_schedule_get_node(state->scoreboard->instr_map, &store->instr);
+      nir_schedule_get_node(state->scoreboard->instr_map,
+                            dest->reg.parent_instr);
 
-   struct hash_entry *entry = _mesa_hash_table_search(state->reg_map, reg);
+   struct hash_entry *entry = _mesa_hash_table_search(state->reg_map,
+                                                      dest->reg.reg);
    if (!entry) {
-      _mesa_hash_table_insert(state->reg_map, reg, dest_n);
-      return;
+      _mesa_hash_table_insert(state->reg_map, dest->reg.reg, dest_n);
+      return true;
    }
    nir_schedule_node **before = (nir_schedule_node **)&entry->data;
 
    add_write_dep(state, before, dest_n);
+
+   return true;
 }
 
 static bool
-nir_schedule_ssa_deps(nir_def *def, void *in_state)
+nir_schedule_ssa_deps(nir_ssa_def *def, void *in_state)
 {
    nir_deps_state *state = in_state;
    struct hash_table *instr_map = state->scoreboard->instr_map;
@@ -277,7 +292,7 @@ nir_schedule_ssa_deps(nir_def *def, void *in_state)
 
    nir_foreach_use(src, def) {
       nir_schedule_node *use_n = nir_schedule_get_node(instr_map,
-                                                       nir_src_parent_instr(src));
+                                                       src->parent_instr);
 
       add_read_dep(state, def_n, use_n);
    }
@@ -333,17 +348,6 @@ nir_schedule_intrinsic_deps(nir_deps_state *state,
    }
 
    switch (instr->intrinsic) {
-   case nir_intrinsic_decl_reg:
-      break; /* Nothing to do */
-
-   case nir_intrinsic_load_reg:
-      nir_schedule_load_reg_deps(instr, state);
-      break;
-
-   case nir_intrinsic_store_reg:
-      nir_schedule_store_reg_deps(instr, state);
-      break;
-
    case nir_intrinsic_load_uniform:
    case nir_intrinsic_load_ubo:
    case nir_intrinsic_load_front_face:
@@ -399,7 +403,20 @@ nir_schedule_intrinsic_deps(nir_deps_state *state,
       add_write_dep(state, &state->store_shared, n);
       break;
 
-   case nir_intrinsic_barrier: {
+   case nir_intrinsic_control_barrier:
+   case nir_intrinsic_memory_barrier_shared:
+   case nir_intrinsic_group_memory_barrier:
+   /* A generic memory barrier can be emitted when multiple synchronization
+    * semantics are involved, including shared memory.
+    */
+   case nir_intrinsic_memory_barrier:
+      add_write_dep(state, &state->store_shared, n);
+
+      /* Serialize against ssbos/atomics/etc. */
+      add_write_dep(state, &state->unknown_intrinsic, n);
+      break;
+
+   case nir_intrinsic_scoped_barrier: {
       const nir_variable_mode modes = nir_intrinsic_memory_modes(instr);
 
       if (modes & nir_var_mem_shared)
@@ -437,7 +454,15 @@ nir_schedule_calculate_deps(nir_deps_state *state, nir_schedule_node *n)
     * depend on the def.
     */
    if (state->dir == F)
-      nir_foreach_def(instr, nir_schedule_ssa_deps, state);
+      nir_foreach_ssa_def(instr, nir_schedule_ssa_deps, state);
+
+   /* For NIR regs, track the last writer in the scheduler state so that we
+    * can keep the writes in order and let reads get reordered only between
+    * each write.
+    */
+   nir_foreach_src(instr, nir_schedule_reg_src_deps, state);
+
+   nir_foreach_dest(instr, nir_schedule_reg_dest_deps, state);
 
    /* Make sure any other instructions keep their positions relative to
     * jumps.
@@ -446,7 +471,7 @@ nir_schedule_calculate_deps(nir_deps_state *state, nir_schedule_node *n)
       add_read_dep(state, state->jump, n);
 
    switch (instr->type) {
-   case nir_instr_type_undef:
+   case nir_instr_type_ssa_undef:
    case nir_instr_type_load_const:
    case nir_instr_type_alu:
    case nir_instr_type_deref:
@@ -530,7 +555,7 @@ nir_schedule_regs_freed_src_cb(nir_src *src, void *in_state)
    struct set *remaining_uses = nir_schedule_scoreboard_get_src(scoreboard, src);
 
    if (remaining_uses->entries == 1 &&
-       _mesa_set_search(remaining_uses, nir_src_parent_instr(src))) {
+       _mesa_set_search(remaining_uses, src->parent_instr)) {
       state->regs_freed += nir_schedule_src_pressure(src);
    }
 
@@ -538,7 +563,7 @@ nir_schedule_regs_freed_src_cb(nir_src *src, void *in_state)
 }
 
 static bool
-nir_schedule_regs_freed_def_cb(nir_def *def, void *in_state)
+nir_schedule_regs_freed_def_cb(nir_ssa_def *def, void *in_state)
 {
    nir_schedule_regs_freed_state *state = in_state;
 
@@ -547,70 +572,22 @@ nir_schedule_regs_freed_def_cb(nir_def *def, void *in_state)
    return true;
 }
 
-static void
-nir_schedule_regs_freed_load_reg(nir_intrinsic_instr *load,
-                                 nir_schedule_regs_freed_state *state)
+static bool
+nir_schedule_regs_freed_dest_cb(nir_dest *dest, void *in_state)
 {
-   assert(nir_is_load_reg(load));
-
-   if (load->intrinsic == nir_intrinsic_load_reg_indirect)
-      nir_schedule_regs_freed_src_cb(&load->src[1], state);
-
+   nir_schedule_regs_freed_state *state = in_state;
    nir_schedule_scoreboard *scoreboard = state->scoreboard;
-   nir_def *reg = load->src[0].ssa;
-   struct set *remaining_uses = nir_schedule_scoreboard_get_reg(scoreboard, reg);
 
-   if (remaining_uses->entries == 1 &&
-       _mesa_set_search(remaining_uses, &load->instr)) {
-      state->regs_freed += nir_schedule_reg_pressure(reg);
-   }
+   if (dest->is_ssa)
+      return true;
 
-   nir_schedule_regs_freed_def_cb(&load->def, state);
-}
-
-static void
-nir_schedule_regs_freed_store_reg(nir_intrinsic_instr *store,
-                                  nir_schedule_regs_freed_state *state)
-{
-   assert(nir_is_store_reg(store));
-
-   nir_schedule_regs_freed_src_cb(&store->src[0], state);
-   if (store->intrinsic == nir_intrinsic_store_reg_indirect)
-      nir_schedule_regs_freed_src_cb(&store->src[2], state);
-
-   nir_schedule_scoreboard *scoreboard = state->scoreboard;
-   nir_def *reg = store->src[1].ssa;
+   nir_register *reg = dest->reg.reg;
 
    /* Only the first def of a reg counts against register pressure. */
    if (!_mesa_set_search(scoreboard->live_values, reg))
-      state->regs_freed -= nir_schedule_reg_pressure(reg);
-}
+      state->regs_freed -= nir_schedule_dest_pressure(dest);
 
-static bool
-nir_schedule_regs_freed_reg_intrin(nir_instr *instr,
-                                   nir_schedule_regs_freed_state *state)
-{
-   if (instr->type != nir_instr_type_intrinsic)
-      return false;
-
-   nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
-   switch (intrin->intrinsic) {
-   case nir_intrinsic_decl_reg:
-      return true; /* Handled but nothing to do */
-
-   case nir_intrinsic_load_reg:
-   case nir_intrinsic_load_reg_indirect:
-      nir_schedule_regs_freed_load_reg(intrin, state);
-      return true;
-
-   case nir_intrinsic_store_reg:
-   case nir_intrinsic_store_reg_indirect:
-      nir_schedule_regs_freed_store_reg(intrin, state);
-      return true;
-
-   default:
-      return false;
-   }
+   return true;
 }
 
 static int
@@ -620,10 +597,11 @@ nir_schedule_regs_freed(nir_schedule_scoreboard *scoreboard, nir_schedule_node *
       .scoreboard = scoreboard,
    };
 
-   if (!nir_schedule_regs_freed_reg_intrin(n->instr, &state)) {
-      nir_foreach_src(n->instr, nir_schedule_regs_freed_src_cb, &state);
-      nir_foreach_def(n->instr, nir_schedule_regs_freed_def_cb, &state);
-   }
+   nir_foreach_src(n->instr, nir_schedule_regs_freed_src_cb, &state);
+
+   nir_foreach_ssa_def(n->instr, nir_schedule_regs_freed_def_cb, &state);
+
+   nir_foreach_dest(n->instr, nir_schedule_regs_freed_dest_cb, &state);
 
    return state.regs_freed;
 }
@@ -889,7 +867,7 @@ nir_schedule_mark_src_scheduled(nir_src *src, void *state)
    struct set *remaining_uses = nir_schedule_scoreboard_get_src(scoreboard, src);
 
    struct set_entry *entry = _mesa_set_search(remaining_uses,
-                                              nir_src_parent_instr(src));
+                                              src->parent_instr);
    if (entry) {
       /* Once we've used an SSA value in one instruction, bump the priority of
        * the other uses so the SSA value can get fully consumed.
@@ -899,14 +877,15 @@ nir_schedule_mark_src_scheduled(nir_src *src, void *state)
        * they're often folded as immediates into backend instructions and have
        * many unrelated instructions all referencing the same value (0).
        */
-      if (src->ssa->parent_instr->type != nir_instr_type_load_const) {
+      if (src->is_ssa &&
+          src->ssa->parent_instr->type != nir_instr_type_load_const) {
          nir_foreach_use(other_src, src->ssa) {
-            if (nir_src_parent_instr(other_src) == nir_src_parent_instr(src))
+            if (other_src->parent_instr == src->parent_instr)
                continue;
 
             nir_schedule_node *n =
                nir_schedule_get_node(scoreboard->instr_map,
-                                     nir_src_parent_instr(other_src));
+                                     other_src->parent_instr);
 
             if (n && !n->partially_evaluated_path) {
                if (debug) {
@@ -922,15 +901,15 @@ nir_schedule_mark_src_scheduled(nir_src *src, void *state)
    }
 
    nir_schedule_mark_use(scoreboard,
-                         (void *)src->ssa,
-                         nir_src_parent_instr(src),
+                         src->is_ssa ? (void *)src->ssa : (void *)src->reg.reg,
+                         src->parent_instr,
                          nir_schedule_src_pressure(src));
 
    return true;
 }
 
 static bool
-nir_schedule_mark_def_scheduled(nir_def *def, void *state)
+nir_schedule_mark_def_scheduled(nir_ssa_def *def, void *state)
 {
    nir_schedule_scoreboard *scoreboard = state;
 
@@ -940,77 +919,35 @@ nir_schedule_mark_def_scheduled(nir_def *def, void *state)
    return true;
 }
 
-static void
-nir_schedule_mark_load_reg_scheduled(nir_intrinsic_instr *load,
-                                     nir_schedule_scoreboard *scoreboard)
+static bool
+nir_schedule_mark_dest_scheduled(nir_dest *dest, void *state)
 {
-   assert(nir_is_load_reg(load));
-   nir_def *reg = load->src[0].ssa;
+   nir_schedule_scoreboard *scoreboard = state;
 
-   if (load->intrinsic == nir_intrinsic_load_reg_indirect)
-      nir_schedule_mark_src_scheduled(&load->src[1], scoreboard);
-
-   nir_schedule_mark_use(scoreboard, reg, &load->instr,
-                         nir_schedule_reg_pressure(reg));
-
-   nir_schedule_mark_def_scheduled(&load->def, scoreboard);
-}
-
-static void
-nir_schedule_mark_store_reg_scheduled(nir_intrinsic_instr *store,
-                                      nir_schedule_scoreboard *scoreboard)
-{
-   assert(nir_is_store_reg(store));
-   nir_def *reg = store->src[1].ssa;
-
-   nir_schedule_mark_src_scheduled(&store->src[0], scoreboard);
-   if (store->intrinsic == nir_intrinsic_store_reg_indirect)
-      nir_schedule_mark_src_scheduled(&store->src[2], scoreboard);
+   /* SSA defs were handled in nir_schedule_mark_def_scheduled()
+    */
+   if (dest->is_ssa)
+      return true;
 
    /* XXX: This is not actually accurate for regs -- the last use of a reg may
     * have a live interval that extends across control flow.  We should
     * calculate the live ranges of regs, and have scheduler nodes for the CF
     * nodes that also "use" the reg.
     */
-   nir_schedule_mark_use(scoreboard, reg, &store->instr,
-                         nir_schedule_reg_pressure(reg));
-}
+   nir_schedule_mark_use(scoreboard, dest->reg.reg,
+                         dest->reg.parent_instr,
+                         nir_schedule_dest_pressure(dest));
 
-static bool
-nir_schedule_mark_reg_intrin_scheduled(nir_instr *instr,
-                                       nir_schedule_scoreboard *scoreboard)
-{
-   if (instr->type != nir_instr_type_intrinsic)
-      return false;
-
-   nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
-   switch (intrin->intrinsic) {
-   case nir_intrinsic_decl_reg:
-      return true; /* Handled but nothing to do */
-
-   case nir_intrinsic_load_reg:
-   case nir_intrinsic_load_reg_indirect:
-      nir_schedule_mark_load_reg_scheduled(intrin, scoreboard);
-      return true;
-
-   case nir_intrinsic_store_reg:
-   case nir_intrinsic_store_reg_indirect:
-      nir_schedule_mark_store_reg_scheduled(intrin, scoreboard);
-      return true;
-
-   default:
-      return false;
-   }
+   return true;
 }
 
 static void
 nir_schedule_mark_node_scheduled(nir_schedule_scoreboard *scoreboard,
                                  nir_schedule_node *n)
 {
-   if (!nir_schedule_mark_reg_intrin_scheduled(n->instr, scoreboard)) {
-      nir_foreach_src(n->instr, nir_schedule_mark_src_scheduled, scoreboard);
-      nir_foreach_def(n->instr, nir_schedule_mark_def_scheduled, scoreboard);
-   }
+   nir_foreach_src(n->instr, nir_schedule_mark_src_scheduled, scoreboard);
+   nir_foreach_ssa_def(n->instr, nir_schedule_mark_def_scheduled, scoreboard);
+   nir_foreach_dest(n->instr, nir_schedule_mark_dest_scheduled, scoreboard);
 
    util_dynarray_foreach(&n->dag.edges, struct dag_edge, edge) {
       nir_schedule_node *child = (nir_schedule_node *)edge->child;
@@ -1075,7 +1012,7 @@ nir_schedule_get_delay(nir_schedule_scoreboard *scoreboard, nir_instr *instr)
    }
 
    switch (instr->type) {
-   case nir_instr_type_undef:
+   case nir_instr_type_ssa_undef:
    case nir_instr_type_load_const:
    case nir_instr_type_alu:
    case nir_instr_type_deref:
@@ -1087,10 +1024,6 @@ nir_schedule_get_delay(nir_schedule_scoreboard *scoreboard, nir_instr *instr)
 
    case nir_instr_type_intrinsic:
       switch (nir_instr_as_intrinsic(instr)->intrinsic) {
-      case nir_intrinsic_decl_reg:
-      case nir_intrinsic_load_reg:
-      case nir_intrinsic_store_reg:
-         return 0;
       case nir_intrinsic_load_ubo:
       case nir_intrinsic_load_ssbo:
       case nir_intrinsic_load_scratch:
@@ -1124,7 +1057,7 @@ nir_schedule_dag_max_delay_cb(struct dag_node *node, void *state)
    }
 
    n->max_delay = MAX2(n->max_delay, max_delay + n->delay);
-}
+ }
 
 static void
 nir_schedule_block(nir_schedule_scoreboard *scoreboard, nir_block *block)
@@ -1157,31 +1090,17 @@ nir_schedule_block(nir_schedule_scoreboard *scoreboard, nir_block *block)
 }
 
 static bool
-is_decl_reg(nir_instr *instr)
-{
-   if (instr->type != nir_instr_type_intrinsic)
-      return false;
-
-   nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
-   return intrin->intrinsic == nir_intrinsic_decl_reg;
-}
-
-static bool
-nir_schedule_ssa_def_init_scoreboard(nir_def *def, void *state)
+nir_schedule_ssa_def_init_scoreboard(nir_ssa_def *def, void *state)
 {
    nir_schedule_scoreboard *scoreboard = state;
    struct set *def_uses = _mesa_pointer_set_create(scoreboard);
 
    _mesa_hash_table_insert(scoreboard->remaining_uses, def, def_uses);
 
-   /* We don't consider decl_reg to be a use to avoid extending register live
-    * ranges any further than needed.
-    */
-   if (!is_decl_reg(def->parent_instr))
-      _mesa_set_add(def_uses, def->parent_instr);
+   _mesa_set_add(def_uses, def->parent_instr);
 
    nir_foreach_use(src, def) {
-      _mesa_set_add(def_uses, nir_src_parent_instr(src));
+      _mesa_set_add(def_uses, src->parent_instr);
    }
 
    /* XXX: Handle if uses */
@@ -1201,11 +1120,28 @@ nir_schedule_get_scoreboard(nir_shader *shader,
    scoreboard->options = options;
    scoreboard->pressure = 0;
 
-   nir_foreach_function_impl(impl, shader) {
-      nir_foreach_block(block, impl) {
+   nir_foreach_function(function, shader) {
+      nir_foreach_register(reg, &function->impl->registers) {
+         struct set *register_uses =
+            _mesa_pointer_set_create(scoreboard);
+
+         _mesa_hash_table_insert(scoreboard->remaining_uses, reg, register_uses);
+
+         nir_foreach_use(src, reg) {
+            _mesa_set_add(register_uses, src->parent_instr);
+         }
+
+         /* XXX: Handle if uses */
+
+         nir_foreach_def(dest, reg) {
+            _mesa_set_add(register_uses, dest->reg.parent_instr);
+         }
+      }
+
+      nir_foreach_block(block, function->impl) {
          nir_foreach_instr(instr, block) {
-            nir_foreach_def(instr, nir_schedule_ssa_def_init_scoreboard,
-                            scoreboard);
+            nir_foreach_ssa_def(instr, nir_schedule_ssa_def_init_scoreboard,
+                                scoreboard);
          }
 
          /* XXX: We're ignoring if uses, which may prioritize scheduling other
@@ -1233,7 +1169,7 @@ nir_schedule_validate_uses(nir_schedule_scoreboard *scoreboard)
       set_foreach(remaining_uses, instr_entry) {
          if (!any_uses) {
             fprintf(stderr, "Tracked uses remain after scheduling.  "
-                            "Affected instructions: \n");
+                    "Affected instructions: \n");
             any_uses = true;
          }
          nir_print_instr(instr_entry->key, stderr);
@@ -1269,8 +1205,11 @@ nir_schedule(nir_shader *shader,
       nir_print_shader(shader, stderr);
    }
 
-   nir_foreach_function_impl(impl, shader) {
-      nir_foreach_block(block, impl) {
+   nir_foreach_function(function, shader) {
+      if (!function->impl)
+         continue;
+
+      nir_foreach_block(block, function->impl) {
          nir_schedule_block(scoreboard, block);
       }
    }

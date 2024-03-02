@@ -6,11 +6,10 @@ class GM107LoweringPass : public NVC0LoweringPass
 {
 public:
    GM107LoweringPass(Program *p) : NVC0LoweringPass(p) {}
-protected:
-   using NVC0LoweringPass::visit;
-   bool visit(Instruction *) override;
+private:
+   virtual bool visit(Instruction *);
 
-   bool handleManualTXD(TexInstruction *) override;
+   virtual bool handleManualTXD(TexInstruction *);
    bool handleDFDX(Instruction *);
    bool handlePFETCH(Instruction *);
    bool handlePOPCNT(Instruction *);
@@ -19,10 +18,10 @@ protected:
 
 class GM107LegalizeSSA : public NVC0LegalizeSSA
 {
-protected:
-   using NVC0LegalizeSSA::visit;
-   bool visit(Instruction *) override;
+private:
+   virtual bool visit(Instruction *);
 
+protected:
    void handlePFETCH(Instruction *);
    void handleLOAD(Instruction *);
    void handleQUADON(Instruction *);

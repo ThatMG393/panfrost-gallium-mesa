@@ -190,10 +190,10 @@ VMwareVideoGetAttributes(const SVGAOverlayFormat format,    /* IN */
        break;
 
     default:
-       return false;
+       return FALSE;
     }
 
-    return true;
+    return TRUE;
 }
 
 #endif /* _SVGA_OVERLAY_H_ */

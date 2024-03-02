@@ -78,7 +78,6 @@
  * - transfer_map (only unsychronized buffer mappings)
  * - get_query_result (when threaded_query::flushed == true)
  * - create_stream_output_target
- * - get_sample_position
  *
  *
  * Transfer_map rules for buffer mappings
@@ -273,13 +272,6 @@ struct tc_unflushed_batch_token;
  */
 #define TC_MAX_SUBDATA_BYTES        320
 
-enum tc_call_id {
-#define CALL(name) TC_CALL_##name,
-#include "u_threaded_context_calls.h"
-#undef CALL
-   TC_NUM_CALLS,
-};
-
 enum tc_binding_type {
    TC_BINDING_VERTEX_BUFFER,
    TC_BINDING_STREAMOUT_BUFFER,
@@ -309,8 +301,6 @@ enum tc_binding_type {
    TC_BINDING_IMAGE_CS,
 };
 
-typedef uint16_t (*tc_execute)(struct pipe_context *pipe, void *call);
-
 typedef void (*tc_replace_buffer_storage_func)(struct pipe_context *ctx,
                                                struct pipe_resource *dst,
                                                struct pipe_resource *src,
@@ -325,6 +315,17 @@ typedef bool (*tc_is_resource_busy)(struct pipe_screen *screen,
 
 struct threaded_resource {
    struct pipe_resource b;
+
+   /* Pointer to the TC that first used this threaded_resource (buffer). This is used to
+    * allow TCs to determine whether they have been given a buffer that was created by a
+    * different TC, in which case all TCs have to disable busyness tracking and buffer
+    * replacement for that particular buffer.
+    * DO NOT DEREFERENCE. The only operation allowed on this pointer is equality-checking
+    * since it might be dangling if a buffer has been shared and its first_user has
+    * already been destroyed. The pointer is const void to discourage such disallowed usage.
+    * This is NULL if no TC has used this buffer yet.
+    */
+   const void *first_user;
 
    /* Since buffer invalidations are queued, we can't use the base resource
     * for unsychronized mappings. This points to the latest version of
@@ -353,16 +354,17 @@ struct threaded_resource {
     */
    struct util_range valid_buffer_range;
 
+   /* True if multiple threaded contexts have accessed this buffer.
+    * Disables non-multicontext-safe optimizations in TC.
+    * We can't just re-use is_shared for that purpose as that would confuse drivers.
+    */
+   bool used_by_multiple_contexts;
+
    /* Drivers are required to update this for shared resources and user
     * pointers. */
    bool is_shared;
    bool is_user_ptr;
    bool allow_cpu_storage;
-
-   /* internal tag for tc indicating which batch last touched this resource */
-   int8_t last_batch_usage;
-   /* for disambiguating last_batch_usage across batch cycles */
-   uint32_t batch_generation;
 
    /* Unique buffer ID. Drivers must set it to non-zero for buffers and it must
     * be unique. Textures must set 0. Low bits are used as a hash of the ID.
@@ -409,14 +411,8 @@ struct tc_call_base {
 #if !defined(NDEBUG) && TC_DEBUG >= 1
    uint32_t sentinel;
 #endif
-   uint16_t num_slots;
-   uint16_t call_id;
-};
-
-struct tc_draw_single {
-   struct tc_call_base base;
-   unsigned index_bias;
-   struct pipe_draw_info info;
+   ushort num_slots;
+   ushort call_id;
 };
 
 /**
@@ -448,11 +444,7 @@ struct tc_renderpass_info {
          bool zsbuf_invalidate : 1;
          /* whether a draw occurs */
          bool has_draw : 1;
-         /* whether a framebuffer resolve occurs on cbuf[0] */
-         bool has_resolve : 1;
-         /* whether queries are ended during this renderpass */
-         bool has_query_ends : 1;
-         uint8_t pad : 1;
+         uint8_t pad : 3;
          /* 32 bits offset */
          /* bitmask of color buffers using fbfetch */
          uint8_t cbuf_fbfetch;
@@ -475,6 +467,8 @@ struct tc_renderpass_info {
       /* zsbuf fb info is in data8[3] */
       uint8_t data8[8];
    };
+   /* determines whether the info can be "safely" read by drivers or if it may still be in use */
+   struct util_queue_fence ready;
 };
 
 static inline bool
@@ -488,23 +482,6 @@ tc_renderpass_info_is_zsbuf_used(const struct tc_renderpass_info *info)
           info->zsbuf_fbfetch;
 }
 
-/* if a driver ends a renderpass early for some reason,
- * this function can be called to reset any stored renderpass info
- * to a "safe" state that will avoid data loss on framebuffer attachments
- * 
- * note: ending a renderpass early if invalidate hints are applied will
- * result in data loss
- */
-static inline void
-tc_renderpass_info_reset(struct tc_renderpass_info *info)
-{
-   info->data32[0] = 0;
-   info->cbuf_load = BITFIELD_MASK(8);
-   info->zsbuf_clear_partial = true;
-   info->has_draw = true;
-   info->has_query_ends = true;
-}
-
 struct tc_batch {
    struct threaded_context *tc;
 #if !defined(NDEBUG) && TC_DEBUG >= 1
@@ -513,8 +490,7 @@ struct tc_batch {
    uint16_t num_total_slots;
    uint16_t buffer_list_index;
    /* the index of the current renderpass info for recording */
-   int16_t renderpass_info_idx;
-   uint16_t max_renderpass_info_idx;
+   int renderpass_info_idx;
 
    /* The last mergeable call that was added to this batch (i.e.
     * buffer subdata). This might be out-of-date or NULL.
@@ -524,7 +500,6 @@ struct tc_batch {
    struct util_queue_fence fence;
    /* whether the first set_framebuffer_state call has been seen by this batch */
    bool first_set_fb;
-   uint8_t batch_idx;
    struct tc_unflushed_batch_token *token;
    uint64_t slots[TC_SLOTS_PER_BATCH];
    struct util_dynarray renderpass_infos;
@@ -556,8 +531,6 @@ struct threaded_context_options {
 
    /* If true, create_fence_fd doesn't access the context in the driver. */
    bool unsynchronized_create_fence_fd;
-   /* if true, texture_subdata calls may occur unsynchronized with PIPE_MAP_UNSYNCHRONIZED */
-   bool unsynchronized_texture_subdata;
    /* if true, parse and track renderpass info during execution */
    bool parse_renderpass_info;
    /* callbacks for drivers to read their DSA/FS state and update renderpass info accordingly
@@ -565,12 +538,6 @@ struct threaded_context_options {
     */
    void (*dsa_parse)(void *state, struct tc_renderpass_info *info);
    void (*fs_parse)(void *state, struct tc_renderpass_info *info);
-};
-
-struct tc_vertex_buffers {
-   struct tc_call_base base;
-   uint8_t count;
-   struct pipe_vertex_buffer slot[0]; /* more will be allocated if needed */
 };
 
 struct threaded_context {
@@ -592,7 +559,6 @@ struct threaded_context {
    bool use_forced_staging_uploads;
    bool add_all_gfx_bindings_to_buffer_list;
    bool add_all_compute_bindings_to_buffer_list;
-   uint8_t num_queries_active;
 
    /* Estimation of how much vram/gtt bytes are mmap'd in
     * the current tc_batch.
@@ -619,26 +585,19 @@ struct threaded_context {
    bool seen_fb_state;
    /* whether a renderpass is currently active */
    bool in_renderpass;
-   /* whether a query has ended more recently than a draw */
-   bool query_ended;
-   /* whether pipe_context::flush has been called */
-   bool flushing;
 
    bool seen_streamout_buffers;
    bool seen_shader_buffers[PIPE_SHADER_TYPES];
    bool seen_image_buffers[PIPE_SHADER_TYPES];
    bool seen_sampler_buffers[PIPE_SHADER_TYPES];
 
-   int8_t last_completed;
-
-   uint8_t num_vertex_buffers;
+   unsigned max_vertex_buffers;
    unsigned max_const_buffers;
    unsigned max_shader_buffers;
    unsigned max_images;
    unsigned max_samplers;
-   unsigned nr_cbufs;
 
-   unsigned last, next, next_buf_list, batch_generation;
+   unsigned last, next, next_buf_list;
 
    /* The list fences that the driver should signal after the next flush.
     * If this is empty, all driver command buffers have been flushed.
@@ -660,16 +619,12 @@ struct threaded_context {
 
    struct tc_batch batch_slots[TC_MAX_BATCHES];
    struct tc_buffer_list buffer_lists[TC_MAX_BUFFER_LISTS];
-   /* the current framebuffer attachments; [PIPE_MAX_COLOR_BUFS] is the zsbuf */
+   /* the curent framebuffer attachments; [PIPE_MAX_COLOR_BUFS] is the zsbuf */
    struct pipe_resource *fb_resources[PIPE_MAX_COLOR_BUFS + 1];
-   struct pipe_resource *fb_resolve;
    /* accessed by main thread; preserves info across batches */
    struct tc_renderpass_info *renderpass_info_recording;
    /* accessed by driver thread */
    struct tc_renderpass_info *renderpass_info;
-
-   /* Callbacks that call pipe_context functions. */
-   tc_execute execute_func[TC_NUM_CALLS];
 };
 
 
@@ -679,18 +634,17 @@ struct pipe_context *threaded_context_unwrap_sync(struct pipe_context *pipe);
 void tc_driver_internal_flush_notify(struct threaded_context *tc);
 
 /** function for getting the current renderpass info:
- * - renderpass info is always non-null
+ * - renderpass info is always valid
+ * - set 'wait=true' when calling during normal execution
+ * - set 'wait=true' when calling from flush
  *
  * Rules:
- * - threaded context must have been created with parse_renderpass_info=true
- * - must be called after the driver receives a pipe_context::set_framebuffer_state callback
- * - must be called after the driver receives a non-deferrable pipe_context::flush callback
- * - renderpass info must not be used during any internal driver operations (e.g., u_blitter)
- * - must not be called before the driver receives its first pipe_context::set_framebuffer_state callback
- * - renderpass info is invalidated only for non-deferrable flushes and new framebuffer states
+ * 1) this must be called with 'wait=true' after the driver receives a pipe_context::set_framebuffer_state callback
+ * 2) this should be called with 'wait=false' when the driver receives a blocking pipe_context::flush call
+ * 3) this must not be used during any internal driver operations (e.g., u_blitter)
  */
 const struct tc_renderpass_info *
-threaded_context_get_renderpass_info(struct threaded_context *tc);
+threaded_context_get_renderpass_info(struct threaded_context *tc, bool wait);
 
 struct pipe_context *
 threaded_context_create(struct pipe_context *pipe,
@@ -706,12 +660,6 @@ void
 threaded_context_flush(struct pipe_context *_pipe,
                        struct tc_unflushed_batch_token *token,
                        bool prefer_async);
-
-struct tc_draw_single *
-tc_add_draw_single_call(struct pipe_context *_pipe,
-                        struct pipe_resource *index_bo);
-struct pipe_vertex_buffer *
-tc_add_set_vertex_buffers_call(struct pipe_context *_pipe, unsigned count);
 
 void
 tc_draw_vbo(struct pipe_context *_pipe, const struct pipe_draw_info *info,
@@ -795,44 +743,6 @@ tc_buffer_write(struct pipe_context *pipe,
                 const void *data)
 {
    pipe->buffer_subdata(pipe, buf, PIPE_MAP_WRITE | TC_TRANSFER_MAP_NO_INVALIDATE, offset, size, data);
-}
-
-static inline struct tc_buffer_list *
-tc_get_next_buffer_list(struct pipe_context *_pipe)
-{
-   struct threaded_context *tc = threaded_context(_pipe);
-
-   return &tc->buffer_lists[tc->next_buf_list];
-}
-
-/* Set a buffer binding and add it to the buffer list. */
-static inline void
-tc_bind_buffer(uint32_t *binding, struct tc_buffer_list *next, struct pipe_resource *buf)
-{
-   uint32_t id = threaded_resource(buf)->buffer_id_unique;
-   *binding = id;
-   BITSET_SET(next->buffer_list, id & TC_BUFFER_ID_MASK);
-}
-
-/* Reset a buffer binding. */
-static inline void
-tc_unbind_buffer(uint32_t *binding)
-{
-   *binding = 0;
-}
-
-static inline void
-tc_track_vertex_buffer(struct pipe_context *_pipe, unsigned index,
-                         struct pipe_resource *buf,
-                         struct tc_buffer_list *next_buffer_list)
-{
-   struct threaded_context *tc = threaded_context(_pipe);
-
-   if (buf) {
-      tc_bind_buffer(&tc->vertex_buffers[index], next_buffer_list, buf);
-   } else {
-      tc_unbind_buffer(&tc->vertex_buffers[index]);
-   }
 }
 
 #ifdef __cplusplus

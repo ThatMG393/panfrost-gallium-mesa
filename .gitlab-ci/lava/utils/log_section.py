@@ -11,7 +11,6 @@ from lava.utils.gitlab_section import GitlabSection
 class LogSectionType(Enum):
     UNKNOWN = auto()
     LAVA_BOOT = auto()
-    TEST_DUT_SUITE = auto()
     TEST_SUITE = auto()
     TEST_CASE = auto()
     LAVA_POST_PROCESSING = auto()
@@ -25,11 +24,7 @@ class LogSectionType(Enum):
 # the enqueue delay.
 LAVA_BOOT_TIMEOUT = int(getenv("LAVA_BOOT_TIMEOUT", 9))
 
-# Test DUT suite phase is where the initialization happens in DUT, not on docker.
-# The device will be listening to SSH session until the end of the job.
-LAVA_TEST_DUT_SUITE_TIMEOUT = int(getenv("JOB_TIMEOUT", 60))
-
-# Test suite phase is where the initialization happens on docker.
+# Test suite phase is where the initialization happens.
 LAVA_TEST_SUITE_TIMEOUT = int(getenv("LAVA_TEST_SUITE_TIMEOUT", 5))
 
 # Test cases may take a long time, this script has no right to interrupt
@@ -44,7 +39,6 @@ LAVA_POST_PROCESSING_TIMEOUT = int(getenv("LAVA_POST_PROCESSING_TIMEOUT", 5))
 FALLBACK_GITLAB_SECTION_TIMEOUT = timedelta(minutes=10)
 DEFAULT_GITLAB_SECTION_TIMEOUTS = {
     LogSectionType.LAVA_BOOT: timedelta(minutes=LAVA_BOOT_TIMEOUT),
-    LogSectionType.TEST_DUT_SUITE: timedelta(minutes=LAVA_TEST_DUT_SUITE_TIMEOUT),
     LogSectionType.TEST_SUITE: timedelta(minutes=LAVA_TEST_SUITE_TIMEOUT),
     LogSectionType.TEST_CASE: timedelta(minutes=LAVA_TEST_CASE_TIMEOUT),
     LogSectionType.LAVA_POST_PROCESSING: timedelta(
@@ -89,17 +83,10 @@ LOG_SECTIONS = (
         section_type=LogSectionType.TEST_CASE,
     ),
     LogSection(
-        regex=re.compile(r"<?STARTRUN>? ([^>]*ssh.*server.*)"),
-        levels=("debug"),
-        section_id="{}",
-        section_header="[dut] test_suite {}",
-        section_type=LogSectionType.TEST_DUT_SUITE,
-    ),
-    LogSection(
         regex=re.compile(r"<?STARTRUN>? ([^>]*)"),
-        levels=("debug"),
+        levels=("target", "debug"),
         section_id="{}",
-        section_header="[docker] test_suite {}",
+        section_header="test_suite {}",
         section_type=LogSectionType.TEST_SUITE,
     ),
     LogSection(

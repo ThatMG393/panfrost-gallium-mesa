@@ -171,7 +171,7 @@ xa_tracker_create(int drm_fd)
     if (!xa)
 	return NULL;
 
-    if (pipe_loader_drm_probe_fd(&xa->dev, drm_fd, false))
+    if (pipe_loader_drm_probe_fd(&xa->dev, drm_fd))
 	xa->screen = pipe_loader_create_screen(xa->dev);
 
     if (!xa->screen)
@@ -555,7 +555,7 @@ xa_surface_handle(struct xa_surface *srf,
     struct winsys_handle whandle;
 
     struct pipe_screen *screen = srf->xa->screen;
-    bool res;
+    boolean res;
 
     memset(&whandle, 0, sizeof(whandle));
     whandle.type = handle_type(type);

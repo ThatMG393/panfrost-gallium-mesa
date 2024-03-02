@@ -31,8 +31,6 @@
 #include "etnaviv_asm.h"
 #include "etnaviv_compiler.h"
 #include "util/compiler.h"
-#include "util/log.h"
-#include "util/macros.h"
 
 struct etna_compile {
    nir_shader *nir;
@@ -62,70 +60,15 @@ struct etna_compile {
 };
 
 #define compile_error(ctx, args...) ({ \
-   mesa_loge(args); \
+   printf(args); \
    ctx->error = true; \
-   abort(); \
+   assert(0); \
 })
 
-enum etna_pass_flags {
-   BYPASS_DST = BITFIELD_BIT(0),
-   BYPASS_SRC = BITFIELD_BIT(1),
-
-   /* source modifier */
-   SRC0_MOD_NEG = BITFIELD_BIT(2),
-   SRC1_MOD_NEG = BITFIELD_BIT(3),
-   SRC2_MOD_NEG = BITFIELD_BIT(4),
-   SRC0_MOD_ABS = BITFIELD_BIT(5),
-   SRC1_MOD_ABS = BITFIELD_BIT(6),
-   SRC2_MOD_ABS = BITFIELD_BIT(7),
+enum {
+   BYPASS_DST = 1,
+   BYPASS_SRC = 2,
 };
-
-#define PASS_FLAGS_IS_DEAD_MASK     BITFIELD_RANGE(0, 2)
-#define PASS_FLAGS_SRC_MOD_NEG_MASK BITFIELD_RANGE(2, 3)
-#define PASS_FLAGS_SRC_MOD_ABS_MASK BITFIELD_RANGE(5, 3)
-
-static_assert(PASS_FLAGS_IS_DEAD_MASK == (BYPASS_DST | BYPASS_SRC), "is_dead_mask is wrong");
-static_assert(PASS_FLAGS_SRC_MOD_NEG_MASK == (SRC0_MOD_NEG | SRC1_MOD_NEG | SRC2_MOD_NEG), "src_mod_neg_mask is wrong");
-static_assert(PASS_FLAGS_SRC_MOD_ABS_MASK == (SRC0_MOD_ABS | SRC1_MOD_ABS | SRC2_MOD_ABS), "src_mod_abs_mask is wrong");
-
-static inline bool is_dead_instruction(nir_instr *instr)
-{
-   return instr->pass_flags & PASS_FLAGS_IS_DEAD_MASK;
-}
-
-static inline void set_src_mod_abs(nir_instr *instr, unsigned idx)
-{
-   assert(idx < 3);
-   instr->pass_flags |= (SRC0_MOD_ABS << idx);
-}
-
-static inline void set_src_mod_neg(nir_instr *instr, unsigned idx)
-{
-   assert(idx < 3);
-   instr->pass_flags |= (SRC0_MOD_NEG << idx);
-}
-
-static inline void toggle_src_mod_neg(nir_instr *instr, unsigned idx)
-{
-   assert(idx < 3);
-   instr->pass_flags ^= (SRC0_MOD_NEG << idx);
-}
-
-static inline bool is_src_mod_abs(nir_instr *instr, unsigned idx)
-{
-   if (idx < 3)
-      return instr->pass_flags & (SRC0_MOD_ABS << idx);
-
-   return false;
-}
-
-static inline bool is_src_mod_neg(nir_instr *instr, unsigned idx)
-{
-   if (idx < 3)
-      return instr->pass_flags & (SRC0_MOD_NEG << idx);
-
-   return false;
-}
 
 static inline bool is_sysval(nir_instr *instr)
 {
@@ -141,49 +84,30 @@ static inline bool is_sysval(nir_instr *instr)
 static inline unsigned
 src_index(nir_function_impl *impl, nir_src *src)
 {
-   nir_intrinsic_instr *load = nir_load_reg_for_def(src->ssa);
-
-   if (load) {
-      nir_def *reg = load->src[0].ssa;
-      ASSERTED nir_intrinsic_instr *decl = nir_reg_get_decl(reg);
-      assert(nir_intrinsic_base(load) == 0);
-      assert(nir_intrinsic_num_array_elems(decl) == 0);
-
-      return reg->index;
-   }
-
-   return src->ssa->index;
+   return src->is_ssa ? src->ssa->index : (src->reg.reg->index + impl->ssa_alloc);
 }
 
-/* get unique ssa/reg index for nir_def */
+/* get unique ssa/reg index for nir_dest */
 static inline unsigned
-def_index(nir_function_impl *impl, nir_def *def)
+dest_index(nir_function_impl *impl, nir_dest *dest)
 {
-   nir_intrinsic_instr *store = nir_store_reg_for_def(def);
-
-   if (store) {
-      nir_def *reg = store->src[1].ssa;
-      ASSERTED nir_intrinsic_instr *decl = nir_reg_get_decl(reg);
-      assert(nir_intrinsic_base(store) == 0);
-      assert(nir_intrinsic_num_array_elems(decl) == 0);
-
-      return reg->index;
-   }
-
-   return def->index;
+   return dest->is_ssa ? dest->ssa.index : (dest->reg.reg->index + impl->ssa_alloc);
 }
 
 static inline void
-update_swiz_mask(nir_alu_instr *alu, nir_def *def, unsigned *swiz, unsigned *mask)
+update_swiz_mask(nir_alu_instr *alu, nir_dest *dest, unsigned *swiz, unsigned *mask)
 {
    if (!swiz)
       return;
 
-   bool is_vec = def != NULL;
+   bool is_vec = dest != NULL;
    unsigned swizzle = 0, write_mask = 0;
-   for (unsigned i = 0; i < alu->def.num_components; i++) {
+   for (unsigned i = 0; i < 4; i++) {
+      /* channel not written */
+      if (!(alu->dest.write_mask & (1 << i)))
+         continue;
       /* src is different (only check for vecN) */
-      if (is_vec && alu->src[i].src.ssa != def)
+      if (is_vec && alu->src[i].src.ssa != &dest->ssa)
          continue;
 
       unsigned src_swiz = is_vec ? alu->src[i].swizzle[0] : alu->src[0].swizzle[i];
@@ -196,21 +120,21 @@ update_swiz_mask(nir_alu_instr *alu, nir_def *def, unsigned *swiz, unsigned *mas
    *mask = write_mask;
 }
 
-static nir_def *
-real_def(nir_def *def, unsigned *swiz, unsigned *mask)
+static nir_dest *
+real_dest(nir_dest *dest, unsigned *swiz, unsigned *mask)
 {
-   if (!def)
-      return def;
+   if (!dest || !dest->is_ssa)
+      return dest;
 
-   bool can_bypass_src = !nir_def_used_by_if(def);
-   nir_instr *p_instr = def->parent_instr;
+   bool can_bypass_src = !list_length(&dest->ssa.if_uses);
+   nir_instr *p_instr = dest->ssa.parent_instr;
 
    /* if used by a vecN, the "real" destination becomes the vecN destination
     * lower_alu guarantees that values used by a vecN are only used by that vecN
     * we can apply the same logic to movs in a some cases too
     */
-   nir_foreach_use(use_src, def) {
-      nir_instr *instr = nir_src_parent_instr(use_src);
+   nir_foreach_use(use_src, &dest->ssa) {
+      nir_instr *instr = use_src->parent_instr;
 
       /* src bypass check: for now only deal with tex src mov case
        * note: for alu don't bypass mov for multiple uniform sources
@@ -236,21 +160,21 @@ real_def(nir_def *def, unsigned *swiz, unsigned *mask)
       case nir_op_vec2:
       case nir_op_vec3:
       case nir_op_vec4:
-         assert(!nir_def_used_by_if(def));
-         nir_foreach_use(use_src, def)
-            assert(nir_src_parent_instr(use_src) == instr);
+         assert(list_length(&dest->ssa.if_uses) == 0);
+         nir_foreach_use(use_src, &dest->ssa)
+            assert(use_src->parent_instr == instr);
 
-         update_swiz_mask(alu, def, swiz, mask);
+         update_swiz_mask(alu, dest, swiz, mask);
          break;
       case nir_op_mov: {
-         switch (def->parent_instr->type) {
+         switch (dest->ssa.parent_instr->type) {
          case nir_instr_type_alu:
          case nir_instr_type_tex:
             break;
          default:
             continue;
          }
-         if (nir_def_used_by_if(def) || list_length(&def->uses) > 1)
+         if (list_length(&dest->ssa.if_uses) || list_length(&dest->ssa.uses) > 1)
             continue;
 
          update_swiz_mask(alu, NULL, swiz, mask);
@@ -262,7 +186,7 @@ real_def(nir_def *def, unsigned *swiz, unsigned *mask)
 
       assert(!(instr->pass_flags & BYPASS_SRC));
       instr->pass_flags |= BYPASS_DST;
-      return real_def(&alu->def, swiz, mask);
+      return real_dest(&alu->dest.dest, swiz, mask);
    }
 
    if (can_bypass_src && !(p_instr->pass_flags & BYPASS_DST)) {
@@ -270,21 +194,21 @@ real_def(nir_def *def, unsigned *swiz, unsigned *mask)
       return NULL;
    }
 
-   return def;
+   return dest;
 }
 
-/* if instruction dest needs a register, return nir_def for it */
-static inline nir_def *
-def_for_instr(nir_instr *instr)
+/* if instruction dest needs a register, return nir_dest for it */
+static inline nir_dest *
+dest_for_instr(nir_instr *instr)
 {
-   nir_def *def = NULL;
+   nir_dest *dest = NULL;
 
    switch (instr->type) {
    case nir_instr_type_alu:
-      def = &nir_instr_as_alu(instr)->def;
+      dest = &nir_instr_as_alu(instr)->dest.dest;
       break;
    case nir_instr_type_tex:
-      def = &nir_instr_as_tex(instr)->def;
+      dest = &nir_instr_as_tex(instr)->dest;
       break;
    case nir_instr_type_intrinsic: {
       nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
@@ -292,21 +216,20 @@ def_for_instr(nir_instr *instr)
           intr->intrinsic == nir_intrinsic_load_ubo ||
           intr->intrinsic == nir_intrinsic_load_input ||
           intr->intrinsic == nir_intrinsic_load_instance_id ||
-          intr->intrinsic == nir_intrinsic_load_texture_scale ||
-          intr->intrinsic == nir_intrinsic_load_texture_size_etna)
-         def = &intr->def;
+          intr->intrinsic == nir_intrinsic_load_texture_rect_scaling)
+         dest = &intr->dest;
    } break;
    case nir_instr_type_deref:
       return NULL;
    default:
       break;
    }
-   return real_def(def, NULL, NULL);
+   return real_dest(dest, NULL, NULL);
 }
 
 struct live_def {
    nir_instr *instr;
-   nir_def *def; /* cached def_for_instr */
+   nir_dest *dest; /* cached dest_for_instr */
    unsigned live_start, live_end; /* live range */
 };
 

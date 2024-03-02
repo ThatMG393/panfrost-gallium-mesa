@@ -22,8 +22,6 @@ files_main_test = files(
   'enum_strings.cpp',
   'disable_windows_include.c',
 )
-# disable_windows_include.c includes this generated header.
-files_main_test += main_marshal_generated_h
 link_main_test = []
 
 if with_shared_glapi
@@ -47,5 +45,5 @@ test(
     link_with : [libmesa, libgallium, link_main_test],
   ),
   suite : ['mesa'],
-  protocol : 'gtest',
+  protocol : gtest_test_protocol,
 )

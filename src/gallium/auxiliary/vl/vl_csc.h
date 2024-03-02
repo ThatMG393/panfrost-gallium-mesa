@@ -28,7 +28,7 @@
 #ifndef vl_csc_h
 #define vl_csc_h
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 
 typedef float vl_csc_matrix[3][4];
 
@@ -45,7 +45,6 @@ enum VL_CSC_COLOR_STANDARD
    VL_CSC_COLOR_STANDARD_IDENTITY,
    VL_CSC_COLOR_STANDARD_BT_601,
    VL_CSC_COLOR_STANDARD_BT_709,
-   VL_CSC_COLOR_STANDARD_BT_709_FULL,
    VL_CSC_COLOR_STANDARD_SMPTE_240M,
    VL_CSC_COLOR_STANDARD_BT_709_REV
 };

@@ -48,7 +48,7 @@
 
 /* Translate floating point value to 1.15 unsigned fixed-point.
  */
-static inline uint16_t
+static inline ushort
 float_to_ufixed_1_15(float f)
 {
    return CLAMP((unsigned)(f * (float)FIXED15_ONE), 0, FIXED15_ONE);
@@ -120,11 +120,11 @@ lp_linear_init_noop_interp(struct lp_linear_interp *interp)
 }
 
 
-bool
+boolean
 lp_linear_init_interp(struct lp_linear_interp *interp,
                       int x, int y, int width, int height,
                       unsigned usage_mask,
-                      bool perspective,
+                      boolean perspective,
                       float oow,
                       const float *a0,
                       const float *dadx,
@@ -225,22 +225,22 @@ lp_linear_init_interp(struct lp_linear_interp *interp,
       interp->base.fetch = interp_0_8;
    }
 
-   return true;
+   return TRUE;
 }
 
 #else //DETECT_ARCH_SSE
 
-bool
+boolean
 lp_linear_init_interp(struct lp_linear_interp *interp,
                       int x, int y, int width, int height,
                       unsigned usage_mask,
-                      bool perspective,
+                      boolean perspective,
                       float oow,
                       const float *a0,
                       const float *dadx,
                       const float *dady)
 {
-   return false;
+   return FALSE;
 }
 
 #endif //DETECT_ARCH_SSE

@@ -27,21 +27,21 @@
 
 #include "util/u_debug.h"
 #include "util/u_memory.h"
+#include "util/u_prim.h"
 #include "cso_cache/cso_hash.h"
 #include "tgsi_sanity.h"
 #include "tgsi_info.h"
 #include "tgsi_iterate.h"
 
-#include <stdint.h>
 
-DEBUG_GET_ONCE_BOOL_OPTION(print_sanity, "TGSI_PRINT_SANITY", false)
+DEBUG_GET_ONCE_BOOL_OPTION(print_sanity, "TGSI_PRINT_SANITY", FALSE)
 
 
 typedef struct {
-   uint32_t file : 28;
+   uint file : 28;
    /* max 2 dimensions */
-   uint32_t dimensions : 4;
-   unsigned indices[2];
+   uint dimensions : 4;
+   uint indices[2];
 } scan_register;
 
 struct sanity_check_ctx
@@ -51,16 +51,16 @@ struct sanity_check_ctx
    struct cso_hash regs_used;
    struct cso_hash regs_ind_used;
 
-   unsigned num_imms;
-   unsigned num_instructions;
-   unsigned index_of_END;
+   uint num_imms;
+   uint num_instructions;
+   uint index_of_END;
 
-   unsigned errors;
-   unsigned warnings;
-   unsigned implied_array_size;
-   unsigned implied_out_array_size;
+   uint errors;
+   uint warnings;
+   uint implied_array_size;
+   uint implied_out_array_size;
 
-   bool print;
+   boolean print;
 };
 
 static inline unsigned
@@ -75,7 +75,7 @@ scan_register_key(const scan_register *reg)
 
 static void
 fill_scan_register1d(scan_register *reg,
-                     enum tgsi_file_type file, unsigned index)
+                     uint file, uint index)
 {
    reg->file = file;
    reg->dimensions = 1;
@@ -85,8 +85,7 @@ fill_scan_register1d(scan_register *reg,
 
 static void
 fill_scan_register2d(scan_register *reg,
-                     enum tgsi_file_type file,
-                     unsigned index1, unsigned index2)
+                     uint file, uint index1, uint index2)
 {
    reg->file = file;
    reg->dimensions = 2;
@@ -186,19 +185,19 @@ report_warning(
    ctx->warnings++;
 }
 
-static bool
+static boolean
 check_file_name(
    struct sanity_check_ctx *ctx,
-   enum tgsi_file_type file )
+   uint file )
 {
    if (file <= TGSI_FILE_NULL || file >= TGSI_FILE_COUNT) {
       report_error( ctx, "(%u): Invalid register file name", file );
-      return false;
+      return FALSE;
    }
-   return true;
+   return TRUE;
 }
 
-static bool
+static boolean
 is_register_declared(
    struct sanity_check_ctx *ctx,
    const scan_register *reg)
@@ -206,13 +205,13 @@ is_register_declared(
    void *data = cso_hash_find_data_from_template(
       &ctx->regs_decl, scan_register_key(reg),
       (void*)reg, sizeof(scan_register));
-   return  data ? true : false;
+   return  data ? TRUE : FALSE;
 }
 
-static bool
+static boolean
 is_any_register_declared(
    struct sanity_check_ctx *ctx,
-   enum tgsi_file_type file )
+   uint file )
 {
    struct cso_hash_iter iter =
       cso_hash_first_node(&ctx->regs_decl);
@@ -220,14 +219,14 @@ is_any_register_declared(
    while (!cso_hash_iter_is_null(iter)) {
       scan_register *reg = (scan_register *)cso_hash_iter_data(iter);
       if (reg->file == file)
-         return true;
+         return TRUE;
       iter = cso_hash_iter_next(iter);
    }
 
-   return false;
+   return FALSE;
 }
 
-static bool
+static boolean
 is_register_used(
    struct sanity_check_ctx *ctx,
    scan_register *reg)
@@ -235,11 +234,11 @@ is_register_used(
    void *data = cso_hash_find_data_from_template(
       &ctx->regs_used, scan_register_key(reg),
       reg, sizeof(scan_register));
-   return  data ? true : false;
+   return  data ? TRUE : FALSE;
 }
 
 
-static bool
+static boolean
 is_ind_register_used(
    struct sanity_check_ctx *ctx,
    scan_register *reg)
@@ -261,16 +260,16 @@ static const char *file_names[TGSI_FILE_COUNT] =
    "RES"
 };
 
-static bool
+static boolean
 check_register_usage(
    struct sanity_check_ctx *ctx,
    scan_register *reg,
    const char *name,
-   bool indirect_access )
+   boolean indirect_access )
 {
    if (!check_file_name( ctx, reg->file )) {
       FREE(reg);
-      return false;
+      return FALSE;
    }
 
    if (indirect_access) {
@@ -301,17 +300,17 @@ check_register_usage(
       else
          FREE(reg);
    }
-   return true;
+   return TRUE;
 }
 
-static bool
+static boolean
 iter_instruction(
    struct tgsi_iterate_context *iter,
    struct tgsi_full_instruction *inst )
 {
    struct sanity_check_ctx *ctx = (struct sanity_check_ctx *) iter;
    const struct tgsi_opcode_info *info;
-   unsigned i;
+   uint i;
 
    if (inst->Instruction.Opcode == TGSI_OPCODE_END) {
       if (ctx->index_of_END != ~0u) {
@@ -323,7 +322,7 @@ iter_instruction(
    info = tgsi_get_opcode_info( inst->Instruction.Opcode );
    if (!info) {
       report_error( ctx, "(%u): Invalid instruction opcode", inst->Instruction.Opcode );
-      return true;
+      return TRUE;
    }
 
    if (info->num_dst != inst->Instruction.NumDstRegs) {
@@ -344,7 +343,7 @@ iter_instruction(
          ctx,
          reg,
          "destination",
-         false );
+         FALSE );
       if (!inst->Dst[i].Register.WriteMask) {
          report_error(ctx, "Destination register has empty writemask");
       }
@@ -355,7 +354,7 @@ iter_instruction(
          ctx,
          reg,
          "source",
-         (bool)inst->Src[i].Register.Indirect );
+         (boolean)inst->Src[i].Register.Indirect );
       if (inst->Src[i].Register.Indirect) {
          scan_register *ind_reg = MALLOC(sizeof(scan_register));
 
@@ -366,13 +365,13 @@ iter_instruction(
             ctx,
             ind_reg,
             "indirect",
-            false );
+            FALSE );
       }
    }
 
    ctx->num_instructions++;
 
-   return true;
+   return TRUE;
 }
 
 static void
@@ -388,14 +387,14 @@ check_and_declare(struct sanity_check_ctx *ctx,
 }
 
 
-static bool
+static boolean
 iter_declaration(
    struct tgsi_iterate_context *iter,
    struct tgsi_full_declaration *decl )
 {
    struct sanity_check_ctx *ctx = (struct sanity_check_ctx *) iter;
-   enum tgsi_file_type file;
-   unsigned i;
+   uint file;
+   uint i;
 
    /* No declarations allowed after the first instruction.
     */
@@ -407,19 +406,19 @@ iter_declaration(
     */
    file = decl->Declaration.File;
    if (!check_file_name( ctx, file ))
-      return true;
+      return TRUE;
    for (i = decl->Range.First; i <= decl->Range.Last; i++) {
       /* declared TGSI_FILE_INPUT's for geometry and tessellation
        * have an implied second dimension */
-      unsigned processor = ctx->iter.processor.Processor;
-      unsigned patch = decl->Semantic.Name == TGSI_SEMANTIC_PATCH ||
+      uint processor = ctx->iter.processor.Processor;
+      uint patch = decl->Semantic.Name == TGSI_SEMANTIC_PATCH ||
          decl->Semantic.Name == TGSI_SEMANTIC_TESSOUTER ||
          decl->Semantic.Name == TGSI_SEMANTIC_TESSINNER;
       if (file == TGSI_FILE_INPUT && !patch && (
                 processor == PIPE_SHADER_GEOMETRY ||
                 processor == PIPE_SHADER_TESS_CTRL ||
                 processor == PIPE_SHADER_TESS_EVAL)) {
-         unsigned vert;
+         uint vert;
          for (vert = 0; vert < ctx->implied_array_size; ++vert) {
             scan_register *reg = MALLOC(sizeof(scan_register));
             fill_scan_register2d(reg, file, i, vert);
@@ -427,7 +426,7 @@ iter_declaration(
          }
       } else if (file == TGSI_FILE_OUTPUT && !patch &&
                  processor == PIPE_SHADER_TESS_CTRL) {
-         unsigned vert;
+         uint vert;
          for (vert = 0; vert < ctx->implied_out_array_size; ++vert) {
             scan_register *reg = MALLOC(sizeof(scan_register));
             fill_scan_register2d(reg, file, i, vert);
@@ -444,10 +443,10 @@ iter_declaration(
       }
    }
 
-   return true;
+   return TRUE;
 }
 
-static bool
+static boolean
 iter_immediate(
    struct tgsi_iterate_context *iter,
    struct tgsi_full_immediate *imm )
@@ -473,14 +472,14 @@ iter_immediate(
        imm->Immediate.DataType != TGSI_IMM_UINT32 &&
        imm->Immediate.DataType != TGSI_IMM_INT32) {
       report_error( ctx, "(%u): Invalid immediate data type", imm->Immediate.DataType );
-      return true;
+      return TRUE;
    }
 
-   return true;
+   return TRUE;
 }
 
 
-static bool
+static boolean
 iter_property(
    struct tgsi_iterate_context *iter,
    struct tgsi_full_property *prop )
@@ -489,25 +488,25 @@ iter_property(
 
    if (iter->processor.Processor == PIPE_SHADER_GEOMETRY &&
        prop->Property.PropertyName == TGSI_PROPERTY_GS_INPUT_PRIM) {
-      ctx->implied_array_size = mesa_vertices_per_prim(prop->u[0].Data);
+      ctx->implied_array_size = u_vertices_per_prim(prop->u[0].Data);
    }
    if (iter->processor.Processor == PIPE_SHADER_TESS_CTRL &&
        prop->Property.PropertyName == TGSI_PROPERTY_TCS_VERTICES_OUT)
       ctx->implied_out_array_size = prop->u[0].Data;
-   return true;
+   return TRUE;
 }
 
-static bool
+static boolean
 prolog(struct tgsi_iterate_context *iter)
 {
    struct sanity_check_ctx *ctx = (struct sanity_check_ctx *) iter;
    if (iter->processor.Processor == PIPE_SHADER_TESS_CTRL ||
        iter->processor.Processor == PIPE_SHADER_TESS_EVAL)
       ctx->implied_array_size = 32;
-   return true;
+   return TRUE;
 }
 
-static bool
+static boolean
 epilog(
    struct tgsi_iterate_context *iter )
 {
@@ -540,7 +539,7 @@ epilog(
    if (ctx->errors || ctx->warnings)
       debug_printf( "%u errors, %u warnings\n", ctx->errors, ctx->warnings );
 
-   return true;
+   return TRUE;
 }
 
 static void
@@ -556,12 +555,12 @@ regs_hash_destroy(struct cso_hash *hash)
    cso_hash_deinit(hash);
 }
 
-bool
+boolean
 tgsi_sanity_check(
    const struct tgsi_token *tokens )
 {
    struct sanity_check_ctx ctx;
-   bool retval;
+   boolean retval;
 
    ctx.iter.prolog = prolog;
    ctx.iter.iterate_instruction = iter_instruction;
@@ -587,8 +586,8 @@ tgsi_sanity_check(
    regs_hash_destroy(&ctx.regs_decl);
    regs_hash_destroy(&ctx.regs_used);
    regs_hash_destroy(&ctx.regs_ind_used);
-   if (retval == false)
-      return false;
+   if (retval == FALSE)
+      return FALSE;
 
    return ctx.errors == 0;
 }

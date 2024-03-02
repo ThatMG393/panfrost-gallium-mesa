@@ -82,7 +82,7 @@ _mesa_image_row_stride( const struct gl_pixelstore_attrib *packing,
                         GLint width, GLenum format, GLenum type );
 
 
-extern intptr_t
+extern GLint
 _mesa_image_image_stride( const struct gl_pixelstore_attrib *packing,
                           GLint width, GLint height,
                           GLenum format, GLenum type );

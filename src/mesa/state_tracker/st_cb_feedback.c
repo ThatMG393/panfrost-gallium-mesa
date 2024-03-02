@@ -86,11 +86,11 @@ static void
 feedback_vertex(struct gl_context *ctx, const struct draw_context *draw,
                 const struct vertex_header *v)
 {
-   struct gl_vertex_program *stvp =
-      (struct gl_vertex_program *)ctx->VertexProgram._Current;
+   const struct st_context *st = st_context(ctx);
+   struct gl_vertex_program *stvp = (struct gl_vertex_program *)st->vp;
    GLfloat win[4];
    const GLfloat *color, *texcoord;
-   uint8_t slot;
+   ubyte slot;
 
    win[0] = v->data[0][0];
    if (_mesa_fb_orientation(ctx->DrawBuffer) == Y_0_TOP)
@@ -313,10 +313,10 @@ st_RenderMode(struct gl_context *ctx, GLenum newMode )
       ctx->Driver.DrawGalliumMultiMode = st_feedback_draw_vbo_multi_mode;
       /* need to generate/use a vertex program that emits pos/color/tex */
       if (vp)
-         ctx->NewDriverState |= ST_NEW_VERTEX_PROGRAM(ctx, vp);
+         st->dirty |= ST_NEW_VERTEX_PROGRAM(st, vp);
    }
 
    /* Restore geometry shader states when leaving GL_SELECT mode. */
    if (ctx->RenderMode == GL_SELECT && ctx->Const.HardwareAcceleratedSelect)
-      ctx->NewDriverState |= ST_NEW_GS_SSBOS | ST_NEW_GS_CONSTANTS | ST_NEW_GS_STATE;
+      st->dirty |= ST_NEW_GS_SSBOS | ST_NEW_GS_CONSTANTS | ST_NEW_GS_STATE;
 }

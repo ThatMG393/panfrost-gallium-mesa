@@ -37,7 +37,7 @@
 #define LP_BLD_PACK_H
 
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 
 #include "gallivm/lp_bld.h"
 
@@ -137,7 +137,7 @@ LLVMValueRef
 lp_build_pack(struct gallivm_state *gallivm,
               struct lp_type src_type,
               struct lp_type dst_type,
-              bool clamped,
+              boolean clamped,
               const LLVMValueRef *src, unsigned num_srcs);
 
 

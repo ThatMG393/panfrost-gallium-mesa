@@ -41,8 +41,7 @@
 static void
 begin_blit(struct svga_context *svga)
 {
-   util_blitter_save_vertex_buffers(svga->blitter, svga->curr.vb,
-                                    svga->curr.num_vertex_buffers);
+   util_blitter_save_vertex_buffer_slot(svga->blitter, svga->curr.vb);
    util_blitter_save_vertex_elements(svga->blitter, (void*)svga->curr.velems);
    util_blitter_save_vertex_shader(svga->blitter, svga->curr.vs);
    util_blitter_save_geometry_shader(svga->blitter, svga->curr.gs);
@@ -90,7 +89,7 @@ clear_buffers_with_quad(struct svga_context *svga,
 /**
  * Check if any of the color buffers are integer buffers.
  */
-static bool
+static boolean
 is_integer_target(struct pipe_framebuffer_state *fb, unsigned buffers)
 {
    unsigned i;
@@ -99,10 +98,10 @@ is_integer_target(struct pipe_framebuffer_state *fb, unsigned buffers)
       if ((buffers & (PIPE_CLEAR_COLOR0 << i)) &&
           fb->cbufs[i] &&
           util_format_is_pure_integer(fb->cbufs[i]->format)) {
-         return true;
+         return TRUE;
       }
    }
-   return false;
+   return FALSE;
 }
 
 
@@ -111,7 +110,7 @@ is_integer_target(struct pipe_framebuffer_state *fb, unsigned buffers)
  * by floats.  If so, we can use the VGPU10 ClearRenderTargetView command.
  * Otherwise, we need to clear with a quad.
  */
-static bool
+static boolean
 ints_fit_in_floats(const union pipe_color_union *color)
 {
    const int max = 1 << 24;
@@ -131,7 +130,7 @@ try_clear(struct svga_context *svga,
 {
    enum pipe_error ret = PIPE_OK;
    SVGA3dRect rect = { 0, 0, 0, 0 };
-   bool restore_viewport = false;
+   boolean restore_viewport = FALSE;
    SVGA3dClearFlag flags = 0;
    struct pipe_framebuffer_state *fb = &svga->curr.framebuffer;
    union util_color uc = {0};
@@ -168,7 +167,7 @@ try_clear(struct svga_context *svga,
 
    if (!svga_have_vgpu10(svga) &&
        !svga_rects_equal(&rect, &svga->state.hw_clear.viewport)) {
-      restore_viewport = true;
+      restore_viewport = TRUE;
       ret = SVGA3D_SetViewport(svga->swc, &rect);
       if (ret != PIPE_OK)
          return ret;
@@ -532,7 +531,7 @@ svga_clear_render_target(struct pipe_context *pipe,
 {
     struct svga_context *svga = svga_context( pipe );
 
-    svga_toggle_render_condition(svga, render_condition_enabled, false);
+    svga_toggle_render_condition(svga, render_condition_enabled, FALSE);
     if (!svga_have_vgpu10(svga) || dstx != 0 || dsty != 0 ||
         width != dst->width || height != dst->height) {
        svga_blitter_clear_render_target(svga, dst, color, dstx, dsty, width,
@@ -544,12 +543,12 @@ svga_clear_render_target(struct pipe_context *pipe,
                                                               color));
        assert (ret == PIPE_OK);
     }
-    svga_toggle_render_condition(svga, render_condition_enabled, true);
+    svga_toggle_render_condition(svga, render_condition_enabled, TRUE);
 }
 
 void svga_init_clear_functions(struct svga_context *svga)
 {
    svga->pipe.clear_render_target = svga_clear_render_target;
-   svga->pipe.clear_texture = svga_have_vgpu10(svga) ? svga_clear_texture : NULL;
+   svga->pipe.clear_texture = svga_clear_texture;
    svga->pipe.clear = svga_clear;
 }

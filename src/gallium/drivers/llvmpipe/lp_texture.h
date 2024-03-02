@@ -156,12 +156,12 @@ void llvmpipe_init_screen_resource_funcs(struct pipe_screen *screen);
 void llvmpipe_init_context_resource_funcs(struct pipe_context *pipe);
 
 
-static inline bool
+static inline boolean
 llvmpipe_resource_is_texture(const struct pipe_resource *resource)
 {
    switch (resource->target) {
    case PIPE_BUFFER:
-      return false;
+      return FALSE;
    case PIPE_TEXTURE_1D:
    case PIPE_TEXTURE_1D_ARRAY:
    case PIPE_TEXTURE_2D:
@@ -170,32 +170,32 @@ llvmpipe_resource_is_texture(const struct pipe_resource *resource)
    case PIPE_TEXTURE_3D:
    case PIPE_TEXTURE_CUBE:
    case PIPE_TEXTURE_CUBE_ARRAY:
-      return true;
+      return TRUE;
    default:
       assert(0);
-      return false;
+      return FALSE;
    }
 }
 
 
-static inline bool
+static inline boolean
 llvmpipe_resource_is_1d(const struct pipe_resource *resource)
 {
    switch (resource->target) {
    case PIPE_BUFFER:
    case PIPE_TEXTURE_1D:
    case PIPE_TEXTURE_1D_ARRAY:
-      return true;
+      return TRUE;
    case PIPE_TEXTURE_2D:
    case PIPE_TEXTURE_2D_ARRAY:
    case PIPE_TEXTURE_RECT:
    case PIPE_TEXTURE_3D:
    case PIPE_TEXTURE_CUBE:
    case PIPE_TEXTURE_CUBE_ARRAY:
-      return false;
+      return FALSE;
    default:
       assert(0);
-      return false;
+      return FALSE;
    }
 }
 
@@ -248,7 +248,7 @@ unsigned
 llvmpipe_resource_size(const struct pipe_resource *resource);
 
 
-uint8_t *
+ubyte *
 llvmpipe_get_texture_image_address(struct llvmpipe_resource *lpr,
                                    unsigned face_slice, unsigned level);
 

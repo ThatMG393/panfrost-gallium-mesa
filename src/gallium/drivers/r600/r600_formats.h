@@ -2,7 +2,7 @@
 #define R600_FORMATS_H
 
 #include "util/format/u_format.h"
-#include "util/u_endian.h"
+#include "r600_pipe.h"
 
 /* list of formats from R700 ISA document - apply across GPUs in different registers */
 #define     FMT_INVALID                     0x00000000
@@ -66,7 +66,7 @@
 
 static inline unsigned r600_endian_swap(unsigned size)
 {
-	if (UTIL_ARCH_BIG_ENDIAN) {
+	if (R600_BIG_ENDIAN) {
 		switch (size) {
 		case 64:
 			return ENDIAN_8IN64;

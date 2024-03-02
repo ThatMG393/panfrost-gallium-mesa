@@ -126,7 +126,7 @@ NineSurface9_ctor( struct NineSurface9 *This,
                                                          This->base.info.target,
                                                          This->base.info.nr_samples,
                                                          This->base.info.bind,
-                                                         false,
+                                                         FALSE,
                                                          pDesc->Pool == D3DPOOL_SCRATCH);
 
     if (This->base.info.format == PIPE_FORMAT_NONE && pDesc->Format != D3DFMT_NULL)
@@ -146,8 +146,8 @@ NineSurface9_ctor( struct NineSurface9 *This,
                                                          This->base.info.target,
                                                          This->base.info.nr_samples,
                                                          This->base.info.bind,
-                                                         false,
-                                                         true);
+                                                         FALSE,
+                                                         TRUE);
     if (This->base.info.format != This->format_internal ||
         /* DYNAMIC Textures requires same stride as ram buffers.
          * The workaround stores a copy in RAM for locks. It eats more virtual space,
@@ -358,10 +358,10 @@ NineSurface9_MarkContainerDirty( struct NineSurface9 *This )
         assert(This->texture == D3DRTYPE_TEXTURE ||
                This->texture == D3DRTYPE_CUBETEXTURE);
         if (This->base.pool == D3DPOOL_MANAGED)
-            tex->managed.dirty = true;
+            tex->managed.dirty = TRUE;
         else
         if (This->base.usage & D3DUSAGE_AUTOGENMIPMAP)
-            tex->dirty_mip = true;
+            tex->dirty_mip = TRUE;
 
         BASETEX_REGISTER_UPDATE(tex);
     }

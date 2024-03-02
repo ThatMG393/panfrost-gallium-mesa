@@ -86,15 +86,13 @@ v3dX(max_descriptor_bo_size)(void)
 
 
 uint32_t
-v3dX(combined_image_sampler_texture_state_offset)(uint8_t plane)
+v3dX(combined_image_sampler_texture_state_offset)(void)
 {
-   return v3dX(descriptor_bo_size)(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) *
-      plane;
+   return 0;
 }
 
 uint32_t
-v3dX(combined_image_sampler_sampler_state_offset)(uint8_t plane)
+v3dX(combined_image_sampler_sampler_state_offset)(void)
 {
-   return v3dX(combined_image_sampler_texture_state_offset)(plane) +
-      cl_aligned_packet_length(TEXTURE_SHADER_STATE, 32);
+   return cl_aligned_packet_length(TEXTURE_SHADER_STATE, 32);
 }

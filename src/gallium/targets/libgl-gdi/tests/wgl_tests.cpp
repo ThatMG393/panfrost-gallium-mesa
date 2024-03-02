@@ -71,8 +71,6 @@ window::window(uint32_t width, uint32_t height)
 
    _hdc = ::GetDC(_window);
 
-   putenv("D3D12_DEBUG=singleton,debuglayer");
-
    PIXELFORMATDESCRIPTOR pfd = {
        sizeof(PIXELFORMATDESCRIPTOR),  /* size */
        1,                              /* version */
@@ -80,7 +78,7 @@ window::window(uint32_t width, uint32_t height)
        PFD_DRAW_TO_WINDOW |
        PFD_DOUBLEBUFFER,               /* support double-buffering */
        PFD_TYPE_RGBA,                  /* color type */
-       32,                             /* prefered color depth */
+       8,                              /* prefered color depth */
        0, 0, 0, 0, 0, 0,               /* color bits (ignored) */
        0,                              /* no alpha buffer */
        0,                              /* alpha bits (ignored) */

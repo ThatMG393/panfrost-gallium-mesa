@@ -27,8 +27,7 @@
 
 #include "d3d12_video_types.h"
 
-constexpr uint16_t DXVA_VP9_INVALID_PICTURE_INDEX = 0x7F;
-constexpr uint16_t DXVA_VP9_INVALID_PICTURE_ENTRY = 0xFF;
+constexpr uint16_t DXVA_VP9_INVALID_PICTURE_INDEX = 0xFF;
 
 #pragma pack(push, BeforeDXVApacking, 1)
 
@@ -140,7 +139,7 @@ d3d12_video_decoder_refresh_dpb_active_references_vp9(struct d3d12_video_decoder
 
 void
 d3d12_video_decoder_get_frame_info_vp9(
-   struct d3d12_video_decoder *pD3D12Dec, uint32_t *pWidth, uint32_t *pHeight, uint16_t *pMaxDPB);
+   struct d3d12_video_decoder *pD3D12Dec, uint32_t *pWidth, uint32_t *pHeight, uint16_t *pMaxDPB, bool *pIsInterlaced);
 
 DXVA_PicParams_VP9
 d3d12_video_decoder_dxva_picparams_from_pipe_picparams_vp9(

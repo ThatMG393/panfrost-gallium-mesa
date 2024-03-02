@@ -416,6 +416,7 @@ typedef struct ppir_compiler {
 
    /* array for searching ssa/reg node */
    ppir_node **var_nodes;
+   unsigned reg_base;
 
    struct ra_regs *ra;
    struct lima_fs_compiled_shader *prog;

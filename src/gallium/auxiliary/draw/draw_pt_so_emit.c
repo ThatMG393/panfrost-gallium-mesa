@@ -47,8 +47,8 @@ struct pt_so_emit {
    unsigned input_vertex_stride;
    const float (*inputs)[4];
    const float *pre_clip_pos;
-   bool has_so;
-   bool use_pre_clip_pos;
+   boolean has_so;
+   boolean use_pre_clip_pos;
    int pos_idx;
    unsigned emitted_primitives;
    unsigned generated_primitives;
@@ -61,8 +61,6 @@ draw_so_info(const struct draw_context *draw)
 {
    const struct pipe_stream_output_info *state = NULL;
 
-   if (draw->ms.mesh_shader)
-      return state;
    if (draw->gs.geometry_shader) {
       state = &draw->gs.geometry_shader->state.stream_output;
    } else if (draw->tes.tess_eval_shader) {
@@ -74,19 +72,19 @@ draw_so_info(const struct draw_context *draw)
    return state;
 }
 
-static inline bool
+static inline boolean
 draw_has_so(const struct draw_context *draw)
 {
    const struct pipe_stream_output_info *state = draw_so_info(draw);
 
    if (state && state->num_outputs > 0)
-      return true;
+      return TRUE;
 
-   return false;
+   return FALSE;
 }
 
 void
-draw_pt_so_emit_prepare(struct pt_so_emit *emit, bool use_pre_clip_pos)
+draw_pt_so_emit_prepare(struct pt_so_emit *emit, boolean use_pre_clip_pos)
 {
    struct draw_context *draw = emit->draw;
 
@@ -98,10 +96,10 @@ draw_pt_so_emit_prepare(struct pt_so_emit *emit, bool use_pre_clip_pos)
    /* if we have a state with outputs make sure we have
     * buffers to output to */
    if (emit->has_so) {
-      bool has_valid_buffer = false;
+      boolean has_valid_buffer = FALSE;
       for (unsigned i = 0; i < draw->so.num_targets; ++i) {
          if (draw->so.targets[i]) {
-            has_valid_buffer = true;
+            has_valid_buffer = TRUE;
             break;
          }
       }
@@ -128,7 +126,7 @@ so_emit_prim(struct pt_so_emit *so,
    const float *pcp_ptr = NULL;
    const struct pipe_stream_output_info *state = draw_so_info(draw);
    int buffer_total_bytes[PIPE_MAX_SO_BUFFERS];
-   bool buffer_written[PIPE_MAX_SO_BUFFERS] = {0};
+   boolean buffer_written[PIPE_MAX_SO_BUFFERS] = {0};
 
    input_ptr = so->inputs;
    if (so->use_pre_clip_pos)
@@ -146,23 +144,27 @@ so_emit_prim(struct pt_so_emit *so,
    }
 
    /* check have we space to emit prim first - if not don't do anything */
-   for (unsigned slot = 0; slot < state->num_outputs; ++slot) {
-      int ob = state->output[slot].output_buffer;
+   for (unsigned i = 0; i < num_vertices; ++i) {
+      for (unsigned slot = 0; slot < state->num_outputs; ++slot) {
+         unsigned num_comps = state->output[slot].num_components;
+         int ob = state->output[slot].output_buffer;
+         unsigned dst_offset = state->output[slot].dst_offset * sizeof(float);
+         unsigned write_size = num_comps * sizeof(float);
 
-      if (state->output[slot].stream != so->stream)
-         continue;
-      /* If a buffer is missing then that's equivalent to an overflow */
-      if (!draw->so.targets[ob]) {
-         return;
-      }
-      buffer_written[ob] = true;
-   }
-   for (unsigned ob = 0; ob < draw->so.num_targets; ++ob) {
-      if (buffer_written[ob]) {
-         unsigned size_req = num_vertices * state->stride[ob] * sizeof(float);
-         if (buffer_total_bytes[ob] + size_req > draw->so.targets[ob]->target.buffer_size) {
+         if (state->output[slot].stream != so->stream)
+            continue;
+         /* If a buffer is missing then that's equivalent to
+          * an overflow */
+         if (!draw->so.targets[ob]) {
             return;
          }
+         if ((buffer_total_bytes[ob] + write_size + dst_offset) >
+             draw->so.targets[ob]->target.buffer_size) {
+            return;
+         }
+      }
+      for (unsigned ob = 0; ob < draw->so.num_targets; ++ob) {
+         buffer_total_bytes[ob] += state->stride[ob] * sizeof(float);
       }
    }
 
@@ -187,6 +189,7 @@ so_emit_prim(struct pt_so_emit *so,
             continue;
 
          unsigned ob = state->output[slot].output_buffer;
+         buffer_written[ob] = TRUE;
 
          float *buffer = (float *)((char *)draw->so.targets[ob]->mapping +
                             draw->so.targets[ob]->target.buffer_offset +
@@ -205,7 +208,7 @@ so_emit_prim(struct pt_so_emit *so,
          {
             debug_printf("VERT[%d], stream = %d, offset = %d, slot[%d] sc = %d, num_c = %d, idx = %d = [",
                          i, stream,
-                         draw->so.targets[ob]->internal_offset + (4 * state->output[slot].dst_offset),
+                         draw->so.targets[ob]->internal_offset,
                          slot, start_comp, num_comps, idx);
             for (unsigned j = 0; j < num_comps; ++j) {
                unsigned *ubuffer = (unsigned*)buffer;
@@ -263,7 +266,7 @@ so_tri(struct pt_so_emit *so, int i0, int i1, int i2)
 
 
 #define FUNC         so_run_elts
-#define LOCAL_VARS   const uint16_t *elts = input_prims->elts;
+#define LOCAL_VARS   const ushort *elts = input_prims->elts;
 #define GET_ELT(idx) (elts[start + (idx)])
 #include "draw_so_emit_tmp.h"
 

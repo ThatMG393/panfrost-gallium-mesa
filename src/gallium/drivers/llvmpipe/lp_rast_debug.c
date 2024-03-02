@@ -107,7 +107,7 @@ get_variant(const struct lp_rast_state *state,
 }
 
 
-static bool
+static boolean
 is_blend(const struct lp_rast_state *state,
          const struct cmd_block *block,
          int k)
@@ -118,11 +118,11 @@ is_blend(const struct lp_rast_state *state,
    if (variant)
       return  variant->key.blend.rt[0].blend_enable;
 
-   return false;
+   return FALSE;
 }
 
 
-static bool
+static boolean
 is_linear(const struct lp_rast_state *state,
           const struct cmd_block *block,
           int k)
@@ -137,7 +137,7 @@ is_linear(const struct lp_rast_state *state,
    if (block->cmd[k] == LP_RAST_OP_RECTANGLE)
       return state->variant->jit_linear != NULL;
 
-   return false;
+   return FALSE;
 }
 
 
@@ -197,7 +197,7 @@ static void
 plot(struct tile *tile,
      int x, int y,
      char val,
-     bool blend)
+     boolean blend)
 {
    if (tile->data[x][y] == ' ')
       tile->coverage++;
@@ -228,7 +228,7 @@ debug_rectangle(int x, int y,
       return 0;
    }
 
-   bool blend = tile->state->variant->key.blend.rt[0].blend_enable;
+   boolean blend = tile->state->variant->key.blend.rt[0].blend_enable;
    unsigned count = 0;
    for (unsigned i = 0; i < TILE_SIZE; i++) {
       for (unsigned j = 0; j < TILE_SIZE; j++) {
@@ -258,7 +258,7 @@ debug_blit_tile(int x, int y,
 
    for (unsigned i = 0; i < TILE_SIZE; i++)
       for (unsigned j = 0; j < TILE_SIZE; j++)
-         plot(tile, i, j, val, false);
+         plot(tile, i, j, val, FALSE);
 
    return TILE_SIZE * TILE_SIZE;
 }
@@ -277,7 +277,7 @@ debug_shade_tile(int x, int y,
    if (inputs->disable)
       return 0;
 
-   bool blend = tile->state->variant->key.blend.rt[0].blend_enable;
+   boolean blend = tile->state->variant->key.blend.rt[0].blend_enable;
 
    for (unsigned i = 0; i < TILE_SIZE; i++)
       for (unsigned j = 0; j < TILE_SIZE; j++)
@@ -295,7 +295,7 @@ debug_clear_tile(int x, int y,
 {
    for (unsigned i = 0; i < TILE_SIZE; i++)
       for (unsigned j = 0; j < TILE_SIZE; j++)
-         plot(tile, i, j, val, false);
+         plot(tile, i, j, val, FALSE);
 
    return TILE_SIZE * TILE_SIZE;
 }
@@ -314,7 +314,7 @@ debug_triangle(int tilex, int tiley,
    int x, y;
    int count = 0;
    unsigned i, nr_planes = 0;
-   bool blend = tile->state->variant->key.blend.rt[0].blend_enable;
+   boolean blend = tile->state->variant->key.blend.rt[0].blend_enable;
 
    if (tri->inputs.disable) {
       /* This triangle was partially binned and has been disabled */
@@ -356,7 +356,7 @@ static void
 do_debug_bin(struct tile *tile,
              const struct cmd_bin *bin,
              int x, int y,
-             bool print_cmds)
+             boolean print_cmds)
 {
    unsigned k, j = 0;
    const struct cmd_block *block;
@@ -371,8 +371,8 @@ do_debug_bin(struct tile *tile,
 
    for (block = bin->head; block; block = block->next) {
       for (k = 0; k < block->count; k++, j++) {
-         bool blend = is_blend(tile->state, block, k);
-         bool linear = is_linear(tile->state, block, k);
+         boolean blend = is_blend(tile->state, block, k);
+         boolean linear = is_linear(tile->state, block, k);
          const char *fskind = get_fs_kind(tile->state, block, k);
          char val = get_label(j);
          int count = 0;
@@ -430,7 +430,7 @@ lp_debug_bin(const struct cmd_bin *bin, int i, int j)
    struct tile tile;
 
    if (bin->head) {
-      do_debug_bin(&tile, bin, i, j, true);
+      do_debug_bin(&tile, bin, i, j, TRUE);
 
       debug_printf("------------------------------------------------------------------\n");
       for (int y = 0; y < TILE_SIZE; y++) {
@@ -482,7 +482,7 @@ lp_debug_draw_bins_by_coverage(struct lp_scene *scene)
             struct tile tile;
             //lp_debug_bin(bin, x, y);
 
-            do_debug_bin(&tile, bin, x, y, false);
+            do_debug_bin(&tile, bin, x, y, FALSE);
 
             total += tile.coverage;
             possible += 64*64;

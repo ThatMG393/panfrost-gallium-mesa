@@ -29,25 +29,50 @@
 
 #include "util/format/u_formats.h"
 
-struct st_context;
-
 /**
  * \file API for communication between gallium frontends and supporting
  * frontends such as DRI.
  *
- * This file defines the API that the GL frontend uses to talk to
- * the DRI/GLX/WGL frontends.
+ * This file defines an API to be implemented by both gallium frontends and
+ * their managers.
  */
 
+/**
+ * The profile of a context.
+ */
+enum st_profile_type
+{
+   ST_PROFILE_DEFAULT,			/**< OpenGL compatibility profile */
+   ST_PROFILE_OPENGL_CORE,		/**< OpenGL 3.2+ core profile */
+   ST_PROFILE_OPENGL_ES1,		/**< OpenGL ES 1.x */
+   ST_PROFILE_OPENGL_ES2		/**< OpenGL ES 2.0 */
+};
+
+/* for profile_mask in st_api */
+#define ST_PROFILE_DEFAULT_MASK      (1 << ST_PROFILE_DEFAULT)
+#define ST_PROFILE_OPENGL_CORE_MASK  (1 << ST_PROFILE_OPENGL_CORE)
+#define ST_PROFILE_OPENGL_ES1_MASK   (1 << ST_PROFILE_OPENGL_ES1)
+#define ST_PROFILE_OPENGL_ES2_MASK   (1 << ST_PROFILE_OPENGL_ES2)
+#define ST_PROFILE_ALL_MASK          (ST_PROFILE_DEFAULT_MASK | \
+                                      ST_PROFILE_OPENGL_CORE_MASK | \
+                                      ST_PROFILE_OPENGL_ES1_MASK | \
+                                      ST_PROFILE_OPENGL_ES2_MASK)
 
 /**
- * Context flags.
+ * New context flags for GL 3.0 and beyond.
+ *
+ * Profile information (core vs. compatibilty for OpenGL 3.2+) is communicated
+ * through the \c st_profile_type, not through flags.
  */
 #define ST_CONTEXT_FLAG_DEBUG               (1 << 0)
 #define ST_CONTEXT_FLAG_FORWARD_COMPATIBLE  (1 << 1)
-#define ST_CONTEXT_FLAG_NO_ERROR            (1 << 2)
-#define ST_CONTEXT_FLAG_RELEASE_NONE        (1 << 3)
-
+#define ST_CONTEXT_FLAG_ROBUST_ACCESS       (1 << 2)
+#define ST_CONTEXT_FLAG_RESET_NOTIFICATION_ENABLED (1 << 3)
+#define ST_CONTEXT_FLAG_NO_ERROR            (1 << 4)
+#define ST_CONTEXT_FLAG_RELEASE_NONE	    (1 << 5)
+#define ST_CONTEXT_FLAG_HIGH_PRIORITY       (1 << 6)
+#define ST_CONTEXT_FLAG_LOW_PRIORITY        (1 << 7)
+#define ST_CONTEXT_FLAG_PROTECTED           (1 << 8)
 
 /**
  * Reasons that context creation might fail.
@@ -55,7 +80,21 @@ struct st_context;
 enum st_context_error {
    ST_CONTEXT_SUCCESS = 0,
    ST_CONTEXT_ERROR_NO_MEMORY,
+   ST_CONTEXT_ERROR_BAD_API,
    ST_CONTEXT_ERROR_BAD_VERSION,
+   ST_CONTEXT_ERROR_BAD_FLAG,
+   ST_CONTEXT_ERROR_UNKNOWN_ATTRIBUTE,
+   ST_CONTEXT_ERROR_UNKNOWN_FLAG
+};
+
+/**
+ * Used in st_context_iface->teximage.
+ */
+enum st_texture_type {
+   ST_TEXTURE_1D,
+   ST_TEXTURE_2D,
+   ST_TEXTURE_3D,
+   ST_TEXTURE_RECT
 };
 
 /**
@@ -90,7 +129,7 @@ enum st_attachment_type {
 #define ST_FLUSH_FENCE_FD                 (1 << 3)
 
 /**
- * State invalidation flags to notify st_context that states have been changed
+ * State invalidation flags to notify frontends that states have been changed
  * behind their back.
  */
 #define ST_INVALIDATE_FS_SAMPLER_VIEWS    (1 << 0)
@@ -100,7 +139,7 @@ enum st_attachment_type {
 #define ST_INVALIDATE_FB_STATE            (1 << 4)
 
 /**
- * Value to pipe_frontend_streen::get_param function.
+ * Value to st_manager->get_param function.
  */
 enum st_manager_param {
    /**
@@ -113,11 +152,13 @@ enum st_manager_param {
    ST_MANAGER_BROKEN_INVALIDATE
 };
 
+struct pipe_context;
 struct pipe_resource;
+struct pipe_fence_handle;
 struct util_queue_monitoring;
 
 /**
- * Used in pipe_frontend_screen::get_egl_image.
+ * Used in st_manager_iface->get_egl_image.
  */
 struct st_egl_image
 {
@@ -170,9 +211,6 @@ struct st_config_options
    bool disable_blend_func_extended;
    bool disable_glsl_line_continuations;
    bool disable_arb_gpu_shader5;
-   bool disable_uniform_array_resize;
-   char *alias_shader_extension;
-   bool allow_vertex_texture_bias;
    bool force_compat_shaders;
    bool force_glsl_extensions_warn;
    unsigned force_glsl_version;
@@ -194,7 +232,6 @@ struct st_config_options
    bool allow_draw_out_of_order;
    bool glthread_nop_check_framebuffer_status;
    bool ignore_map_unsynchronized;
-   bool ignore_discard_framebuffer;
    bool force_integer_tex_nearest;
    bool force_gl_names_reuse;
    bool force_gl_map_buffer_synchronized;
@@ -203,27 +240,60 @@ struct st_config_options
    char *force_gl_vendor;
    char *force_gl_renderer;
    char *mesa_extension_override;
-   bool allow_multisampled_copyteximage;
-
    unsigned char config_options_sha1[20];
 };
 
-struct pipe_frontend_screen;
+/**
+ * Represent the attributes of a context.
+ */
+struct st_context_attribs
+{
+   /**
+    * The profile and minimal version to support.
+    *
+    * The valid profiles and versions are rendering API dependent.  The latest
+    * version satisfying the request should be returned.
+    */
+   enum st_profile_type profile;
+   int major, minor;
+
+   /** Mask of ST_CONTEXT_FLAG_x bits */
+   unsigned flags;
+
+   /**
+    * The visual of the framebuffers the context will be bound to.
+    */
+   struct st_visual visual;
+
+   /**
+    * Configuration options.
+    */
+   struct st_config_options options;
+};
+
+struct st_context_iface;
+struct st_manager;
 
 /**
  * Represent a windowing system drawable.
  *
- * This is inherited by the drawable implementation of the DRI/GLX/WGL
- * frontends, e.g. this is the first field in dri_drawable.
+ * The framebuffer is implemented by the frontend manager and
+ * used by gallium frontends.
  *
- * st_context uses the callbacks to invoke one of the DRI/GLX/WGL-specific
- * functions.
+ * Instead of the winsys poking into the frontend context to figure
+ * out what buffers that might be needed in the future by the frontend
+ * context, it calls into the framebuffer to get the textures.
  *
- * This drawable can be shared between different threads. The atomic stamp
- * is used to communicate that the drawable has been changed, and
- * the framebuffer state should be updated.
+ * This structure along with the notify_invalid_framebuffer
+ * allows framebuffers to be shared between different threads
+ * but at the same make the API context free from thread
+ * synchronization primitves, with the exception of a small
+ * atomic flag used for notification of framebuffer dirty status.
+ *
+ * The thread synchronization is put inside the framebuffer
+ * and only called once the framebuffer has become dirty.
  */
-struct pipe_frontend_drawable
+struct st_framebuffer_iface
 {
    /**
     * Atomic stamp which changes when framebuffers need to be updated.
@@ -236,12 +306,17 @@ struct pipe_frontend_drawable
    uint32_t ID;
 
    /**
-    * The frontend screen for DRI/GLX/WGL.  This is e.g. dri_screen.
+    * The frontend manager that manages this object.
     */
-   struct pipe_frontend_screen *fscreen;
+   struct st_manager *state_manager;
 
    /**
-    * The visual of the framebuffer.
+    * Available for the frontend manager to use.
+    */
+   void *st_manager_private;
+
+   /**
+    * The visual of a framebuffer.
     */
    const struct st_visual *visual;
 
@@ -253,12 +328,12 @@ struct pipe_frontend_drawable
     *
     * @att is one of the front buffer attachments.
     */
-   bool (*flush_front)(struct st_context *st,
-                       struct pipe_frontend_drawable *drawable,
+   bool (*flush_front)(struct st_context_iface *stctx,
+                       struct st_framebuffer_iface *stfbi,
                        enum st_attachment_type statt);
 
    /**
-    * The GL frontend asks for the framebuffer attachments it needs.
+    * the gallium frontend asks for the textures it needs.
     *
     * It should try to only ask for attachments that it currently renders
     * to, thus allowing the winsys to delay the allocation of textures not
@@ -271,24 +346,110 @@ struct pipe_frontend_drawable
     * The returned textures are owned by the caller.  They should be
     * unreferenced when no longer used.  If this function is called multiple
     * times with different sets of attachments, those buffers not included in
-    * the last call might be destroyed.
+    * the last call might be destroyed.  This behavior might change in the
+    * future.
     */
-   bool (*validate)(struct st_context *st,
-                    struct pipe_frontend_drawable *drawable,
+   bool (*validate)(struct st_context_iface *stctx,
+                    struct st_framebuffer_iface *stfbi,
                     const enum st_attachment_type *statts,
                     unsigned count,
-                    struct pipe_resource **out,
-                    struct pipe_resource **resolve);
+                    struct pipe_resource **out);
+   bool (*flush_swapbuffers) (struct st_context_iface *stctx,
+                              struct st_framebuffer_iface *stfbi);
+};
 
-   bool (*flush_swapbuffers)(struct st_context *st,
-                             struct pipe_frontend_drawable *drawable);
+/**
+ * Represent a rendering context.
+ *
+ * This entity is created from st_api and used by the frontend manager.
+ */
+struct st_context_iface
+{
+   /**
+    * Available for the gallium frontend and the manager to use.
+    */
+   void *st_context_private;
+   void *st_manager_private;
+
+   /**
+    * The frontend manager that manages this object.
+    */
+   struct st_manager *state_manager;
+
+   /**
+    * The CSO context associated with this context in case we need to draw
+    * something before swap buffers.
+    */
+   struct cso_context *cso_context;
+
+   /**
+    * The gallium context.
+    */
+   struct pipe_context *pipe;
+
+   /**
+    * Destroy the context.
+    */
+   void (*destroy)(struct st_context_iface *stctxi);
+
+   /**
+    * Flush all drawing from context to the pipe also flushes the pipe.
+    */
+   void (*flush)(struct st_context_iface *stctxi, unsigned flags,
+                 struct pipe_fence_handle **fence,
+                 void (*notify_before_flush_cb) (void*),
+                 void* notify_before_flush_cb_args);
+
+   /**
+    * Replace the texture image of a texture object at the specified level.
+    *
+    * This function is optional.
+    */
+   bool (*teximage)(struct st_context_iface *stctxi,
+                    enum st_texture_type target,
+                    int level, enum pipe_format internal_format,
+                    struct pipe_resource *tex, bool mipmap);
+
+   /**
+    * Used to implement glXCopyContext.
+    */
+   void (*copy)(struct st_context_iface *stctxi,
+                struct st_context_iface *stsrci, unsigned mask);
+
+   /**
+    * Used to implement wglShareLists.
+    */
+   bool (*share)(struct st_context_iface *stctxi,
+                 struct st_context_iface *stsrci);
+
+   /**
+    * Start the thread if the API has a worker thread.
+    * Called after the context has been created and fully initialized on both
+    * sides (e.g. st/mesa and st/dri).
+    */
+   void (*start_thread)(struct st_context_iface *stctxi);
+
+   /**
+    * If the API is multithreaded, wait for all queued commands to complete.
+    * Called from the main thread.
+    */
+   void (*thread_finish)(struct st_context_iface *stctxi);
+
+   /**
+    * Invalidate states to notify the frontend that states have been changed
+    * behind its back.
+    */
+   void (*invalidate_state)(struct st_context_iface *stctxi, unsigned flags);
 };
 
 
 /**
- * This is inherited by a screen in the DRI/GLX/WGL frontends, e.g. dri_screen.
+ * Represent a frontend manager.
+ *
+ * This interface is implemented by the frontend manager.  It corresponds
+ * to a "display" in the window system.
  */
-struct pipe_frontend_screen
+struct st_manager
 {
    struct pipe_screen *screen;
 
@@ -300,41 +461,96 @@ struct pipe_frontend_screen
     * function call and the information needed to access this is returned
     * in the given struct out.
     *
-    * @fscreen: the screen
+    * @smapi: manager owning the caller context
+    * @stctx: caller context
     * @egl_image: EGLImage that caller recived
     * @out: return struct filled out with access information.
     *
     * This function is optional.
     */
-   bool (*get_egl_image)(struct pipe_frontend_screen *fscreen,
+   bool (*get_egl_image)(struct st_manager *smapi,
                          void *egl_image,
                          struct st_egl_image *out);
 
    /**
     * Validate EGLImage passed to get_egl_image.
     */
-   bool (*validate_egl_image)(struct pipe_frontend_screen *fscreen,
+   bool (*validate_egl_image)(struct st_manager *smapi,
                               void *egl_image);
 
    /**
-    * Query a feature or property from the DRI/GLX/WGL frontend.
+    * Query an manager param.
     */
-   int (*get_param)(struct pipe_frontend_screen *fscreen,
+   int (*get_param)(struct st_manager *smapi,
                     enum st_manager_param param);
 
    /**
     * Call the loader function setBackgroundContext. Called from the worker
     * thread.
     */
-   void (*set_background_context)(struct st_context *st,
+   void (*set_background_context)(struct st_context_iface *stctxi,
                                   struct util_queue_monitoring *queue_info);
 
    /**
-    * GL frontend state associated with the screen.
-    *
-    * This is where st_context stores the state shared by all contexts.
+    * Destroy any private data used by the frontend manager.
     */
-   void *st_screen;
+   void (*destroy)(struct st_manager *smapi);
+
+   /**
+    * Available for the frontend manager to use.
+    */
+   void *st_manager_private;
 };
+
+/**
+ * The following st_api_* functions represent the OpenGL rendering API.
+ *
+ * Implemented by the gallium frontend and used by the frontend manager.
+ */
+
+/**
+ * Query supported OpenGL versions. (if applicable)
+ * The format is (major*10+minor).
+ */
+void
+st_api_query_versions(struct st_manager *sm,
+                      struct st_config_options *options,
+                      int *gl_core_version,
+                      int *gl_compat_version,
+                      int *gl_es1_version,
+                      int *gl_es2_version);
+
+/**
+ * Create a rendering context.
+ */
+struct st_context_iface *
+st_api_create_context(struct st_manager *smapi,
+                      const struct st_context_attribs *attribs,
+                      enum st_context_error *error,
+                      struct st_context_iface *stsharei);
+
+/**
+ * Bind the context to the calling thread with draw and read as drawables.
+ *
+ * The framebuffers might be NULL, or might have different visuals than the
+ * context does.
+ */
+bool
+st_api_make_current(struct st_context_iface *stctxi,
+                    struct st_framebuffer_iface *stdrawi,
+                    struct st_framebuffer_iface *streadi);
+
+/**
+ * Get the currently bound context in the calling thread.
+ */
+struct st_context_iface *
+st_api_get_current(void);
+
+/**
+ * Notify the st manager the framebuffer interface object
+ * is no longer valid.
+ */
+void
+st_api_destroy_drawable(struct st_framebuffer_iface *stfbi);
 
 #endif /* _API_H_ */

@@ -156,6 +156,27 @@ const driOptionDescription v3d_driconf[] = {
 };
 #endif
 
+#ifdef GALLIUM_KMSRO
+#include "kmsro/drm/kmsro_drm_public.h"
+
+static struct pipe_screen *
+pipe_kmsro_create_screen(int fd, const struct pipe_screen_config *config)
+{
+   struct pipe_screen *screen;
+
+   screen = kmsro_drm_screen_create(fd, config);
+   return screen ? debug_screen_wrap(screen) : NULL;
+}
+#if defined(GALLIUM_VC4) || defined(GALLIUM_V3D)
+DRM_DRIVER_DESCRIPTOR(kmsro, v3d_driconf, ARRAY_SIZE(v3d_driconf))
+#else
+DRM_DRIVER_DESCRIPTOR(kmsro, NULL, 0)
+#endif
+
+#else
+DRM_DRIVER_DESCRIPTOR_STUB(kmsro)
+#endif
+
 #ifdef GALLIUM_R300
 #include "winsys/radeon_winsys.h"
 #include "r300/r300_public.h"
@@ -243,21 +264,14 @@ pipe_msm_create_screen(int fd, const struct pipe_screen_config *config)
 {
    struct pipe_screen *screen;
 
-   screen = fd_drm_screen_create_renderonly(fd, NULL, config);
+   screen = fd_drm_screen_create(fd, NULL, config);
    return screen ? debug_screen_wrap(screen) : NULL;
 }
-
-const driOptionDescription msm_driconf[] = {
-#ifdef GALLIUM_FREEDRENO
-      #include "freedreno/driinfo_freedreno.h"
-#endif
-};
-DRM_DRIVER_DESCRIPTOR(msm, msm_driconf, ARRAY_SIZE(msm_driconf))
-DRM_DRIVER_DESCRIPTOR_ALIAS(msm, kgsl, msm_driconf, ARRAY_SIZE(msm_driconf))
+DRM_DRIVER_DESCRIPTOR(msm, NULL, 0)
 #else
 DRM_DRIVER_DESCRIPTOR_STUB(msm)
-DRM_DRIVER_DESCRIPTOR_STUB(kgsl)
 #endif
+DRM_DRIVER_DESCRIPTOR_ALIAS(msm, kgsl, NULL, 0)
 
 #if defined(GALLIUM_VIRGL) || (defined(GALLIUM_FREEDRENO) && !defined(PIPE_LOADER_DYNAMIC))
 #include "virgl/drm/virgl_drm_public.h"
@@ -271,7 +285,7 @@ pipe_virtio_gpu_create_screen(int fd, const struct pipe_screen_config *config)
    /* Try native guest driver(s) first, and then fallback to virgl: */
 #ifdef GALLIUM_FREEDRENO
    if (!screen)
-      screen = fd_drm_screen_create_renderonly(fd, NULL, config);
+      screen = fd_drm_screen_create(fd, NULL, config);
 #endif
 #ifdef GALLIUM_VIRGL
    if (!screen)
@@ -281,7 +295,9 @@ pipe_virtio_gpu_create_screen(int fd, const struct pipe_screen_config *config)
 }
 
 const driOptionDescription virgl_driconf[] = {
+#ifdef GALLIUM_VIRGL
       #include "virgl/virgl_driinfo.h.in"
+#endif
 };
 DRM_DRIVER_DESCRIPTOR(virtio_gpu, virgl_driconf, ARRAY_SIZE(virgl_driconf))
 
@@ -335,11 +351,9 @@ pipe_panfrost_create_screen(int fd, const struct pipe_screen_config *config)
    return screen ? debug_screen_wrap(screen) : NULL;
 }
 DRM_DRIVER_DESCRIPTOR(panfrost, NULL, 0)
-DRM_DRIVER_DESCRIPTOR_ALIAS(panfrost, panthor, NULL, 0)
 
 #else
 DRM_DRIVER_DESCRIPTOR_STUB(panfrost)
-DRM_DRIVER_DESCRIPTOR_STUB(panthor)
 #endif
 
 #ifdef GALLIUM_ASAHI
@@ -350,14 +364,10 @@ pipe_asahi_create_screen(int fd, const struct pipe_screen_config *config)
 {
    struct pipe_screen *screen;
 
-   screen = asahi_drm_screen_create(fd, config);
+   screen = asahi_drm_screen_create(fd);
    return screen ? debug_screen_wrap(screen) : NULL;
 }
-
-const driOptionDescription asahi_driconf[] = {
-      #include "asahi/driinfo_asahi.h"
-};
-DRM_DRIVER_DESCRIPTOR(asahi, asahi_driconf, ARRAY_SIZE(asahi_driconf))
+DRM_DRIVER_DESCRIPTOR(asahi, NULL, 0)
 
 #else
 DRM_DRIVER_DESCRIPTOR_STUB(asahi)
@@ -434,35 +444,5 @@ DRM_DRIVER_DESCRIPTOR(zink, zink_driconf, ARRAY_SIZE(zink_driconf))
 #else
 DRM_DRIVER_DESCRIPTOR_STUB(zink)
 #endif
-
-#ifdef GALLIUM_KMSRO
-#include "kmsro/drm/kmsro_drm_public.h"
-
-static struct pipe_screen *
-pipe_kmsro_create_screen(int fd, const struct pipe_screen_config *config)
-{
-   struct pipe_screen *screen;
-
-   screen = kmsro_drm_screen_create(fd, config);
-   return screen ? debug_screen_wrap(screen) : NULL;
-}
-const driOptionDescription kmsro_driconf[] = {
-#if defined(GALLIUM_VC4) || defined(GALLIUM_V3D)
-      #include "v3d/driinfo_v3d.h"
-#endif
-#ifdef GALLIUM_ASAHI
-      #include "asahi/driinfo_asahi.h"
-#endif
-#ifdef GALLIUM_FREEDRENO
-      #include "freedreno/driinfo_freedreno.h"
-#endif
-};
-DRM_DRIVER_DESCRIPTOR(kmsro, kmsro_driconf, ARRAY_SIZE(kmsro_driconf))
-
-#else
-DRM_DRIVER_DESCRIPTOR_STUB(kmsro)
-#endif
-
-/* kmsro should be the last entry in the file. */
 
 #endif /* DRM_HELPER_H */

@@ -38,9 +38,9 @@
 
 
 struct pipe_resource;
-struct pipe_frontend_drawable;
+struct st_framebuffer_iface;
 struct stw_pixelformat_info;
-struct pipe_frontend_screen;
+struct st_manager;
 
 enum stw_framebuffer_owner
 {
@@ -90,7 +90,7 @@ struct stw_framebuffer
    int iDisplayablePixelFormat;
    enum stw_framebuffer_owner owner;
 
-   struct pipe_frontend_drawable *drawable;
+   struct st_framebuffer_iface *stfb;
 
    /*
     * Mutable members. 
@@ -100,9 +100,9 @@ struct stw_framebuffer
 
    
    /* FIXME: Make this work for multiple contexts bound to the same framebuffer */
-   bool must_resize;
+   boolean must_resize;
 
-   bool minimized;  /**< Is the window currently minimized? */
+   boolean minimized;  /**< Is the window currently minimized? */
 
    unsigned width;
    unsigned height;
@@ -111,7 +111,7 @@ struct stw_framebuffer
    unsigned textureFormat;  /**< WGL_NO_TEXTURE or WGL_TEXTURE_RGB[A]_ARB */
    unsigned textureTarget;  /**< WGL_NO_TEXTURE or WGL_TEXTURE_1D/2D/
                                  CUBE_MAP_ARB */
-   bool textureMipmap;   /**< TRUE/FALSE */
+   boolean textureMipmap;   /**< TRUE/FALSE */
    /** WGL_ARB_render_texture - set with wglSetPbufferAttribARB() */
    unsigned textureLevel;
    unsigned textureFace;    /**< [0..6] */
@@ -131,11 +131,6 @@ struct stw_framebuffer
    /* For WGL_EXT_swap_control */
    int swap_interval;
    int64_t prev_swap_time;
-
-#ifdef _GAMING_XBOX
-   /* For the WndProc hook chain */
-   WNDPROC prev_wndproc;
-#endif
 
    /** 
     * This is protected by stw_device::fb_mutex, not the mutex above.
@@ -159,10 +154,10 @@ struct stw_framebuffer
  */
 struct stw_framebuffer *
 stw_framebuffer_create(HWND hwnd, const struct stw_pixelformat_info *pfi, enum stw_framebuffer_owner owner,
-                       struct pipe_frontend_screen *fscreen);
+                       struct st_manager *smapi);
 
 struct stw_framebuffer *
-stw_pbuffer_create(const struct stw_pixelformat_info *pfi, int iWidth, int iHeight, struct pipe_frontend_screen *fscreen);
+stw_pbuffer_create(const struct stw_pixelformat_info *pfi, int iWidth, int iHeight, struct st_manager *smapi);
 
 
 /**
@@ -176,7 +171,7 @@ stw_framebuffer_reference_locked(struct stw_framebuffer *fb);
 
 void
 stw_framebuffer_release_locked(struct stw_framebuffer *fb,
-                               struct st_context *st);
+                               struct st_context_iface *stctx);
 
 /**
  * Search a framebuffer with a matching HWND.
@@ -233,9 +228,9 @@ stw_framebuffer_cleanup(void);
 
 
 static inline struct stw_st_framebuffer *
-stw_st_framebuffer(struct pipe_frontend_drawable *drawable)
+stw_st_framebuffer(struct st_framebuffer_iface *stfb)
 {
-   return (struct stw_st_framebuffer *) drawable;
+   return (struct stw_st_framebuffer *) stfb;
 }
 
 

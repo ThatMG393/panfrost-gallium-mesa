@@ -95,9 +95,6 @@ void
 lima_resource_screen_init(struct lima_screen *screen);
 
 void
-lima_resource_screen_destroy(struct lima_screen *screen);
-
-void
 lima_resource_context_init(struct lima_context *ctx);
 
 #endif

@@ -48,7 +48,11 @@ int rnndec_varadd(struct rnndeccontext *ctx, char *varset, const char *variant) 
 	int i, j;
 	for (i = 0; i < en->valsnum; i++)
 		if (!strcasecmp(en->vals[i]->name, variant)) {
-			break;
+			struct rnndecvariant *ci = calloc (sizeof *ci, 1);
+			ci->en = en;
+			ci->variant = i;
+			ADDARRAY(ctx->vars, ci);
+			return 1;
 		}
 
 	if (i == en->valsnum) {
@@ -63,7 +67,7 @@ int rnndec_varadd(struct rnndeccontext *ctx, char *varset, const char *variant) 
 		}
 	}
 
-	if (j == ctx->varsnum) {
+	if (i == ctx->varsnum) {
 		struct rnndecvariant *ci = calloc (sizeof *ci, 1);
 		ci->en = en;
 		ci->variant = i;

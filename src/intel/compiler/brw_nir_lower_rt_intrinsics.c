@@ -24,7 +24,7 @@
 #include "brw_nir_rt.h"
 #include "brw_nir_rt_builder.h"
 
-static nir_def *
+static nir_ssa_def *
 build_leaf_is_procedural(nir_builder *b, struct brw_nir_rt_mem_hit_defs *hit)
 {
    switch (b->shader->info.stage) {
@@ -39,8 +39,8 @@ build_leaf_is_procedural(nir_builder *b, struct brw_nir_rt_mem_hit_defs *hit)
       return nir_imm_true(b);
 
    default:
-      return nir_ieq_imm(b, hit->leaf_type,
-                            BRW_RT_BVH_NODE_TYPE_PROCEDURAL);
+      return nir_ieq(b, hit->leaf_type,
+                        nir_imm_int(b, BRW_RT_BVH_NODE_TYPE_PROCEDURAL));
    }
 }
 
@@ -48,16 +48,17 @@ static void
 lower_rt_intrinsics_impl(nir_function_impl *impl,
                          const struct intel_device_info *devinfo)
 {
-   bool progress = false;
-
-   nir_builder build = nir_builder_at(nir_before_impl(impl));
+   nir_builder build;
+   nir_builder_init(&build, impl);
    nir_builder *b = &build;
+
+   b->cursor = nir_before_block(nir_start_block(b->impl));
 
    struct brw_nir_rt_globals_defs globals;
    brw_nir_rt_load_globals(b, &globals);
 
-   nir_def *hotzone_addr = brw_nir_rt_sw_hotzone_addr(b, devinfo);
-   nir_def *hotzone = nir_load_global(b, hotzone_addr, 16, 4, 32);
+   nir_ssa_def *hotzone_addr = brw_nir_rt_sw_hotzone_addr(b, devinfo);
+   nir_ssa_def *hotzone = nir_load_global(b, hotzone_addr, 16, 4, 32);
 
    gl_shader_stage stage = b->shader->info.stage;
    struct brw_nir_rt_mem_ray_defs world_ray_in = {};
@@ -82,9 +83,9 @@ lower_rt_intrinsics_impl(nir_function_impl *impl,
       break;
    }
 
-   nir_def *thread_stack_base_addr = brw_nir_rt_sw_stack_addr(b, devinfo);
-   nir_def *stack_base_offset = nir_channel(b, hotzone, 0);
-   nir_def *stack_base_addr =
+   nir_ssa_def *thread_stack_base_addr = brw_nir_rt_sw_stack_addr(b, devinfo);
+   nir_ssa_def *stack_base_offset = nir_channel(b, hotzone, 0);
+   nir_ssa_def *stack_base_addr =
       nir_iadd(b, thread_stack_base_addr, nir_u2u64(b, stack_base_offset));
    ASSERTED bool seen_scratch_base_ptr_load = false;
    ASSERTED bool found_resume = false;
@@ -98,7 +99,7 @@ lower_rt_intrinsics_impl(nir_function_impl *impl,
 
          b->cursor = nir_after_instr(&intrin->instr);
 
-         nir_def *sysval = NULL;
+         nir_ssa_def *sysval = NULL;
          switch (intrin->intrinsic) {
          case nir_intrinsic_load_scratch_base_ptr:
             assert(nir_intrinsic_base(intrin) == 1);
@@ -109,7 +110,7 @@ lower_rt_intrinsics_impl(nir_function_impl *impl,
          case nir_intrinsic_btd_stack_push_intel: {
             int32_t stack_size = nir_intrinsic_stack_size(intrin);
             if (stack_size > 0) {
-               nir_def *child_stack_offset =
+               nir_ssa_def *child_stack_offset =
                   nir_iadd_imm(b, stack_base_offset, stack_size);
                nir_store_global(b, hotzone_addr, 16, child_stack_offset, 0x1);
             }
@@ -210,7 +211,7 @@ lower_rt_intrinsics_impl(nir_function_impl *impl,
          }
 
          case nir_intrinsic_load_ray_hit_kind: {
-            nir_def *tri_hit_kind =
+            nir_ssa_def *tri_hit_kind =
                nir_bcsel(b, hit_in.front_face,
                             nir_imm_int(b, BRW_RT_HIT_KIND_FRONT_FACE),
                             nir_imm_int(b, BRW_RT_HIT_KIND_BACK_FACE));
@@ -236,7 +237,7 @@ lower_rt_intrinsics_impl(nir_function_impl *impl,
             break;
 
          case nir_intrinsic_load_ray_geometry_index: {
-            nir_def *geometry_index_dw =
+            nir_ssa_def *geometry_index_dw =
                nir_load_global(b, nir_iadd_imm(b, hit_in.prim_leaf_ptr, 4), 4,
                                1, 32);
             sysval = nir_iand_imm(b, geometry_index_dw, BITFIELD_MASK(29));
@@ -311,13 +312,6 @@ lower_rt_intrinsics_impl(nir_function_impl *impl,
             sysval = build_leaf_is_procedural(b, &hit_in);
             break;
 
-         case nir_intrinsic_load_ray_triangle_vertex_positions: {
-            struct brw_nir_rt_bvh_primitive_leaf_positions_defs pos;
-            brw_nir_rt_load_bvh_primitive_leaf_positions(b, &pos, hit_in.prim_leaf_ptr);
-            sysval = pos.positions[nir_intrinsic_column(intrin)];
-            break;
-         }
-
          case nir_intrinsic_load_leaf_opaque_intel: {
             if (stage == MESA_SHADER_INTERSECTION) {
                /* In intersection shaders, the opaque bit is passed to us in
@@ -325,7 +319,7 @@ lower_rt_intrinsics_impl(nir_function_impl *impl,
                 */
                sysval = hit_in.front_face;
             } else {
-               nir_def *flags_dw =
+               nir_ssa_def *flags_dw =
                   nir_load_global(b, nir_iadd_imm(b, hit_in.prim_leaf_ptr, 4), 4,
                                   1, 32);
                sysval = nir_i2b(b, nir_iand_imm(b, flags_dw, 1u << 30));
@@ -337,21 +331,16 @@ lower_rt_intrinsics_impl(nir_function_impl *impl,
             continue;
          }
 
-         progress = true;
-
          if (sysval) {
-            nir_def_rewrite_uses(&intrin->def,
+            nir_ssa_def_rewrite_uses(&intrin->dest.ssa,
                                      sysval);
             nir_instr_remove(&intrin->instr);
          }
       }
    }
 
-   nir_metadata_preserve(impl,
-                         progress ?
-                         nir_metadata_none :
-                         (nir_metadata_block_index |
-                          nir_metadata_dominance));
+   nir_metadata_preserve(impl, nir_metadata_block_index |
+                               nir_metadata_dominance);
 }
 
 /** Lower ray-tracing system values and intrinsics
@@ -380,7 +369,8 @@ void
 brw_nir_lower_rt_intrinsics(nir_shader *nir,
                             const struct intel_device_info *devinfo)
 {
-   nir_foreach_function_impl(impl, nir) {
-      lower_rt_intrinsics_impl(impl, devinfo);
+   nir_foreach_function(function, nir) {
+      if (function->impl)
+         lower_rt_intrinsics_impl(function->impl, devinfo);
    }
 }

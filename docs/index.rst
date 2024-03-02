@@ -35,11 +35,13 @@ Linux, FreeBSD, and other operating systems.
 
    self
    history
+   developers
    amber
    systems
    license
    faq
    relnotes
+   thanks
 
 .. toctree::
    :maxdepth: 2
@@ -76,7 +78,6 @@ Linux, FreeBSD, and other operating systems.
    gallium-nine
    viewperf
    xlibdriver
-   teflon
 
 .. toctree::
    :maxdepth: 1
@@ -89,9 +90,7 @@ Linux, FreeBSD, and other operating systems.
    drivers/freedreno
    drivers/lima
    drivers/llvmpipe
-   drivers/nvk
    drivers/panfrost
-   drivers/powervr
    drivers/radv
    drivers/svga3d
    drivers/v3d
@@ -119,7 +118,6 @@ Linux, FreeBSD, and other operating systems.
    vulkan/index
    nir/index
    isl/index
-   isaspec
    rusticl
    android
    macos
@@ -141,3 +139,10 @@ Linux, FreeBSD, and other operating systems.
    OpenGL Website <https://www.opengl.org>
    DRI Website <https://dri.freedesktop.org>
    Developer Blogs <https://planet.freedesktop.org>
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Hosted by:
+   :hidden:
+
+   freedesktop.org <https://www.freedesktop.org>

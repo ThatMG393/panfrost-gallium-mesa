@@ -85,8 +85,8 @@ st_upload_constants(struct st_context *st, struct gl_program *prog, gl_shader_st
           shader_type == PIPE_SHADER_COMPUTE);
 
    /* update the ATI constants before rendering */
-   if (shader_type == PIPE_SHADER_FRAGMENT && prog->ati_fs) {
-      struct ati_fragment_shader *ati_fs = prog->ati_fs;
+   if (shader_type == PIPE_SHADER_FRAGMENT && st->fp->ati_fs) {
+      struct ati_fragment_shader *ati_fs = st->fp->ati_fs;
       unsigned c;
 
       for (c = 0; c < MAX_NUM_FRAGMENT_CONSTANTS_ATI; c++) {
@@ -213,8 +213,7 @@ st_upload_constants(struct st_context *st, struct gl_program *prog, gl_shader_st
 void
 st_update_vs_constants(struct st_context *st)
 {
-   st_upload_constants(st, st->ctx->VertexProgram._Current,
-                       MESA_SHADER_VERTEX);
+   st_upload_constants(st, st->vp, MESA_SHADER_VERTEX);
 }
 
 /**
@@ -223,8 +222,7 @@ st_update_vs_constants(struct st_context *st)
 void
 st_update_fs_constants(struct st_context *st)
 {
-   st_upload_constants(st, st->ctx->FragmentProgram._Current,
-                       MESA_SHADER_FRAGMENT);
+   st_upload_constants(st, st->fp, MESA_SHADER_FRAGMENT);
 }
 
 
@@ -233,8 +231,7 @@ st_update_fs_constants(struct st_context *st)
 void
 st_update_gs_constants(struct st_context *st)
 {
-   st_upload_constants(st, st->ctx->GeometryProgram._Current,
-                       MESA_SHADER_GEOMETRY);
+   st_upload_constants(st, st->gp, MESA_SHADER_GEOMETRY);
 }
 
 /* Tessellation control shader:
@@ -242,8 +239,7 @@ st_update_gs_constants(struct st_context *st)
 void
 st_update_tcs_constants(struct st_context *st)
 {
-   st_upload_constants(st, st->ctx->TessCtrlProgram._Current,
-                       MESA_SHADER_TESS_CTRL);
+   st_upload_constants(st, st->tcp, MESA_SHADER_TESS_CTRL);
 }
 
 /* Tessellation evaluation shader:
@@ -251,8 +247,7 @@ st_update_tcs_constants(struct st_context *st)
 void
 st_update_tes_constants(struct st_context *st)
 {
-   st_upload_constants(st, st->ctx->TessEvalProgram._Current,
-                       MESA_SHADER_TESS_EVAL);
+   st_upload_constants(st, st->tep, MESA_SHADER_TESS_EVAL);
 }
 
 /* Compute shader:
@@ -260,8 +255,7 @@ st_update_tes_constants(struct st_context *st)
 void
 st_update_cs_constants(struct st_context *st)
 {
-   st_upload_constants(st, st->ctx->ComputeProgram._Current,
-                       MESA_SHADER_COMPUTE);
+   st_upload_constants(st, st->cp, MESA_SHADER_COMPUTE);
 }
 
 static void
@@ -282,12 +276,7 @@ st_bind_ubos(struct st_context *st, struct gl_program *prog,
       binding =
          &st->ctx->UniformBufferBindings[prog->sh.UniformBlocks[i]->Binding];
 
-      if (binding->BufferObject) {
-         cb.buffer = _mesa_get_bufferobj_reference(st->ctx,
-                                                   binding->BufferObject);
-      } else {
-         cb.buffer = NULL;
-      }
+      cb.buffer = _mesa_get_bufferobj_reference(st->ctx, binding->BufferObject);
 
       if (cb.buffer) {
          cb.buffer_offset = binding->Offset;

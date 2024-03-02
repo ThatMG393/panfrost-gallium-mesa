@@ -361,7 +361,6 @@ lp_rast_shade_tile(struct lp_rasterizer_task *task,
          /* run shader on 4x4 block */
          BEGIN_JIT_CALL(state, task);
          variant->jit_function[RAST_WHOLE](&state->jit_context,
-                                           &state->jit_resources,
                                             tile_x + x, tile_y + y,
                                             inputs->frontfacing,
                                             GET_A0(inputs),
@@ -469,7 +468,6 @@ lp_rast_shade_quads_mask_sample(struct lp_rasterizer_task *task,
       /* run shader on 4x4 block */
       BEGIN_JIT_CALL(state, task);
       variant->jit_function[RAST_EDGE_TEST](&state->jit_context,
-                                            &state->jit_resources,
                                             x, y,
                                             inputs->frontfacing,
                                             GET_A0(inputs),
@@ -513,7 +511,7 @@ lp_rast_blit_tile_to_dest(struct lp_rasterizer_task *task,
    const struct lp_rast_shader_inputs *inputs = arg.shade_tile;
    const struct lp_rast_state *state = task->state;
    struct lp_fragment_shader_variant *variant = state->variant;
-   const struct lp_jit_texture *texture = &state->jit_resources.textures[0];
+   const struct lp_jit_texture *texture = &state->jit_context.textures[0];
    struct pipe_surface *cbuf = scene->fb.cbufs[0];
    const unsigned face_slice = cbuf->u.tex.first_layer;
    const unsigned level = cbuf->u.tex.level;
@@ -1027,7 +1025,7 @@ rasterize_bin(struct lp_rasterizer_task *task,
  *
  * Try to avoid doing pointless work in this case.
  */
-static bool
+static boolean
 is_empty_bin(const struct cmd_bin *bin)
 {
    return bin->head == NULL;
@@ -1045,8 +1043,7 @@ rasterize_scene(struct lp_rasterizer_task *task,
    task->scene = scene;
 
    /* Clear the cache tags. This should not always be necessary but
-    * simpler for now.
-    */
+      simpler for now. */
 #if LP_USE_TEXTURE_CACHE
    memset(task->thread_data.cache->cache_tags, 0,
           sizeof(task->thread_data.cache->cache_tags));
@@ -1058,15 +1055,18 @@ rasterize_scene(struct lp_rasterizer_task *task,
 
    if (!task->rast->no_rast) {
       /* loop over scene bins, rasterize each */
-      struct cmd_bin *bin;
-      int i, j;
+      {
+         struct cmd_bin *bin;
+         int i, j;
 
-      assert(scene);
-      while ((bin = lp_scene_bin_iter_next(scene, &i, &j))) {
-         if (!is_empty_bin(bin))
-            rasterize_bin(task, bin, i, j);
+         assert(scene);
+         while ((bin = lp_scene_bin_iter_next(scene, &i, &j))) {
+            if (!is_empty_bin(bin))
+               rasterize_bin(task, bin, i, j);
+         }
       }
    }
+
 
 #if LP_BUILD_FORMAT_CACHE_DEBUG
    {
@@ -1101,7 +1101,7 @@ lp_rast_queue_scene(struct lp_rasterizer *rast,
 
    lp_fence_reference(&rast->last_fence, scene->fence);
    if (rast->last_fence)
-      rast->last_fence->issued = true;
+      rast->last_fence->issued = TRUE;
 
    if (rast->num_threads == 0) {
       /* no threading */
@@ -1123,10 +1123,12 @@ lp_rast_queue_scene(struct lp_rasterizer *rast,
       rast->curr_scene = NULL;
    } else {
       /* threaded rendering! */
+      unsigned i;
+
       lp_scene_enqueue(rast->full_scenes, scene);
 
       /* signal the threads that there's work to do */
-      for (unsigned i = 0; i < rast->num_threads; i++) {
+      for (i = 0; i < rast->num_threads; i++) {
          util_semaphore_signal(&rast->tasks[i].work_ready);
       }
    }
@@ -1141,8 +1143,10 @@ lp_rast_finish(struct lp_rasterizer *rast)
    if (rast->num_threads == 0) {
       /* nothing to do */
    } else {
+      int i;
+
       /* wait for work to complete */
-      for (unsigned i = 0; i < rast->num_threads; i++) {
+      for (i = 0; i < rast->num_threads; i++) {
          util_semaphore_wait(&rast->tasks[i].work_done);
       }
    }
@@ -1161,7 +1165,7 @@ thread_function(void *init_data)
 {
    struct lp_rasterizer_task *task = (struct lp_rasterizer_task *) init_data;
    struct lp_rasterizer *rast = task->rast;
-   bool debug = false;
+   boolean debug = false;
    char thread_name[16];
 
    snprintf(thread_name, sizeof thread_name, "llvmpipe-%u", task->thread_index);
@@ -1187,7 +1191,7 @@ thread_function(void *init_data)
           *  - get next scene to rasterize
           *  - map the framebuffer surfaces
           */
-         lp_rast_begin(rast, lp_scene_dequeue(rast->full_scenes, true));
+         lp_rast_begin(rast, lp_scene_dequeue(rast->full_scenes, TRUE));
       }
 
       /* Wait for all threads to get here so that threads[1+] don't
@@ -1218,7 +1222,7 @@ thread_function(void *init_data)
    }
 
 #ifdef _WIN32
-   util_semaphore_signal(&task->exited);
+   util_semaphore_signal(&task->work_done);
 #endif
 
    return 0;
@@ -1235,9 +1239,6 @@ create_rast_threads(struct lp_rasterizer *rast)
    for (unsigned i = 0; i < rast->num_threads; i++) {
       util_semaphore_init(&rast->tasks[i].work_ready, 0);
       util_semaphore_init(&rast->tasks[i].work_done, 0);
-#ifdef _WIN32
-      util_semaphore_init(&rast->tasks[i].exited, 0);
-#endif
       if (thrd_success != u_thread_create(rast->threads + i, thread_function,
                                             (void *) &rast->tasks[i])) {
          rast->num_threads = i; /* previous thread is max */
@@ -1255,7 +1256,10 @@ create_rast_threads(struct lp_rasterizer *rast)
 struct lp_rasterizer *
 lp_rast_create(unsigned num_threads)
 {
-   struct lp_rasterizer *rast = CALLOC_STRUCT(lp_rasterizer);
+   struct lp_rasterizer *rast;
+   unsigned i;
+
+   rast = CALLOC_STRUCT(lp_rasterizer);
    if (!rast) {
       goto no_rast;
    }
@@ -1265,7 +1269,7 @@ lp_rast_create(unsigned num_threads)
       goto no_full_scenes;
    }
 
-   for (unsigned i = 0; i < MAX2(1, num_threads); i++) {
+   for (i = 0; i < MAX2(1, num_threads); i++) {
       struct lp_rasterizer_task *task = &rast->tasks[i];
       task->rast = rast;
       task->thread_index = i;
@@ -1278,7 +1282,7 @@ lp_rast_create(unsigned num_threads)
 
    rast->num_threads = num_threads;
 
-   rast->no_rast = debug_get_bool_option("LP_NO_RAST", false);
+   rast->no_rast = debug_get_bool_option("LP_NO_RAST", FALSE);
 
    create_rast_threads(rast);
 
@@ -1292,7 +1296,7 @@ lp_rast_create(unsigned num_threads)
    return rast;
 
 no_thread_data_cache:
-   for (unsigned i = 0; i < MAX2(1, rast->num_threads); i++) {
+   for (i = 0; i < MAX2(1, rast->num_threads); i++) {
       if (rast->tasks[i].thread_data.cache) {
          align_free(rast->tasks[i].thread_data.cache);
       }
@@ -1315,7 +1319,7 @@ lp_rast_destroy(struct lp_rasterizer *rast)
     * Each thread will be woken up, notice that the exit_flag is set and
     * break out of its main loop.  The thread will then exit.
     */
-   rast->exit_flag = true;
+   rast->exit_flag = TRUE;
    for (unsigned i = 0; i < rast->num_threads; i++) {
       util_semaphore_signal(&rast->tasks[i].work_ready);
    }
@@ -1331,7 +1335,7 @@ lp_rast_destroy(struct lp_rasterizer *rast)
       DWORD exit_code = STILL_ACTIVE;
       if (GetExitCodeThread(rast->threads[i].handle, &exit_code) &&
           exit_code == STILL_ACTIVE) {
-         util_semaphore_wait(&rast->tasks[i].exited);
+         util_semaphore_wait(&rast->tasks[i].work_done);
       }
 #else
       thrd_join(rast->threads[i], NULL);
@@ -1342,9 +1346,6 @@ lp_rast_destroy(struct lp_rasterizer *rast)
    for (unsigned i = 0; i < rast->num_threads; i++) {
       util_semaphore_destroy(&rast->tasks[i].work_ready);
       util_semaphore_destroy(&rast->tasks[i].work_done);
-#ifdef _WIN32
-      util_semaphore_destroy(&rast->tasks[i].exited);
-#endif
    }
    for (unsigned i = 0; i < MAX2(1, rast->num_threads); i++) {
       align_free(rast->tasks[i].thread_data.cache);
@@ -1362,10 +1363,8 @@ lp_rast_destroy(struct lp_rasterizer *rast)
    FREE(rast);
 }
 
-
-void
-lp_rast_fence(struct lp_rasterizer *rast,
-              struct lp_fence **fence)
+void lp_rast_fence(struct lp_rasterizer *rast,
+                   struct lp_fence **fence)
 {
    if (fence)
       lp_fence_reference((struct lp_fence **)fence, rast->last_fence);

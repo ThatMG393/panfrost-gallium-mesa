@@ -23,7 +23,6 @@
 
 #if defined(GLX_DIRECT_RENDERING) && !defined(GLX_USE_APPLEGL)
 
-#include <xcb/xcb.h>
 #include <xcb/xproto.h>
 #include <xcb/shm.h>
 #include <X11/Xlib.h>
@@ -32,11 +31,9 @@
 #include <dlfcn.h>
 #include "dri_common.h"
 #include "drisw_priv.h"
-#include "dri3_priv.h"
 #include <X11/extensions/shmproto.h>
 #include <assert.h>
-#include <vulkan/vulkan_core.h>
-#include <vulkan/vulkan_xcb.h>
+#include <vulkan/vulkan.h>
 #include "util/u_debug.h"
 #include "kopper_interface.h"
 #include "loader_dri_helper.h"
@@ -434,7 +431,8 @@ drisw_destroy_context(struct glx_context *context)
 }
 
 static int
-drisw_bind_context(struct glx_context *context, GLXDrawable draw, GLXDrawable read)
+drisw_bind_context(struct glx_context *context, struct glx_context *old,
+                   GLXDrawable draw, GLXDrawable read)
 {
    struct drisw_screen *psc = (struct drisw_screen *) context->psc;
    struct drisw_drawable *pdraw, *pread;
@@ -459,7 +457,7 @@ drisw_bind_context(struct glx_context *context, GLXDrawable draw, GLXDrawable re
 }
 
 static void
-drisw_unbind_context(struct glx_context *context)
+drisw_unbind_context(struct glx_context *context, struct glx_context *new)
 {
    struct drisw_screen *psc = (struct drisw_screen *) context->psc;
 
@@ -577,8 +575,7 @@ drisw_create_context_attribs(struct glx_screen *base,
 
    /* Check the renderType value */
    if (!validate_renderType_against_config(config_base, dca.render_type)) {
-      *error = BadValue;
-      return NULL;
+       return NULL;
    }
 
    if (shareList) {
@@ -593,7 +590,7 @@ drisw_create_context_attribs(struct glx_screen *base,
        *    GLX_CONTEXT_OPENGL_NO_ERROR_ARB for the context being created.
        */
       if (!!shareList->noError != !!dca.no_error) {
-         *error = BadMatch;
+         *error = __DRI_CTX_ERROR_BAD_FLAG;
          return NULL;
       }
 
@@ -645,8 +642,6 @@ drisw_create_context_attribs(struct glx_screen *base,
                                         ctx_attribs,
                                         error,
                                         pcp);
-   *error = dri_context_error_to_glx_error(*error);
-
    if (pcp->driContext == NULL) {
       free(pcp);
       return NULL;
@@ -676,21 +671,10 @@ driswCreateDrawable(struct glx_screen *base, XID xDrawable,
 {
    struct drisw_drawable *pdp;
    __GLXDRIconfigPrivate *config = (__GLXDRIconfigPrivate *) modes;
-   unsigned depth;
    struct drisw_screen *psc = (struct drisw_screen *) base;
    const __DRIswrastExtension *swrast = psc->swrast;
    const __DRIkopperExtension *kopper = psc->kopper;
    Display *dpy = psc->base.dpy;
-
-   xcb_connection_t *conn = XGetXCBConnection(dpy);
-   xcb_generic_error_t *error;
-   xcb_get_geometry_cookie_t cookie = xcb_get_geometry(conn, xDrawable);
-   xcb_get_geometry_reply_t *reply = xcb_get_geometry_reply(conn, cookie, &error);
-   if (reply)
-      depth = reply->depth;
-   free(reply);
-   if (!reply || error)
-      return NULL;
 
    pdp = calloc(1, sizeof(*pdp));
    if (!pdp)
@@ -721,17 +705,18 @@ driswCreateDrawable(struct glx_screen *base, XID xDrawable,
 
    /* Otherwise, or if XGetVisualInfo failed, ask the server */
    if (pdp->xDepth == 0) {
+      Window root;
+      int x, y;
+      unsigned uw, uh, bw, depth;
+
+      XGetGeometry(dpy, xDrawable, &root, &x, &y, &uw, &uh, &bw, &depth);
       pdp->xDepth = depth;
    }
 
    /* Create a new drawable */
    if (kopper) {
       pdp->driDrawable =
-         kopper->createNewDrawable(psc->driScreen, config->driConfig, pdp,
-         &(__DRIkopperDrawableInfo){
-            .multiplanes_available = psc->has_multibuffer,
-            .is_pixmap = !(type & GLX_WINDOW_BIT),
-         });
+         kopper->createNewDrawable(psc->driScreen, config->driConfig, pdp, !(type & GLX_WINDOW_BIT));
 
       pdp->swapInterval = dri_get_initial_swap_interval(psc->driScreen, psc->config);
       psc->kopper->setSwapInterval(pdp->driDrawable, pdp->swapInterval);
@@ -768,7 +753,7 @@ driswSwapBuffers(__GLXDRIdrawable * pdraw,
    }
 
    if (psc->kopper)
-       return psc->kopper->swapBuffers (pdp->driDrawable, 0);
+       return psc->kopper->swapBuffers (pdp->driDrawable);
 
    psc->core->swapBuffers(pdp->driDrawable);
 
@@ -889,7 +874,6 @@ check_xshm(Display *dpy)
 
    shm_cookie = xcb_query_extension(c, 7, "MIT-SHM");
    shm_reply = xcb_query_extension_reply(c, shm_cookie, NULL);
-   xshm_opcode = shm_reply->major_opcode;
 
    has_mit_shm = shm_reply->present;
    free(shm_reply);
@@ -993,17 +977,6 @@ driswCreateScreenDriver(int screen, struct glx_display *priv,
    if (!configs || !visuals) {
        ErrorMessageF("No matching fbConfigs or visuals found\n");
        goto handle_error;
-   }
-
-   if (pdpyp->zink) {
-      bool err;
-      psc->has_multibuffer = dri3_check_multibuffer(priv->dpy, &err);
-      if (!psc->has_multibuffer &&
-          !debug_get_bool_option("LIBGL_ALWAYS_SOFTWARE", false) &&
-          !debug_get_bool_option("LIBGL_KOPPER_DRI2", false)) {
-         CriticalErrorMessageF("DRI3 not available\n");
-         goto handle_error;
-      }
    }
 
    glx_config_destroy_list(psc->base.configs);

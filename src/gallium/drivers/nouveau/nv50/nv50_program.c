@@ -64,14 +64,14 @@ nv50_vertprog_assign_slots(struct nv50_ir_prog_info_out *info)
 
    for (i = 0; i < info->numSysVals; ++i) {
       switch (info->sv[i].sn) {
-      case SYSTEM_VALUE_INSTANCE_ID:
+      case TGSI_SEMANTIC_INSTANCEID:
          prog->vp.attrs[2] |= NV50_3D_VP_GP_BUILTIN_ATTR_EN_INSTANCE_ID;
          continue;
-      case SYSTEM_VALUE_VERTEX_ID:
+      case TGSI_SEMANTIC_VERTEXID:
          prog->vp.attrs[2] |= NV50_3D_VP_GP_BUILTIN_ATTR_EN_VERTEX_ID;
          prog->vp.attrs[2] |= NV50_3D_VP_GP_BUILTIN_ATTR_EN_VERTEX_ID_DRAW_ARRAYS_ADD_START;
          continue;
-      case SYSTEM_VALUE_PRIMITIVE_ID:
+      case TGSI_SEMANTIC_PRIMID:
          prog->vp.attrs[2] |= NV50_3D_VP_GP_BUILTIN_ATTR_EN_PRIMITIVE_ID;
          break;
       default:
@@ -340,7 +340,19 @@ nv50_program_translate(struct nv50_program *prog, uint16_t chipset,
    info->type = prog->type;
    info->target = chipset;
 
-   info->bin.nir = nir_shader_clone(NULL, prog->nir);
+   info->bin.sourceRep = prog->pipe.type;
+   switch (prog->pipe.type) {
+   case PIPE_SHADER_IR_TGSI:
+      info->bin.source = (void *)prog->pipe.tokens;
+      break;
+   case PIPE_SHADER_IR_NIR:
+      info->bin.source = (void *)nir_shader_clone(NULL, prog->pipe.ir.nir);
+      break;
+   default:
+      assert(!"unsupported IR!");
+      free(info);
+      return false;
+   }
 
    info->bin.smemSize = prog->cp.smem_size;
    info->io.auxCBSlot = 15;
@@ -375,11 +387,11 @@ nv50_program_translate(struct nv50_program *prog, uint16_t chipset,
    info_out.driverPriv = prog;
 
 #ifndef NDEBUG
-   info->optLevel = debug_get_num_option("NV50_PROG_OPTIMIZE", 4);
+   info->optLevel = debug_get_num_option("NV50_PROG_OPTIMIZE", 3);
    info->dbgFlags = debug_get_num_option("NV50_PROG_DEBUG", 0);
    info->omitLineNum = debug_get_num_option("NV50_PROG_DEBUG_OMIT_LINENUM", 0);
 #else
-   info->optLevel = 4;
+   info->optLevel = 3;
 #endif
 
    ret = nv50_ir_generate_code(info, &info_out);
@@ -415,15 +427,15 @@ nv50_program_translate(struct nv50_program *prog, uint16_t chipset,
    } else
    if (prog->type == PIPE_SHADER_GEOMETRY) {
       switch (info_out.prop.gp.outputPrim) {
-      case MESA_PRIM_LINE_STRIP:
+      case PIPE_PRIM_LINE_STRIP:
          prog->gp.prim_type = NV50_3D_GP_OUTPUT_PRIMITIVE_TYPE_LINE_STRIP;
          break;
-      case MESA_PRIM_TRIANGLE_STRIP:
+      case PIPE_PRIM_TRIANGLE_STRIP:
          prog->gp.prim_type = NV50_3D_GP_OUTPUT_PRIMITIVE_TYPE_TRIANGLE_STRIP;
          break;
-      case MESA_PRIM_POINTS:
+      case PIPE_PRIM_POINTS:
       default:
-         assert(info_out.prop.gp.outputPrim == MESA_PRIM_POINTS);
+         assert(info_out.prop.gp.outputPrim == PIPE_PRIM_POINTS);
          prog->gp.prim_type = NV50_3D_GP_OUTPUT_PRIMITIVE_TYPE_POINTS;
          break;
       }
@@ -439,9 +451,9 @@ nv50_program_translate(struct nv50_program *prog, uint16_t chipset,
       }
    }
 
-   if (prog->stream_output.num_outputs)
+   if (prog->pipe.stream_output.num_outputs)
       prog->so = nv50_program_create_strmout_state(&info_out,
-                                                   &prog->stream_output);
+                                                   &prog->pipe.stream_output);
 
    util_debug_message(debug, SHADER_INFO,
                       "type: %d, local: %d, shared: %d, gpr: %d, inst: %d, loops: %d, bytes: %d",
@@ -450,7 +462,8 @@ nv50_program_translate(struct nv50_program *prog, uint16_t chipset,
                       info_out.bin.codeSize);
 
 out:
-   ralloc_free(info->bin.nir);
+   if (info->bin.sourceRep == PIPE_SHADER_IR_NIR)
+      ralloc_free((void *)info->bin.source);
    FREE(info);
    return !ret;
 }
@@ -530,8 +543,8 @@ nv50_program_upload_code(struct nv50_context *nv50, struct nv50_program *prog)
 void
 nv50_program_destroy(struct nv50_context *nv50, struct nv50_program *p)
 {
-   struct nir_shader *nir = p->nir;
-   const uint8_t type = p->type;
+   const struct pipe_shader_state pipe = p->pipe;
+   const ubyte type = p->type;
 
    if (p->mem) {
       if (nv50)
@@ -547,6 +560,6 @@ nv50_program_destroy(struct nv50_context *nv50, struct nv50_program *p)
 
    memset(p, 0, sizeof(*p));
 
-   p->nir = nir;
+   p->pipe = pipe;
    p->type = type;
 }

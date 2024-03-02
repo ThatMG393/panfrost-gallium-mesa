@@ -174,10 +174,8 @@ main (int argc, char *argv[])
 
 	ret = glcpp_preprocess(ctx, &shader, &info_log, NULL, NULL, &gl_ctx);
 
-	fprintf(stderr, "%s", info_log);
-	fflush(stderr);
 	printf("%s", shader);
-	fflush(stdout);
+	fprintf(stderr, "%s", info_log);
 
 	ralloc_free(ctx);
 

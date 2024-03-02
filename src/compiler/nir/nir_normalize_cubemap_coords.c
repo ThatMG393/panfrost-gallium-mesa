@@ -19,6 +19,9 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
  * IN THE SOFTWARE.
+ *
+ * Authors:
+ *    Jason Ekstrand <jason@jlekstrand.net>
  */
 
 #include "nir.h"
@@ -44,13 +47,13 @@ normalize_cubemap_coords(nir_builder *b, nir_instr *instr, void *data)
    if (idx < 0)
       return false;
 
-   nir_def *orig_coord =
-      tex->src[idx].src.ssa;
+   nir_ssa_def *orig_coord =
+      nir_ssa_for_src(b, tex->src[idx].src, nir_tex_instr_src_size(tex, idx));
    assert(orig_coord->num_components >= 3);
 
-   nir_def *orig_xyz = nir_trim_vector(b, orig_coord, 3);
-   nir_def *norm = nir_fmax_abs_vec_comp(b, orig_xyz);
-   nir_def *normalized = nir_fmul(b, orig_coord, nir_frcp(b, norm));
+   nir_ssa_def *orig_xyz = nir_trim_vector(b, orig_coord, 3);
+   nir_ssa_def *norm = nir_fmax_abs_vec_comp(b, orig_xyz);
+   nir_ssa_def *normalized = nir_fmul(b, orig_coord, nir_frcp(b, norm));
 
    /* Array indices don't have to be normalized, so make a new vector
     * with the coordinate's array index untouched.
@@ -60,7 +63,7 @@ normalize_cubemap_coords(nir_builder *b, nir_instr *instr, void *data)
                                          nir_channel(b, orig_coord, 3), 3);
    }
 
-   nir_src_rewrite(&tex->src[idx].src, normalized);
+   nir_instr_rewrite_src_ssa(instr, &tex->src[idx].src, normalized);
    return true;
 }
 
@@ -69,6 +72,6 @@ nir_normalize_cubemap_coords(nir_shader *shader)
 {
    return nir_shader_instructions_pass(shader, normalize_cubemap_coords,
                                        nir_metadata_block_index |
-                                          nir_metadata_dominance,
+                                       nir_metadata_dominance,
                                        NULL);
 }

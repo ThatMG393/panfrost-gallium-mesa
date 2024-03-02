@@ -111,6 +111,14 @@ _mesa_texstore_can_use_memcpy(struct gl_context *ctx,
 
 
 extern void
+_mesa_store_teximage(struct gl_context *ctx,
+                     GLuint dims,
+                     struct gl_texture_image *texImage,
+                     GLenum format, GLenum type, const GLvoid *pixels,
+                     const struct gl_pixelstore_attrib *packing);
+
+
+extern void
 _mesa_store_texsubimage(struct gl_context *ctx, GLuint dims,
                         struct gl_texture_image *texImage,
                         GLint xoffset, GLint yoffset, GLint zoffset,

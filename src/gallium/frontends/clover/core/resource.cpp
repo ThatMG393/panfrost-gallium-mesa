@@ -27,7 +27,6 @@
 #include "util/format/u_format.h"
 #include "util/u_inlines.h"
 #include "util/u_resource.h"
-#include "util/u_surface.h"
 
 using namespace clover;
 
@@ -77,11 +76,7 @@ resource::clear(command_queue &q, const vector &origin, const vector &region,
       std::string texture_data;
       texture_data.reserve(util_format_get_blocksize(pipe->format));
       util_format_pack_rgba(pipe->format, &texture_data[0], data.data(), 1);
-      if (q.pipe->clear_texture) {
-         q.pipe->clear_texture(q.pipe, pipe, 0, box(from, region), texture_data.data());
-      } else {
-         u_default_clear_texture(q.pipe, pipe, 0, box(from, region), texture_data.data());
-      }
+      q.pipe->clear_texture(q.pipe, pipe, 0, box(from, region), texture_data.data());
    }
 }
 

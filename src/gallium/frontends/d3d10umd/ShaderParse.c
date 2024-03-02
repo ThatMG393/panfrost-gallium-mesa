@@ -281,18 +281,18 @@ parse_operand_index(const unsigned **curr,
    }
 }
 
-bool
+boolean
 Shader_parse_opcode(struct Shader_parser *parser,
                          struct Shader_opcode *opcode)
 {
    const unsigned *curr = parser->curr;
    const struct dx10_opcode_info *info;
    unsigned length;
-   bool opcode_is_extended;
+   boolean opcode_is_extended;
    unsigned i;
 
    if (curr >= parser->code + parser->header.size) {
-      return false;
+      return FALSE;
    }
 
    memset(opcode, 0, sizeof *opcode);
@@ -318,7 +318,7 @@ Shader_parse_opcode(struct Shader_parser *parser,
       curr += opcode->customdata.u.constbuf.count;
 
       parser->curr = curr;
-      return true;
+      return TRUE;
    }
 
    opcode->dcl_siv_name = D3D10_SB_NAME_UNDEFINED;
@@ -414,7 +414,7 @@ Shader_parse_opcode(struct Shader_parser *parser,
        *      Should be okay to continue execution -- we have enough info
        *      to skip to the next instruction.
        */
-      LOG_UNSUPPORTED(true);
+      LOG_UNSUPPORTED(TRUE);
       opcode->num_dst = 0;
       opcode->num_src = 0;
       goto skip;
@@ -450,7 +450,7 @@ Shader_parse_opcode(struct Shader_parser *parser,
 
    /* Source operands. */
    for (i = 0; i < info->num_src; i++) {
-      bool extended;
+      boolean extended;
       D3D10_SB_OPERAND_NUM_COMPONENTS num_components;
 
       extended = DECODE_IS_D3D10_SB_OPERAND_EXTENDED(*curr);
@@ -596,7 +596,7 @@ skip:
    /* Advance to the next opcode. */
    parser->curr += length;
 
-   return true;
+   return TRUE;
 }
 
 void

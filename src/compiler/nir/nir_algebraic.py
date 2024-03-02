@@ -19,6 +19,9 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
+#
+# Authors:
+#    Jason Ekstrand (jason@jlekstrand.net)
 
 import ast
 from collections import defaultdict
@@ -736,17 +739,6 @@ class BitSizeValidator(object):
       if isinstance(val, Expression):
          for src in val.sources:
             self.validate_replace(src, search)
-      elif isinstance(val, Variable):
-          # These catch problems when someone copies and pastes the search
-          # into the replacement.
-          assert not val.is_constant, \
-              'Replacement variables must not be marked constant.'
-
-          assert val.cond_index == -1, \
-              'Replacement variables must not have a condition.'
-
-          assert not val.required_type, \
-              'Replacement variables must not have a required type.'
 
    def validate(self, search, replace):
       self.is_search = True
@@ -936,12 +928,12 @@ class TreeAutomaton(object):
             stripped = opcode.rstrip('0123456789')
             if stripped in conv_opcode_types:
                # Matches that use conversion opcodes with a specific type,
-               # like f2i1, are tricky.  Either we construct the automaton to
-               # match specific NIR opcodes like nir_op_f2i1, in which case we
+               # like f2b1, are tricky.  Either we construct the automaton to
+               # match specific NIR opcodes like nir_op_f2b1, in which case we
                # need to create separate items for each possible NIR opcode
-               # for patterns that have a generic opcode like f2i, or we
+               # for patterns that have a generic opcode like f2b, or we
                # construct it to match the search opcode, in which case we
-               # need to map f2i1 to f2i when constructing the automaton. Here
+               # need to map f2b1 to f2b when constructing the automaton. Here
                # we do the latter.
                opcode = stripped
             self.opcodes.add(opcode)
@@ -1168,12 +1160,8 @@ static const nir_algebraic_table ${pass_name}_table = {
 };
 
 bool
-${pass_name}(
-   nir_shader *shader
-% for type, name in params:
-   , ${type} ${name}
-% endfor
-) {
+${pass_name}(nir_shader *shader)
+{
    bool progress = false;
    bool condition_flags[${len(condition_list)}];
    const nir_shader_compiler_options *options = shader->options;
@@ -1186,8 +1174,11 @@ ${pass_name}(
    condition_flags[${index}] = ${condition};
    % endfor
 
-   nir_foreach_function_impl(impl, shader) {
-     progress |= nir_algebraic_impl(impl, condition_flags, &${pass_name}_table);
+   nir_foreach_function(function, shader) {
+      if (function->impl) {
+         progress |= nir_algebraic_impl(function->impl, condition_flags,
+                                        &${pass_name}_table);
+      }
    }
 
    return progress;
@@ -1196,14 +1187,12 @@ ${pass_name}(
 
 
 class AlgebraicPass(object):
-   # params is a list of `("type", "name")` tuples
-   def __init__(self, pass_name, transforms, params=[]):
+   def __init__(self, pass_name, transforms):
       self.xforms = []
       self.opcode_xforms = defaultdict(lambda : [])
       self.pass_name = pass_name
       self.expression_cond = {}
       self.variable_cond = {}
-      self.params = params
 
       error = False
 
@@ -1269,8 +1258,7 @@ class AlgebraicPass(object):
                                              expression_cond = sorted(self.expression_cond.items(), key=lambda kv: kv[1]),
                                              variable_cond = sorted(self.variable_cond.items(), key=lambda kv: kv[1]),
                                              get_c_opcode=get_c_opcode,
-                                             itertools=itertools,
-                                             params=self.params)
+                                             itertools=itertools)
 
 # The replacement expression isn't necessarily exact if the search expression is exact.
 def ignore_exact(*expr):

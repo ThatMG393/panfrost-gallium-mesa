@@ -27,11 +27,13 @@
  *
  **************************************************************************/
 
+
 /**
  * Logging facility for debug/info messages.
  * _EGL_FATAL messages are printed to stderr
  * The EGL_LOG_LEVEL var controls the output of other warning/info/debug msgs.
  */
+
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -54,8 +56,9 @@
 
 #endif /* HAVE_ANDROID_PLATFORM */
 
-#define MAXSTRING          1000
+#define MAXSTRING 1000
 #define FALLBACK_LOG_LEVEL _EGL_WARNING
+
 
 static struct {
    simple_mtx_t mutex;
@@ -70,10 +73,11 @@ static struct {
 
 static const char *level_strings[] = {
    [_EGL_FATAL] = "fatal",
-   [_EGL_WARNING] = "warning",
+   [_EGL_WARNING]  = "warning",
    [_EGL_INFO] = "info",
    [_EGL_DEBUG] = "debug",
 };
+
 
 /**
  * The default logger.  It prints the message to stderr.
@@ -84,7 +88,7 @@ _eglDefaultLogger(EGLint level, const char *msg)
 #ifdef HAVE_ANDROID_PLATFORM
    static const int egl2alog[] = {
       [_EGL_FATAL] = ANDROID_LOG_ERROR,
-      [_EGL_WARNING] = ANDROID_LOG_WARN,
+      [_EGL_WARNING]  = ANDROID_LOG_WARN,
       [_EGL_INFO] = ANDROID_LOG_INFO,
       [_EGL_DEBUG] = ANDROID_LOG_DEBUG,
    };
@@ -93,6 +97,7 @@ _eglDefaultLogger(EGLint level, const char *msg)
    fprintf(stderr, "libEGL %s: %s\n", level_strings[level], msg);
 #endif /* HAVE_ANDROID_PLATFORM */
 }
+
 
 /**
  * Initialize the logging facility.
@@ -137,6 +142,7 @@ _eglGetLogLevel(void)
 {
    return logging.level;
 }
+
 
 /**
  * Log a message with message logger.

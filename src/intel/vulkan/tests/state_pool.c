@@ -26,41 +26,30 @@
 #include "anv_private.h"
 #include "test_common.h"
 
+#define NUM_THREADS 8
+#define STATES_PER_THREAD_LOG2 10
+#define STATES_PER_THREAD (1 << STATES_PER_THREAD_LOG2)
+#define NUM_RUNS 64
+
 #include "state_pool_test_helper.h"
 
-void state_pool_test(void);
-
-void state_pool_test(void)
+int main(void)
 {
-   const unsigned num_threads = 8;
-   const unsigned states_per_thread = 1 << 10;
-
    struct anv_physical_device physical_device = { };
    struct anv_device device = {};
    struct anv_state_pool state_pool;
 
-   test_device_info_init(&physical_device.info);
    anv_device_set_physical(&device, &physical_device);
-   device.kmd_backend = anv_kmd_backend_get(INTEL_KMD_TYPE_STUB);
    pthread_mutex_init(&device.mutex, NULL);
    anv_bo_cache_init(&device.bo_cache, &device);
 
-   const unsigned num_runs = 64;
-   const uint32_t _1Gb = 1024 * 1024 * 1024;
-   for (unsigned i = 0; i < num_runs; i++) {
-      anv_state_pool_init(&state_pool, &device,
-                          &(struct anv_state_pool_params) {
-                             .name         = "test",
-                             .base_address = 4096,
-                             .start_offset = 0,
-                             .block_size   = 256,
-                             .max_size     = _1Gb,
-                          });
+   for (unsigned i = 0; i < NUM_RUNS; i++) {
+      anv_state_pool_init(&state_pool, &device, "test", 4096, 0, 256);
 
       /* Grab one so a zero offset is impossible */
       anv_state_pool_alloc(&state_pool, 16, 16);
 
-      run_state_pool_test(&state_pool, num_threads, states_per_thread);
+      run_state_pool_test(&state_pool);
 
       anv_state_pool_finish(&state_pool);
    }

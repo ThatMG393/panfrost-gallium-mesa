@@ -357,7 +357,6 @@ static void do_advanced_regalloc(struct regalloc_state * s)
 
 	if (!ra_allocate(graph)) {
 		rc_error(s->C, "Ran out of hardware temporaries\n");
-                ralloc_free(graph);
 		return;
 	}
 

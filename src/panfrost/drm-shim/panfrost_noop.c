@@ -1,7 +1,6 @@
 /*
  * Copyright (C) 2021 Icecream95
  * Copyright (C) 2019 Google LLC
- * Copyright (C) 2024 Collabora, Ltd.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -48,7 +47,8 @@ pan_ioctl_get_param(int fd, unsigned long request, void *arg)
    struct drm_panfrost_get_param *gp = arg;
 
    switch (gp->param) {
-   case DRM_PANFROST_PARAM_GPU_PROD_ID: {
+   case DRM_PANFROST_PARAM_GPU_PROD_ID:
+   {
       char *override_version = getenv("PAN_GPU_ID");
 
       if (override_version)

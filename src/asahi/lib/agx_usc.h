@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: MIT
  */
 
-#pragma once
+#ifndef AGX_USC_H
+#define AGX_USC_H
 
-#include "asahi/genxml/agx_pack.h"
+#include "asahi/lib/agx_pack.h"
 #include "asahi/lib/pool.h"
 
 /* Opaque structure representing a USC program being constructed */
@@ -19,7 +20,8 @@ struct agx_usc_builder {
 };
 
 static struct agx_usc_builder
-agx_alloc_usc_control(struct agx_pool *pool, unsigned num_reg_bindings)
+agx_alloc_usc_control(struct agx_pool *pool,
+                      unsigned num_reg_bindings)
 {
    STATIC_ASSERT(AGX_USC_UNIFORM_HIGH_LENGTH == AGX_USC_UNIFORM_LENGTH);
    STATIC_ASSERT(AGX_USC_TEXTURE_LENGTH == AGX_USC_UNIFORM_LENGTH);
@@ -41,7 +43,7 @@ agx_alloc_usc_control(struct agx_pool *pool, unsigned num_reg_bindings)
 #endif
    };
 
-   b.head = (uint8_t *)b.T.cpu;
+   b.head = (uint8_t *) b.T.cpu;
 
    return b;
 }
@@ -50,24 +52,22 @@ static bool
 agx_usc_builder_validate(struct agx_usc_builder *b, size_t size)
 {
 #ifndef NDEBUG
-   assert(((b->head - (uint8_t *)b->T.cpu) + size) <= b->size);
+   assert(((b->head - (uint8_t *) b->T.cpu) + size) <= b->size);
 #endif
 
    return true;
 }
 
-#define agx_usc_pack(b, struct_name, template)                                 \
-   for (bool it =                                                              \
-           agx_usc_builder_validate((b), AGX_USC_##struct_name##_LENGTH);      \
-        it; it = false, (b)->head += AGX_USC_##struct_name##_LENGTH)           \
+#define agx_usc_pack(b, struct_name, template) \
+   for (bool it = agx_usc_builder_validate((b), AGX_USC_##struct_name##_LENGTH); \
+        it; it = false, (b)->head += AGX_USC_##struct_name##_LENGTH) \
       agx_pack((b)->head, USC_##struct_name, template)
 
 static void
 agx_usc_uniform(struct agx_usc_builder *b, unsigned start_halfs,
                 unsigned size_halfs, uint64_t buffer)
 {
-   assert((start_halfs + size_halfs) <= (1 << 9) && "uniform file overflow");
-   assert(size_halfs <= 64 && "caller's responsibility to split");
+   assert((start_halfs + size_halfs) < (1 << 9) && "uniform file overflow");
 
    if (start_halfs & BITFIELD_BIT(8)) {
       agx_usc_pack(b, UNIFORM_HIGH, cfg) {
@@ -99,3 +99,5 @@ agx_usc_shared_none(struct agx_usc_builder *b)
       cfg.bytes_per_threadgroup = 65536;
    }
 }
+
+#endif

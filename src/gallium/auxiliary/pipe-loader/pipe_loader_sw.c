@@ -31,7 +31,6 @@
 
 #include "pipe_loader_priv.h"
 
-#include "util/detect_os.h"
 #include "util/os_file.h"
 #include "util/u_memory.h"
 #include "util/u_dl.h"
@@ -70,23 +69,23 @@ static const struct sw_driver_descriptor driver_descriptors = {
 #ifdef HAVE_DRI
       {
          .name = "dri",
-         .create_winsys_dri = dri_create_sw_winsys,
+         .create_winsys = dri_create_sw_winsys,
       },
 #endif
 #ifdef HAVE_DRISW_KMS
       {
          .name = "kms_dri",
-         .create_winsys_kms_dri = kms_dri_create_winsys,
+         .create_winsys = kms_dri_create_winsys,
       },
 #endif
-#if !DETECT_OS_ANDROID
+#ifndef __ANDROID__
       {
          .name = "null",
          .create_winsys = null_sw_create,
       },
       {
          .name = "wrapped",
-         .create_winsys_wrapped = wrapper_sw_winsys_wrap_pipe_screen,
+         .create_winsys = wrapper_sw_winsys_wrap_pipe_screen,
       },
 #endif
       { 0 },
@@ -100,22 +99,22 @@ static const struct sw_driver_descriptor kopper_driver_descriptors = {
    .winsys = {
       {
          .name = "dri",
-         .create_winsys_dri = dri_create_sw_winsys,
+         .create_winsys = dri_create_sw_winsys,
       },
 #ifdef HAVE_DRISW_KMS
       {
          .name = "kms_dri",
-         .create_winsys_kms_dri = kms_dri_create_winsys,
+         .create_winsys = kms_dri_create_winsys,
       },
 #endif
-#if !DETECT_OS_ANDROID
+#ifndef __ANDROID__
       {
          .name = "null",
          .create_winsys = null_sw_create,
       },
       {
          .name = "wrapped",
-         .create_winsys_wrapped = wrapper_sw_winsys_wrap_pipe_screen,
+         .create_winsys = wrapper_sw_winsys_wrap_pipe_screen,
       },
 #endif
       { 0 },
@@ -217,7 +216,7 @@ pipe_loader_sw_probe_dri(struct pipe_loader_device **devs, const struct drisw_lo
 
    for (i = 0; sdev->dd->winsys[i].name; i++) {
       if (strcmp(sdev->dd->winsys[i].name, "dri") == 0) {
-         sdev->ws = sdev->dd->winsys[i].create_winsys_dri(drisw_lf);
+         sdev->ws = sdev->dd->winsys[i].create_winsys(drisw_lf);
          break;
       }
    }
@@ -247,7 +246,7 @@ pipe_loader_vk_probe_dri(struct pipe_loader_device **devs, const struct drisw_lo
 
    for (i = 0; sdev->dd->winsys[i].name; i++) {
       if (strcmp(sdev->dd->winsys[i].name, "dri") == 0) {
-         sdev->ws = sdev->dd->winsys[i].create_winsys_dri(drisw_lf);
+         sdev->ws = sdev->dd->winsys[i].create_winsys(drisw_lf);
          break;
       }
    }
@@ -283,7 +282,7 @@ pipe_loader_sw_probe_kms(struct pipe_loader_device **devs, int fd)
 
    for (i = 0; sdev->dd->winsys[i].name; i++) {
       if (strcmp(sdev->dd->winsys[i].name, "kms_dri") == 0) {
-         sdev->ws = sdev->dd->winsys[i].create_winsys_kms_dri(sdev->fd);
+         sdev->ws = sdev->dd->winsys[i].create_winsys(sdev->fd);
          break;
       }
    }
@@ -346,7 +345,7 @@ pipe_loader_sw_probe(struct pipe_loader_device **devs, int ndev)
    return i;
 }
 
-bool
+boolean
 pipe_loader_sw_probe_wrapped(struct pipe_loader_device **dev,
                              struct pipe_screen *screen)
 {
@@ -361,7 +360,7 @@ pipe_loader_sw_probe_wrapped(struct pipe_loader_device **dev,
 
    for (i = 0; sdev->dd->winsys[i].name; i++) {
       if (strcmp(sdev->dd->winsys[i].name, "wrapped") == 0) {
-         sdev->ws = sdev->dd->winsys[i].create_winsys_wrapped(screen);
+         sdev->ws = sdev->dd->winsys[i].create_winsys(screen);
          break;
       }
    }
@@ -383,7 +382,6 @@ pipe_loader_sw_release(struct pipe_loader_device **dev)
    UNUSED struct pipe_loader_sw_device *sdev =
       pipe_loader_sw_device(*dev);
 
-   sdev->ws->destroy(sdev->ws);
 #ifndef GALLIUM_STATIC_TARGETS
    if (sdev->lib)
       util_dl_close(sdev->lib);
@@ -425,6 +423,8 @@ pipe_loader_sw_create_screen(struct pipe_loader_device *dev,
    struct pipe_screen *screen;
 
    screen = sdev->dd->create_screen(sdev->ws, config, sw_vk);
+   if (!screen)
+      sdev->ws->destroy(sdev->ws);
 
    return screen ? debug_screen_wrap(screen) : NULL;
 }

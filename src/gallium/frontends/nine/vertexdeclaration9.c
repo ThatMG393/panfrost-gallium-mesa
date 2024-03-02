@@ -90,7 +90,7 @@ static inline unsigned decltype_size(BYTE type)
  * simple lookup table won't work in that case. Let's just wait
  * with making this more generic until we need it.
  */
-static inline bool
+static inline boolean
 nine_d3ddeclusage_check(unsigned usage, unsigned usage_idx)
 {
     switch (usage) {
@@ -104,7 +104,7 @@ nine_d3ddeclusage_check(unsigned usage, unsigned usage_idx)
     case D3DDECLUSAGE_BLENDWEIGHT:
     case D3DDECLUSAGE_BLENDINDICES:
     case D3DDECLUSAGE_COLOR:
-        return true;
+        return TRUE;
     case D3DDECLUSAGE_PSIZE:
     case D3DDECLUSAGE_FOG:
     case D3DDECLUSAGE_SAMPLE:
@@ -112,7 +112,7 @@ nine_d3ddeclusage_check(unsigned usage, unsigned usage_idx)
     case D3DDECLUSAGE_TEXCOORD:
         return usage_idx <= 15;
     default:
-        return false;
+        return FALSE;
     }
 }
 
@@ -204,7 +204,7 @@ NineVertexDeclaration9_ctor( struct NineVertexDeclaration9 *This,
         This->usage_map[i] = usage;
 
         if (This->decls[i].Usage == D3DDECLUSAGE_POSITIONT)
-            This->position_t = true;
+            This->position_t = TRUE;
 
         This->elems[i].src_offset = This->decls[i].Offset;
         This->elems[i].instance_divisor = 0;

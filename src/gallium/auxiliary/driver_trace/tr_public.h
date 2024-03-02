@@ -28,7 +28,7 @@
 #ifndef TR_PUBLIC_H
 #define TR_PUBLIC_H
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 
 #ifdef __cplusplus
 extern "C" {

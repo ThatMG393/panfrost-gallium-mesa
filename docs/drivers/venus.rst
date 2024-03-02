@@ -3,9 +3,12 @@ Virtio-GPU Venus
 
 Venus is a Virtio-GPU protocol for Vulkan command serialization.  The protocol
 definition and codegen are hosted at `venus-protocol
-<https://gitlab.freedesktop.org/virgl/venus-protocol>`__.  The renderer is
+<https://gitlab.freedesktop.org/olv/venus-protocol>`__.  The renderer is
 hosted at `virglrenderer
 <https://gitlab.freedesktop.org/virgl/virglrenderer>`__.
+
+The protocol is still under development.  This driver and the renderer are
+both considered experimental.
 
 Requirements
 ------------
@@ -31,8 +34,6 @@ tested with
 
 The Venus driver requires supports for
 
-- ``VIRTGPU_PARAM_3D_FEATURES``
-- ``VIRTGPU_PARAM_CAPSET_QUERY_FIX``
 - ``VIRTGPU_PARAM_RESOURCE_BLOB``
 - ``VIRTGPU_PARAM_HOST_VISIBLE``
 - ``VIRTGPU_PARAM_CROSS_DEVICE``
@@ -51,19 +52,17 @@ vtest
 The simplest way to test Venus is to use virglrenderer's vtest server.  To
 build virglrenderer with Venus support and to start the vtest server,
 
-.. code-block:: sh
+.. code-block:: console
 
     $ git clone https://gitlab.freedesktop.org/virgl/virglrenderer.git
     $ cd virglrenderer
-    $ meson out -Dvenus=true
-    $ meson compile -C out
-    $ meson devenv -C out
-    $ ./vtest/virgl_test_server --venus
-    $ exit
+    $ meson out -Dvenus-experimental=true
+    $ ninja -C out
+    $ ./out/vtest/virgl_test_server --venus
 
 In another shell,
 
-.. code-block:: sh
+.. code-block:: console
 
     $ export VK_ICD_FILENAMES=<path-to-virtio_icd.x86_64.json>
     $ export VN_DEBUG=vtest
@@ -84,7 +83,7 @@ driver, which was upstreamed in kernel 5.16.
 crosvm is written in Rust.  To build crosvm, make sure Rust has been installed
 and
 
-.. code-block:: sh
+.. code-block:: console
 
  $ git clone --recurse-submodules \
        https://chromium.googlesource.com/chromiumos/platform/crosvm
@@ -97,14 +96,15 @@ Note that crosvm must be built with ``default-no-sandbox`` or started with
 
 This is how one might want to start crosvm
 
-.. code-block:: sh
+.. code-block:: console
 
  $ sudo LD_LIBRARY_PATH=<...> VK_ICD_FILENAMES=<...> ./target/debug/crosvm run \
        --gpu vulkan=true \
-       --gpu-render-server path=<path-to-virglrenderer>/out/server/virgl_render_server \
        --display-window-keyboard \
        --display-window-mouse \
-       --net "host-ip 192.168.0.1,netmask=255.255.255.0,mac=12:34:56:78:9a:bc" \
+       --host_ip 192.168.0.1 \
+       --netmask 255.255.255.0 \
+       --mac 12:34:56:78:9a:bc \
        --rwdisk disk.img \
        -p root=/dev/vda1 \
        <path-to-bzImage>
@@ -126,14 +126,14 @@ the `Chrome OS kernel
 
 To build minigbm and to enable minigbm support in virglrenderer,
 
-.. code-block:: sh
+.. code-block:: console
 
  $ git clone https://chromium.googlesource.com/chromiumos/platform/minigbm
  $ cd minigbm
  $ CFLAGS=-DDRV_<I915-or-your-driver> OUT=out DESTDIR=out/install make install
  $ cd ../virglrenderer
  $ meson configure out -Dminigbm_allocation=true
- $ meson compile -C out
+ $ ninja -C out
 
 Make sure a host Wayland compositor is running.  Replace
 ``--display-window-keyboard --display-window-mouse`` by
@@ -141,12 +141,12 @@ Make sure a host Wayland compositor is running.  Replace
 
 In the guest, build and start sommelier, the special Wayland compositor,
 
-.. code-block:: sh
+.. code-block:: console
 
  $ git clone https://chromium.googlesource.com/chromiumos/platform2
  $ cd platform2/vm_tools/sommelier
  $ meson out -Dxwayland_path=/usr/bin/Xwayland -Dxwayland_gl_driver_path=/usr/lib/dri
- $ meson compile -C out
+ $ ninja -C out
  $ sudo chmod 777 /dev/wl0
  $ ./out/sommelier -X --glamor
        --xwayland-gl-driver-path=<path-to-locally-built-gl-driver> \

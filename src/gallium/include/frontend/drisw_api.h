@@ -1,7 +1,7 @@
 #ifndef _DRISW_API_H_
 #define _DRISW_API_H_
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "sw_winsys.h"
 
 struct pipe_screen;

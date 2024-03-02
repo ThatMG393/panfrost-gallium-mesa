@@ -119,7 +119,7 @@ tgsi_default_declaration( void )
 
 static struct tgsi_declaration
 tgsi_build_declaration(
-   enum tgsi_file_type file,
+   unsigned file,
    unsigned usage_mask,
    unsigned interpolate,
    unsigned dimension,
@@ -809,9 +809,7 @@ tgsi_default_texture_offset( void )
 
 static struct tgsi_texture_offset
 tgsi_build_texture_offset(
-   int index,
-   enum tgsi_file_type file,
-   int swizzle_x, int swizzle_y, int swizzle_z,
+   int index, int file, int swizzle_x, int swizzle_y, int swizzle_z,
    struct tgsi_instruction *instruction,
    struct tgsi_header *header )
 {
@@ -850,7 +848,7 @@ tgsi_default_src_register( void )
 
 static struct tgsi_src_register
 tgsi_build_src_register(
-   enum tgsi_file_type file,
+   unsigned file,
    unsigned swizzle_x,
    unsigned swizzle_y,
    unsigned swizzle_z,
@@ -904,7 +902,7 @@ tgsi_default_ind_register( void )
 
 static struct tgsi_ind_register
 tgsi_build_ind_register(
-   enum tgsi_file_type file,
+   unsigned file,
    unsigned swizzle,
    int index,
    unsigned arrayid,
@@ -989,7 +987,7 @@ tgsi_default_dst_register( void )
 
 static struct tgsi_dst_register
 tgsi_build_dst_register(
-   enum tgsi_file_type file,
+   unsigned file,
    unsigned mask,
    unsigned indirect,
    unsigned dimension,
@@ -1392,4 +1390,19 @@ tgsi_build_full_property(
    }
 
    return size;
+}
+
+struct tgsi_full_src_register
+tgsi_full_src_register_from_dst(const struct tgsi_full_dst_register *dst)
+{
+   struct tgsi_full_src_register src;
+   src.Register = tgsi_default_src_register();
+   src.Register.File = dst->Register.File;
+   src.Register.Indirect = dst->Register.Indirect;
+   src.Register.Dimension = dst->Register.Dimension;
+   src.Register.Index = dst->Register.Index;
+   src.Indirect = dst->Indirect;
+   src.Dimension = dst->Dimension;
+   src.DimIndirect = dst->DimIndirect;
+   return src;
 }

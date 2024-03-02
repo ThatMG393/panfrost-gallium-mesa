@@ -41,6 +41,7 @@ Function::Function(Program *p, const char *fnName, uint32_t label)
    binPos = 0;
    binSize = 0;
 
+   stackPtr = NULL;
    tlsBase = 0;
    tlsSize = 0;
 
@@ -433,6 +434,16 @@ Function::buildLiveSets()
 {
    for (unsigned i = 0; i <= loopNestingBound; ++i)
       buildLiveSetsPreSSA(BasicBlock::get(cfg.getRoot()), cfg.nextSequence());
+
+   for (ArrayList::Iterator bi = allBBlocks.iterator(); !bi.end(); bi.next())
+      BasicBlock::get(bi)->liveSet.marker = false;
+}
+
+void
+Function::buildDefSets()
+{
+   for (unsigned i = 0; i <= loopNestingBound; ++i)
+      buildDefSetsPreSSA(BasicBlock::get(cfgExit), cfg.nextSequence());
 
    for (ArrayList::Iterator bi = allBBlocks.iterator(); !bi.end(); bi.next())
       BasicBlock::get(bi)->liveSet.marker = false;

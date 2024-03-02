@@ -57,24 +57,12 @@ libosmesa = shared_library(
   dependencies : [
     dep_ws2_32, dep_selinux, dep_thread, dep_clock, dep_unwind, driver_swrast, driver_panfrost, dep_libdrm
   ],
-  name_prefix : host_machine.system() == 'windows' ? '' : [],  # otherwise mingw will create libosmesa.dll
-  soversion : host_machine.system() == 'windows' ? '' : '8',
+  name_prefix : host_machine.system() == 'windows' ? '' : 'lib',  # otherwise mingw will create libosmesa.dll
+  soversion : '',
   version : '8.0.0',
   darwin_versions : '9.0.0',
   install : true,
 )
-
-if with_symbols_check
-  test('osmesa-symbols-check',
-    symbols_check,
-    args : [
-      '--lib', libosmesa,
-      '--symbols-file', files('osmesa-symbols.txt'),
-      symbols_check_args,
-    ],
-    suite : ['gallium'],
-  )
-endif
 
 pkg.generate(
   name : 'osmesa',
@@ -94,6 +82,6 @@ if with_tests
       dependencies : [idep_gtest],
     ),
     suite: 'gallium',
-    protocol : 'gtest',
+    protocol : gtest_test_protocol,
   )
 endif

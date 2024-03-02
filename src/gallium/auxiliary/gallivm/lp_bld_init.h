@@ -30,7 +30,7 @@
 #define LP_BLD_INIT_H
 
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "util/u_pointer.h" // for func_pointer
 #include "lp_bld.h"
 #include <llvm-c/ExecutionEngine.h>
@@ -66,15 +66,10 @@ struct gallivm_state
    LLVMTypeRef coro_free_hook_type;
 
    LLVMValueRef get_time_hook;
-
-   LLVMValueRef texture_descriptor;
-   LLVMValueRef sampler_descriptor;
 };
 
-unsigned
-lp_build_init_native_width(void);
 
-bool
+boolean
 lp_build_init(void);
 
 

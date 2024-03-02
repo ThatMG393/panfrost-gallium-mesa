@@ -32,14 +32,14 @@
 #ifndef _RTASM_EXECMEM_H_
 #define _RTASM_EXECMEM_H_
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 
 
 extern void *
 rtasm_exec_malloc( size_t size );
 
 
-extern void
+extern void 
 rtasm_exec_free( void *addr );
 
 

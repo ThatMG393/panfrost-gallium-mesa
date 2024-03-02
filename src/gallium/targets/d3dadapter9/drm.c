@@ -69,7 +69,6 @@ const driOptionDescription __driConfigOptionsNine[] = {
         DRI_CONF_NINE_SHADERINLINECONSTANTS(false)
         DRI_CONF_NINE_SHMEM_LIMIT()
         DRI_CONF_NINE_FORCESWRENDERINGONCPU(false)
-        DRI_CONF_NINE_FORCEFEATURESEMULATION(false)
     DRI_CONF_SECTION_END
     DRI_CONF_SECTION_DEBUG
         DRI_CONF_OVERRIDE_VRAM_SIZE()
@@ -167,7 +166,7 @@ read_descriptor( struct d3dadapter9_context *ctx,
                  "%s", ctx->hal->get_name(ctx->hal));
 
     if (override_vendorid > 0) {
-        found = false;
+        found = FALSE;
         /* fill in device_id and card name for fake vendor */
         for (i = 0; i < sizeof(fallback_cards)/sizeof(fallback_cards[0]); i++) {
             if (fallback_cards[i].vendor_id == override_vendorid) {
@@ -179,7 +178,7 @@ read_descriptor( struct d3dadapter9_context *ctx,
                 drvid->DeviceId = fallback_cards[i].device_id;
                 snprintf(drvid->Description, sizeof(drvid->Description),
                              "%s", fallback_cards[i].name);
-                found = true;
+                found = TRUE;
                 break;
             }
         }
@@ -231,11 +230,11 @@ drm_create_adapter( int fd,
 
     /* Although the fd is provided from external source, mesa/nine
      * takes ownership of it. */
-    different_device = loader_get_user_preferred_fd(&fd, NULL);
+    fd = loader_get_user_preferred_fd(fd, &different_device);
     ctx->fd = fd;
     ctx->base.linear_framebuffer = different_device;
 
-    if (!pipe_loader_drm_probe_fd(&ctx->dev, fd, false)) {
+    if (!pipe_loader_drm_probe_fd(&ctx->dev, fd)) {
         ERR("Failed to probe drm fd %d.\n", fd);
         FREE(ctx);
         close(fd);
@@ -269,9 +268,9 @@ drm_create_adapter( int fd,
     if (driCheckOption(&userInitOptions, "throttle_value", DRI_INT)) {
         throttling_value_user = driQueryOptioni(&userInitOptions, "throttle_value");
         if (throttling_value_user == -1)
-            ctx->base.throttling = false;
+            ctx->base.throttling = FALSE;
         else if (throttling_value_user >= 0) {
-            ctx->base.throttling = true;
+            ctx->base.throttling = TRUE;
             ctx->base.throttling_value = throttling_value_user;
         }
     }
@@ -285,7 +284,7 @@ drm_create_adapter( int fd,
 
     if (ctx->base.tearfree_discard && !ctx->base.discard_delayed_release) {
         ERR("tearfree_discard requires discard_delayed_release\n");
-        ctx->base.tearfree_discard = false;
+        ctx->base.tearfree_discard = FALSE;
     }
 
     ctx->base.csmt_force = driQueryOptioni(&userInitOptions, "csmt_force");
@@ -293,7 +292,6 @@ drm_create_adapter( int fd,
     ctx->base.shader_inline_constants = driQueryOptionb(&userInitOptions, "shader_inline_constants");
     ctx->base.memfd_virtualsizelimit = driQueryOptioni(&userInitOptions, "texture_memory_limit");
     ctx->base.override_vram_size = driQueryOptioni(&userInitOptions, "override_vram_size");
-    ctx->base.force_emulation = driQueryOptionb(&userInitOptions, "force_features_emulation");
     sw_rendering = driQueryOptionb(&userInitOptions, "force_sw_rendering_on_cpu");
 
     driDestroyOptionCache(&userInitOptions);

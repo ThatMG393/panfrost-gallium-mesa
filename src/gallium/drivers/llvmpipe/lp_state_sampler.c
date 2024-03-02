@@ -74,7 +74,7 @@ llvmpipe_bind_sampler_states(struct pipe_context *pipe,
 {
    struct llvmpipe_context *llvmpipe = llvmpipe_context(pipe);
 
-   assert(shader < PIPE_SHADER_MESH_TYPES);
+   assert(shader < PIPE_SHADER_TYPES);
    assert(start + num <= ARRAY_SIZE(llvmpipe->samplers[shader]));
 
    draw_flush(llvmpipe->draw);
@@ -96,31 +96,18 @@ llvmpipe_bind_sampler_states(struct pipe_context *pipe,
       llvmpipe->num_samplers[shader] = j;
    }
 
-   switch (shader) {
-   case PIPE_SHADER_VERTEX:
-   case PIPE_SHADER_GEOMETRY:
-   case PIPE_SHADER_TESS_CTRL:
-   case PIPE_SHADER_TESS_EVAL:
+   if (shader == PIPE_SHADER_VERTEX ||
+       shader == PIPE_SHADER_GEOMETRY ||
+       shader == PIPE_SHADER_TESS_CTRL ||
+       shader == PIPE_SHADER_TESS_EVAL) {
       draw_set_samplers(llvmpipe->draw,
                         shader,
                         llvmpipe->samplers[shader],
                         llvmpipe->num_samplers[shader]);
-      break;
-   case PIPE_SHADER_COMPUTE:
+   } else if (shader == PIPE_SHADER_COMPUTE) {
       llvmpipe->cs_dirty |= LP_CSNEW_SAMPLER;
-      break;
-   case PIPE_SHADER_FRAGMENT:
+   } else {
       llvmpipe->dirty |= LP_NEW_SAMPLER;
-      break;
-   case PIPE_SHADER_TASK:
-      llvmpipe->dirty |= LP_NEW_TASK_SAMPLER;
-      break;
-   case PIPE_SHADER_MESH:
-      llvmpipe->dirty |= LP_NEW_MESH_SAMPLER;
-      break;
-   default:
-      unreachable("Illegal shader type");
-      break;
    }
 }
 
@@ -139,7 +126,7 @@ llvmpipe_set_sampler_views(struct pipe_context *pipe,
 
    assert(num <= PIPE_MAX_SHADER_SAMPLER_VIEWS);
 
-   assert(shader < PIPE_SHADER_MESH_TYPES);
+   assert(shader < PIPE_SHADER_TYPES);
    assert(start + num <= ARRAY_SIZE(llvmpipe->sampler_views[shader]));
 
    draw_flush(llvmpipe->draw);
@@ -187,34 +174,21 @@ llvmpipe_set_sampler_views(struct pipe_context *pipe,
       llvmpipe->num_sampler_views[shader] = j;
    }
 
-   switch (shader) {
-   case PIPE_SHADER_VERTEX:
-   case PIPE_SHADER_GEOMETRY:
-   case PIPE_SHADER_TESS_CTRL:
-   case PIPE_SHADER_TESS_EVAL:
+   if (shader == PIPE_SHADER_VERTEX ||
+       shader == PIPE_SHADER_GEOMETRY ||
+       shader == PIPE_SHADER_TESS_CTRL ||
+       shader == PIPE_SHADER_TESS_EVAL) {
       draw_set_sampler_views(llvmpipe->draw,
                              shader,
                              llvmpipe->sampler_views[shader],
                              llvmpipe->num_sampler_views[shader]);
-      break;
-   case PIPE_SHADER_COMPUTE:
+   } else if (shader == PIPE_SHADER_COMPUTE) {
       llvmpipe->cs_dirty |= LP_CSNEW_SAMPLER_VIEW;
-      break;
-   case PIPE_SHADER_FRAGMENT:
+   } else if (shader == PIPE_SHADER_FRAGMENT) {
       llvmpipe->dirty |= LP_NEW_SAMPLER_VIEW;
       lp_setup_set_fragment_sampler_views(llvmpipe->setup,
                                           llvmpipe->num_sampler_views[PIPE_SHADER_FRAGMENT],
                                           llvmpipe->sampler_views[PIPE_SHADER_FRAGMENT]);
-      break;
-   case PIPE_SHADER_TASK:
-      llvmpipe->dirty |= LP_NEW_TASK_SAMPLER_VIEW;
-      break;
-   case PIPE_SHADER_MESH:
-      llvmpipe->dirty |= LP_NEW_MESH_SAMPLER_VIEW;
-      break;
-   default:
-      unreachable("Illegal shader type");
-      break;
    }
 }
 

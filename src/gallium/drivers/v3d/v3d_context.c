@@ -61,34 +61,11 @@ v3d_pipe_flush(struct pipe_context *pctx, struct pipe_fence_handle **fence,
         v3d_flush(pctx);
 
         if (fence) {
-                int fd = -1;
-                /* Snapshot the last V3D rendering's out fence.  We'd rather
-                 * have another syncobj instead of a sync file, but this is all
-                 * we get. (HandleToFD/FDToHandle just gives you another syncobj
-                 * ID for the same syncobj).
-                 */
-                drmSyncobjExportSyncFile(v3d->fd, v3d->out_sync, &fd);
-                if (fd == -1) {
-                        fprintf(stderr, "export failed\n");
-                        *fence = NULL;
-                        return;
-                }
-
                 struct pipe_screen *screen = pctx->screen;
-                struct v3d_fence *f = v3d_fence_create(v3d, fd);
+                struct v3d_fence *f = v3d_fence_create(v3d);
                 screen->fence_reference(screen, fence, NULL);
                 *fence = (struct pipe_fence_handle *)f;
         }
-}
-
-/* We can't flush the texture cache within rendering a tile, so we have to
- * flush all rendering to the kernel so that the next job reading from the
- * tile gets a flushed cache.
- */
-static void
-v3d_texture_barrier(struct pipe_context *pctx, unsigned int flags)
-{
-        v3d_flush(pctx);
 }
 
 static void
@@ -151,7 +128,7 @@ v3d_update_primitive_counters(struct v3d_context *v3d)
         if (prims_before == prims_after)
                 return;
 
-        enum mesa_prim prim_type = u_base_prim_type(v3d->prim_mode);
+        enum pipe_prim_type prim_type = u_base_prim_type(v3d->prim_mode);
         uint32_t num_verts = u_vertices_for_prims(prim_type,
                                                   prims_after - prims_before);
         for (int i = 0; i < v3d->streamout.num_targets; i++) {
@@ -243,8 +220,17 @@ v3d_flag_dirty_sampler_state(struct v3d_context *v3d,
 }
 
 void
-v3d_get_tile_buffer_size(const struct v3d_device_info *devinfo,
-                         bool is_msaa,
+v3d_create_texture_shader_state_bo(struct v3d_context *v3d,
+                                   struct v3d_sampler_view *so)
+{
+        if (v3d->screen->devinfo.ver >= 41)
+                v3d41_create_texture_shader_state_bo(v3d, so);
+        else
+                v3d33_create_texture_shader_state_bo(v3d, so);
+}
+
+void
+v3d_get_tile_buffer_size(bool is_msaa,
                          bool double_buffer,
                          uint32_t nr_cbufs,
                          struct pipe_surface **cbufs,
@@ -256,13 +242,11 @@ v3d_get_tile_buffer_size(const struct v3d_device_info *devinfo,
         assert(!is_msaa || !double_buffer);
 
         uint32_t max_cbuf_idx = 0;
-        uint32_t total_bpp = 0;
         *max_bpp = 0;
         for (int i = 0; i < nr_cbufs; i++) {
                 if (cbufs[i]) {
                         struct v3d_surface *surf = v3d_surface(cbufs[i]);
                         *max_bpp = MAX2(*max_bpp, surf->internal_bpp);
-                        total_bpp += 4 * v3d_internal_bpp_words(surf->internal_bpp);
                         max_cbuf_idx = MAX2(i, max_cbuf_idx);
                 }
         }
@@ -271,11 +255,9 @@ v3d_get_tile_buffer_size(const struct v3d_device_info *devinfo,
                 struct v3d_surface *bsurf = v3d_surface(bbuf);
                 assert(bbuf->texture->nr_samples <= 1 || is_msaa);
                 *max_bpp = MAX2(*max_bpp, bsurf->internal_bpp);
-                total_bpp += 4 * v3d_internal_bpp_words(bsurf->internal_bpp);
         }
 
-        v3d_choose_tile_size(devinfo, max_cbuf_idx + 1,
-                             *max_bpp, total_bpp,
+        v3d_choose_tile_size(max_cbuf_idx + 1, *max_bpp,
                              is_msaa, double_buffer,
                              tile_width, tile_height);
 }
@@ -300,7 +282,10 @@ v3d_context_destroy(struct pipe_context *pctx)
 
         slab_destroy_child(&v3d->transfer_pool);
 
-        util_unreference_framebuffer_state(&v3d->framebuffer);
+        for (int i = 0; i < v3d->framebuffer.nr_cbufs; i++)
+                pipe_surface_reference(&v3d->framebuffer.cbufs[i], NULL);
+
+        pipe_surface_reference(&v3d->framebuffer.zsbuf, NULL);
 
         if (v3d->sand8_blit_vs)
                 pctx->delete_vs_state(pctx, v3d->sand8_blit_vs);
@@ -315,8 +300,6 @@ v3d_context_destroy(struct pipe_context *pctx)
 
         v3d_program_fini(pctx);
 
-        v3d_fence_context_finish(v3d);
-
         ralloc_free(v3d);
 }
 
@@ -325,35 +308,20 @@ v3d_get_sample_position(struct pipe_context *pctx,
                         unsigned sample_count, unsigned sample_index,
                         float *xy)
 {
+        struct v3d_context *v3d = v3d_context(pctx);
+
         if (sample_count <= 1) {
                 xy[0] = 0.5;
                 xy[1] = 0.5;
         } else {
-                static const int xoffsets[] = { -1, 3, -3, 1 };
+                static const int xoffsets_v33[] = { 1, -3, 3, -1 };
+                static const int xoffsets_v42[] = { -1, 3, -3, 1 };
+                const int *xoffsets = (v3d->screen->devinfo.ver >= 42 ?
+                                       xoffsets_v42 : xoffsets_v33);
 
                 xy[0] = 0.5 + xoffsets[sample_index] * .125;
                 xy[1] = .125 + sample_index * .25;
         }
-}
-
-bool
-v3d_render_condition_check(struct v3d_context *v3d)
-{
-        if (!v3d->cond_query)
-                return true;
-
-        perf_debug("Implementing conditional rendering on the CPU\n");
-
-        union pipe_query_result res = { 0 };
-        bool wait =
-                v3d->cond_mode != PIPE_RENDER_COND_NO_WAIT &&
-                v3d->cond_mode != PIPE_RENDER_COND_BY_REGION_NO_WAIT;
-
-        struct pipe_context *pctx = (struct pipe_context *)v3d;
-        if (pctx->get_query_result(pctx, v3d->cond_query, wait, &res))
-                return ((bool)res.u64) != v3d->cond_cond;
-
-        return true;
 }
 
 struct pipe_context *
@@ -361,7 +329,6 @@ v3d_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
 {
         struct v3d_screen *screen = v3d_screen(pscreen);
         struct v3d_context *v3d;
-        struct v3d_device_info *devinfo = &screen->devinfo;
 
         /* Prevent dumping of the shaders built during context setup. */
         uint32_t saved_shaderdb_flag = v3d_mesa_debug & V3D_DEBUG_SHADERDB;
@@ -389,10 +356,14 @@ v3d_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
         pctx->set_debug_callback = u_default_set_debug_callback;
         pctx->invalidate_resource = v3d_invalidate_resource;
         pctx->get_sample_position = v3d_get_sample_position;
-        pctx->texture_barrier = v3d_texture_barrier;
 
-        v3d_X(devinfo, draw_init)(pctx);
-        v3d_X(devinfo, state_init)(pctx);
+        if (screen->devinfo.ver >= 41) {
+                v3d41_draw_init(pctx);
+                v3d41_state_init(pctx);
+        } else {
+                v3d33_draw_init(pctx);
+                v3d33_state_init(pctx);
+        }
         v3d_program_init(pctx);
         v3d_query_init(pctx);
         v3d_resource_context_init(pctx);
@@ -410,10 +381,6 @@ v3d_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
                                               4096,
                                               PIPE_BIND_CONSTANT_BUFFER,
                                               PIPE_USAGE_STREAM, 0);
-
-        ret = v3d_fence_context_init(v3d);
-        if (ret)
-                goto fail;
 
         v3d->blitter = util_blitter_create(pctx);
         if (!v3d->blitter)

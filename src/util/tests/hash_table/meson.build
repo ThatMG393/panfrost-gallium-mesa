@@ -29,6 +29,7 @@ foreach t : ['clear', 'collision', 'delete_and_lookup', 'delete_management',
       files('@0@.c'.format(t)),
       c_args : [c_msvc_compat_args],
       dependencies : idep_mesautil,
+      include_directories : [inc_include, inc_util],
     ),
     suite : ['util'],
   )

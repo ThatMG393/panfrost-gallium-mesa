@@ -971,6 +971,8 @@ const struct TexInstruction::Target::Desc TexInstruction::Target::descTable[] =
 
 const struct TexInstruction::ImgFormatDesc TexInstruction::formatTable[] =
 {
+   { "NONE",         0, {  0,  0,  0,  0 },  UINT },
+
    { "RGBA32F",      4, { 32, 32, 32, 32 }, FLOAT },
    { "RGBA16F",      4, { 16, 16, 16, 16 }, FLOAT },
    { "RG32F",        2, { 32, 32,  0,  0 }, FLOAT },
@@ -1026,7 +1028,7 @@ TexInstruction::translateImgFormat(enum pipe_format format)
   case PIPE_FORMAT_ ## a: return &formatTable[nv50_ir::FMT_ ## b]
 
    switch (format) {
-   case PIPE_FORMAT_NONE: return NULL;
+   FMT_CASE(NONE, NONE);
 
    FMT_CASE(R32G32B32A32_FLOAT, RGBA32F);
    FMT_CASE(R16G16B16A16_FLOAT, RGBA16F);
@@ -1076,7 +1078,7 @@ TexInstruction::translateImgFormat(enum pipe_format format)
 
    default:
       assert(!"Unexpected format");
-      return NULL;
+      return &formatTable[nv50_ir::FMT_NONE];
    }
 }
 
@@ -1245,8 +1247,8 @@ nv50_ir_init_prog_info(struct nv50_ir_prog_info *info,
    info_out->target = info->target;
    info_out->type = info->type;
    if (info->type == PIPE_SHADER_TESS_CTRL || info->type == PIPE_SHADER_TESS_EVAL) {
-      info_out->prop.tp.domain = MESA_PRIM_COUNT;
-      info_out->prop.tp.outputPrim = MESA_PRIM_COUNT;
+      info_out->prop.tp.domain = PIPE_PRIM_MAX;
+      info_out->prop.tp.outputPrim = PIPE_PRIM_MAX;
    }
    if (info->type == PIPE_SHADER_GEOMETRY) {
       info_out->prop.gp.instanceCount = 1;
@@ -1258,6 +1260,7 @@ nv50_ir_init_prog_info(struct nv50_ir_prog_info *info,
       info->prop.cp.numThreads[2] = 1;
    }
    info_out->bin.smemSize = info->bin.smemSize;
+   info_out->io.genUserClip = info->io.genUserClip;
    info_out->io.instanceId = 0xff;
    info_out->io.vertexId = 0xff;
    info_out->io.edgeFlagIn = 0xff;
@@ -1306,7 +1309,17 @@ nv50_ir_generate_code(struct nv50_ir_prog_info *info,
    prog->dbgFlags = info->dbgFlags;
    prog->optLevel = info->optLevel;
 
-   ret = prog->makeFromNIR(info, info_out) ? 0 : -2;
+   switch (info->bin.sourceRep) {
+   case PIPE_SHADER_IR_NIR:
+      ret = prog->makeFromNIR(info, info_out) ? 0 : -2;
+      break;
+   case PIPE_SHADER_IR_TGSI:
+      ret = prog->makeFromTGSI(info, info_out) ? 0 : -2;
+      break;
+   default:
+      ret = -1;
+      break;
+   }
    if (ret < 0)
       goto out;
    if (prog->dbgFlags & NV50_IR_DEBUG_VERBOSE)

@@ -27,7 +27,6 @@
 #include <stdint.h>
 
 #include "pvr_rogue_fwif_shared.h"
-#include "util/macros.h"
 
 struct rogue_fwif_rf_regs {
    union {
@@ -41,7 +40,7 @@ struct rogue_fwif_rf_regs {
 
 struct rogue_fwif_rf_cmd {
    /* THIS MUST BE THE LAST MEMBER OF THE CONTAINING STRUCTURE */
-   alignas(8) struct rogue_fwif_rf_regs regs;
+   struct rogue_fwif_rf_regs ALIGN_ATTR(8) regs;
 };
 
 #endif /* PVR_ROGUE_FWIF_RF_H */

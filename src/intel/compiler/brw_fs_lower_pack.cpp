@@ -21,7 +21,6 @@
  * IN THE SOFTWARE.
  */
 
-#include "util/half_float.h"
 #include "brw_fs.h"
 #include "brw_cfg.h"
 #include "brw_fs_builder.h"
@@ -29,20 +28,19 @@
 using namespace brw;
 
 bool
-brw_fs_lower_pack(fs_visitor &s)
+fs_visitor::lower_pack()
 {
    bool progress = false;
 
-   foreach_block_and_inst_safe(block, fs_inst, inst, s.cfg) {
-      if (inst->opcode != FS_OPCODE_PACK &&
-          inst->opcode != FS_OPCODE_PACK_HALF_2x16_SPLIT)
+   foreach_block_and_inst_safe(block, fs_inst, inst, cfg) {
+      if (inst->opcode != FS_OPCODE_PACK)
          continue;
 
       assert(inst->dst.file == VGRF);
       assert(inst->saturate == false);
       fs_reg dst = inst->dst;
 
-      const fs_builder ibld(&s, block, inst);
+      const fs_builder ibld(this, block, inst);
       /* The lowering generates 2 instructions for what was previously 1. This
        * can trick the IR to believe we're doing partial writes, but the
        * register is actually fully written. Mark it as undef to help the IR
@@ -50,36 +48,15 @@ brw_fs_lower_pack(fs_visitor &s)
        */
       if (!inst->is_partial_write())
          ibld.emit_undef_for_dst(inst);
-
-      switch (inst->opcode) {
-      case FS_OPCODE_PACK:
-         for (unsigned i = 0; i < inst->sources; i++)
-            ibld.MOV(subscript(dst, inst->src[i].type, i), inst->src[i]);
-         break;
-      case FS_OPCODE_PACK_HALF_2x16_SPLIT:
-         assert(dst.type == BRW_REGISTER_TYPE_UD);
-
-         for (unsigned i = 0; i < inst->sources; i++) {
-            if (inst->src[i].file == IMM) {
-               const uint32_t half = _mesa_float_to_half(inst->src[i].f);
-               ibld.MOV(subscript(dst, BRW_REGISTER_TYPE_UW, i),
-                        brw_imm_uw(half));
-            } else {
-               ibld.MOV(subscript(dst, BRW_REGISTER_TYPE_HF, i),
-                        inst->src[i]);
-            }
-         }
-         break;
-      default:
-         unreachable("skipped above");
-      }
+      for (unsigned i = 0; i < inst->sources; i++)
+         ibld.MOV(subscript(dst, inst->src[i].type, i), inst->src[i]);
 
       inst->remove(block);
       progress = true;
    }
 
    if (progress)
-      s.invalidate_analysis(DEPENDENCY_INSTRUCTIONS);
+      invalidate_analysis(DEPENDENCY_INSTRUCTIONS);
 
    return progress;
 }

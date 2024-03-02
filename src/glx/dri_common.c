@@ -116,6 +116,7 @@ static const struct
       __ATTRIB(__DRI_ATTRIB_DOUBLE_BUFFER, doubleBufferMode),
       __ATTRIB(__DRI_ATTRIB_STEREO, stereoMode),
       __ATTRIB(__DRI_ATTRIB_AUX_BUFFERS, numAuxBuffers),
+      __ATTRIB(__DRI_ATTRIB_SWAP_METHOD, swapMethod),
       __ATTRIB(__DRI_ATTRIB_BIND_TO_TEXTURE_RGB, bindToTextureRgb),
       __ATTRIB(__DRI_ATTRIB_BIND_TO_TEXTURE_RGBA, bindToTextureRgba),
       __ATTRIB(__DRI_ATTRIB_BIND_TO_MIPMAP_TEXTURE, bindToMipmapTexture),
@@ -176,6 +177,19 @@ driConfigEqual(const __DRIcoreExtension *core,
          if (config->bindToTextureTargets != GLX_DONT_CARE &&
              glxValue != config->bindToTextureTargets)
             return GL_FALSE;
+         break;
+
+      case __DRI_ATTRIB_SWAP_METHOD:
+         if (value == __DRI_ATTRIB_SWAP_EXCHANGE)
+            glxValue = GLX_SWAP_EXCHANGE_OML;
+         else if (value == __DRI_ATTRIB_SWAP_COPY)
+            glxValue = GLX_SWAP_COPY_OML;
+         else
+            glxValue = GLX_SWAP_UNDEFINED_OML;
+
+         if (!scalarEqual(config, attrib, glxValue))
+            return GL_FALSE;
+
          break;
 
       /* Nerf some attributes we can safely ignore if the server claims to
@@ -478,6 +492,9 @@ driReleaseDrawables(struct glx_context *gc)
 {
    const struct glx_display *priv = gc->psc->display;
 
+   if (priv == NULL)
+      return;
+
    releaseDrawable(priv, gc->currentDrawable);
    releaseDrawable(priv, gc->currentReadable);
 
@@ -501,6 +518,13 @@ dri_convert_glx_attribs(unsigned num_attribs, const uint32_t *attribs,
    dca->flags = 0;
    dca->api = __DRI_API_OPENGL;
    dca->no_error = 0;
+
+   if (num_attribs == 0)
+      return __DRI_CTX_ERROR_SUCCESS;
+
+   /* This is actually an internal error, but what the heck. */
+   if (attribs == NULL)
+      return __DRI_CTX_ERROR_UNKNOWN_ATTRIBUTE;
 
    for (i = 0; i < num_attribs; i++) {
       switch (attribs[i * 2]) {
@@ -531,7 +555,7 @@ dri_convert_glx_attribs(unsigned num_attribs, const uint32_t *attribs,
             dca->reset = __DRI_CTX_RESET_LOSE_CONTEXT;
             break;
          default:
-            return BadValue;
+            return __DRI_CTX_ERROR_UNKNOWN_ATTRIBUTE;
          }
          break;
       case GLX_CONTEXT_RELEASE_BEHAVIOR_ARB:
@@ -543,7 +567,7 @@ dri_convert_glx_attribs(unsigned num_attribs, const uint32_t *attribs,
             dca->release = __DRI_CTX_RELEASE_BEHAVIOR_FLUSH;
             break;
          default:
-            return BadValue;
+            return __DRI_CTX_ERROR_UNKNOWN_ATTRIBUTE;
          }
          break;
       case GLX_SCREEN:
@@ -553,7 +577,7 @@ dri_convert_glx_attribs(unsigned num_attribs, const uint32_t *attribs,
       default:
 	 /* If an unknown attribute is received, fail.
 	  */
-	 return BadValue;
+	 return __DRI_CTX_ERROR_UNKNOWN_ATTRIBUTE;
       }
    }
 
@@ -580,11 +604,11 @@ dri_convert_glx_attribs(unsigned num_attribs, const uint32_t *attribs,
       else if (dca->major_ver == 1 && dca->minor_ver < 2)
          dca->api = __DRI_API_GLES;
       else {
-         return BadValue;
+         return __DRI_CTX_ERROR_BAD_API;
       }
       break;
    default:
-      return GLXBadProfileARB;
+      return __DRI_CTX_ERROR_BAD_API;
    }
 
    /* Unknown flag value */
@@ -592,7 +616,7 @@ dri_convert_glx_attribs(unsigned num_attribs, const uint32_t *attribs,
                       __DRI_CTX_FLAG_FORWARD_COMPATIBLE |
                       __DRI_CTX_FLAG_ROBUST_BUFFER_ACCESS |
                       __DRI_CTX_FLAG_RESET_ISOLATION))
-      return BadValue;
+      return __DRI_CTX_ERROR_UNKNOWN_FLAG;
 
    /* There are no forward-compatible contexts before OpenGL 3.0.  The
     * GLX_ARB_create_context spec says:
@@ -601,23 +625,17 @@ dri_convert_glx_attribs(unsigned num_attribs, const uint32_t *attribs,
     *     3.0 and later."
     */
    if (dca->major_ver < 3 && (dca->flags & __DRI_CTX_FLAG_FORWARD_COMPATIBLE) != 0)
-      return BadMatch;
+      return __DRI_CTX_ERROR_BAD_FLAG;
 
-   /* It also says:
-    *
-    *    "OpenGL contexts supporting version 3.0 or later of the API do not
-    *    support color index rendering, even if a color index <config> is
-    *    available."
-    */
    if (dca->major_ver >= 3 && dca->render_type == GLX_COLOR_INDEX_TYPE)
-      return BadMatch;
+      return __DRI_CTX_ERROR_BAD_FLAG;
 
    /* The KHR_no_error specs say:
     *
     *    Requires OpenGL ES 2.0 or OpenGL 2.0.
     */
    if (dca->no_error && dca->major_ver < 2)
-      return BadMatch;
+      return __DRI_CTX_ERROR_UNKNOWN_ATTRIBUTE;
 
    /* The GLX_ARB_create_context_no_error specs say:
     *
@@ -627,30 +645,9 @@ dri_convert_glx_attribs(unsigned num_attribs, const uint32_t *attribs,
     */
    if (dca->no_error && ((dca->flags & __DRI_CTX_FLAG_DEBUG) ||
                          (dca->flags & __DRI_CTX_FLAG_ROBUST_BUFFER_ACCESS)))
-      return BadMatch;
+      return __DRI_CTX_ERROR_BAD_FLAG;
 
-   return Success;
-}
-
-unsigned
-dri_context_error_to_glx_error(unsigned error)
-{
-   if (error == __DRI_CTX_ERROR_SUCCESS)
-      return Success;
-   if (error == __DRI_CTX_ERROR_NO_MEMORY)
-      return BadAlloc;
-   else if (error == __DRI_CTX_ERROR_BAD_API)
-      return BadMatch;
-   else if (error == __DRI_CTX_ERROR_BAD_VERSION)
-      return GLXBadFBConfig;
-   else if (error == __DRI_CTX_ERROR_BAD_FLAG)
-      return BadMatch;
-   else if (error == __DRI_CTX_ERROR_UNKNOWN_ATTRIBUTE)
-      return BadValue;
-   else if (error == __DRI_CTX_ERROR_UNKNOWN_FLAG)
-      return BadValue;
-   else
-      unreachable("Impossible DRI context error");
+   return __DRI_CTX_ERROR_SUCCESS;
 }
 
 struct glx_context *
@@ -755,9 +752,18 @@ get_driver_config(const char *driverName)
 
          if (ext->base.version >= 2)
             config = ext->getXml(driverName);
+         else
+            config = strdup(ext->xml);
 
          break;
       }
+   }
+
+   if (!config) {
+      /* Fall back to the old method */
+      config = dlsym(handle, "__driConfigOptions");
+      if (config)
+         config = strdup(config);
    }
 
    dlclose(handle);

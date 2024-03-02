@@ -393,7 +393,10 @@ l_rnn_reg_meta_tostring(lua_State *L)
    }
    lua_pushstring(L, decoded);
    free(decoded);
-   rnn_reginfo_free(info);
+   if (info) {
+      free(info->name);
+      free(info);
+   }
    return 1;
 }
 
@@ -516,7 +519,10 @@ l_rnn_regval(lua_State *L)
    }
    lua_pushstring(L, decoded);
    free(decoded);
-   rnn_reginfo_free(info);
+   if (info) {
+      free(info->name);
+      free(info);
+   }
    return 1;
 }
 

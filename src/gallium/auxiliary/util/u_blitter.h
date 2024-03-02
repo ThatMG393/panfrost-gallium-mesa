@@ -129,17 +129,17 @@ struct blitter_context
    unsigned cb_slot;
    struct pipe_constant_buffer saved_fs_constant_buffer;
 
-   unsigned saved_num_vb;
-   struct pipe_vertex_buffer saved_vertex_buffers[PIPE_MAX_ATTRIBS];
+   unsigned vb_slot;
+   struct pipe_vertex_buffer saved_vertex_buffer;
 
    unsigned saved_num_so_targets;
    struct pipe_stream_output_target *saved_so_targets[PIPE_MAX_SO_BUFFERS];
 
    struct pipe_query *saved_render_cond_query;
-   enum pipe_render_cond_flag saved_render_cond_mode;
+   uint saved_render_cond_mode;
    bool saved_render_cond_cond;
 
-   bool saved_window_rectangles_include;
+   boolean saved_window_rectangles_include;
    unsigned saved_num_window_rectangles;
    struct pipe_scissor_state saved_window_rectangles[PIPE_MAX_WINDOW_RECTANGLES];
 };
@@ -533,15 +533,11 @@ util_blitter_save_fragment_constant_buffer_slot(
 }
 
 static inline void
-util_blitter_save_vertex_buffers(struct blitter_context *blitter,
-                                 struct pipe_vertex_buffer *vertex_buffers,
-                                 unsigned count)
+util_blitter_save_vertex_buffer_slot(struct blitter_context *blitter,
+                                     struct pipe_vertex_buffer *vertex_buffers)
 {
-   for (unsigned i = 0; i < count; i++) {
-      pipe_vertex_buffer_reference(&blitter->saved_vertex_buffers[i],
-                                   &vertex_buffers[i]);
-   }
-   blitter->saved_num_vb = count;
+   pipe_vertex_buffer_reference(&blitter->saved_vertex_buffer,
+                                &vertex_buffers[blitter->vb_slot]);
 }
 
 static inline void
@@ -580,7 +576,7 @@ util_blitter_save_render_condition(struct blitter_context *blitter,
 
 static inline void
 util_blitter_save_window_rectangles(struct blitter_context *blitter,
-                                    bool include,
+                                    boolean include,
                                     unsigned num_rectangles,
                                     const struct pipe_scissor_state *rects)
 {

@@ -23,9 +23,9 @@
 #ifndef _NINE_QUIRK_H_
 #define _NINE_QUIRK_H_
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 
-bool
+boolean
 _nine_get_quirk( unsigned quirk );
 
 #define QUIRK(q) (_nine_get_quirk(QUIRK_##q))

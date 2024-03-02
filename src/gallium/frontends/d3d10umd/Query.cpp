@@ -79,7 +79,7 @@ TranslateQueryType(D3D10DDI_QUERY query)
    case D3D10DDI_QUERY_STREAMOVERFLOWPREDICATE:
       return PIPE_QUERY_SO_OVERFLOW_PREDICATE;
    default:
-      LOG_UNSUPPORTED(true);
+      LOG_UNSUPPORTED(TRUE);
       return PIPE_QUERY_TYPES;
    }
 }
@@ -244,18 +244,18 @@ QueryGetData(D3D10DDI_HDEVICE hDevice,                      // IN
       return;
    }
 
-   bool wait = !!(Flags & D3D10_DDI_GET_DATA_DO_NOT_FLUSH);
+   boolean wait = !!(Flags & D3D10_DDI_GET_DATA_DO_NOT_FLUSH);
    union pipe_query_result result;
 
    memset(&result, 0, sizeof result);
 
-   bool ret;
+   boolean ret;
 
    if (state) {
       ret = pipe->get_query_result(pipe, state, wait, &result);
    } else {
-      LOG_UNSUPPORTED(true);
-      ret = true;
+      LOG_UNSUPPORTED(TRUE);
+      ret = TRUE;
    }
 
    if (!ret) {
@@ -373,7 +373,7 @@ CheckPredicate(Device *pDevice)
 {
    Query *pQuery = pDevice->pPredicate;
    if (!pQuery) {
-      return true;
+      return TRUE;
    }
 
    assert(pQuery->Type == D3D10DDI_QUERY_OCCLUSIONPREDICATE ||
@@ -386,18 +386,18 @@ CheckPredicate(Device *pDevice)
    union pipe_query_result result;
    memset(&result, 0, sizeof result);
 
-   bool ret;
-   ret = pipe->get_query_result(pipe, query, true, &result);
-   assert(ret == true);
+   boolean ret;
+   ret = pipe->get_query_result(pipe, query, TRUE, &result);
+   assert(ret == TRUE);
    if (!ret) {
-      return true;
+      return TRUE;
    }
 
    if (!!result.b == !!pDevice->PredicateValue) {
-      return false;
+      return FALSE;
    }
 
-   return true;
+   return TRUE;
 }
 
 

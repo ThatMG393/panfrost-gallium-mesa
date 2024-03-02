@@ -47,7 +47,7 @@ anv_init_wsi(struct anv_physical_device *physical_device)
                             &physical_device->instance->vk.alloc,
                             physical_device->master_fd,
                             &physical_device->instance->dri_options,
-                            &(struct wsi_device_options){.sw_device = false});
+                            false);
    if (result != VK_SUCCESS)
       return result;
 
@@ -97,12 +97,10 @@ VkResult anv_QueuePresentKHR(
 
    if (device->debug_frame_desc) {
       device->debug_frame_desc->frame_id++;
-#ifdef SUPPORT_INTEL_INTEGRATED_GPUS
-      if (device->physical->memory.need_flush) {
-         intel_flush_range(device->debug_frame_desc,
+      if (device->physical->memory.need_clflush) {
+         intel_clflush_range(device->debug_frame_desc,
                            sizeof(*device->debug_frame_desc));
       }
-#endif
    }
 
    result = vk_queue_wait_before_present(&queue->vk, pPresentInfo);
@@ -114,7 +112,7 @@ VkResult anv_QueuePresentKHR(
                                      _queue, 0,
                                      pPresentInfo);
 
-   intel_ds_device_process(&device->ds, true);
+   u_trace_context_process(&device->ds.trace_context, true);
 
    return result;
 }

@@ -33,7 +33,7 @@
  */
 
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "pipe/p_defines.h"
 #include "util/u_memory.h"
 #include "util/u_debug.h"
@@ -66,10 +66,10 @@ pb_validate_add_buffer(struct pb_validate *vl,
                        struct pb_buffer *buf,
                        enum pb_usage_flags flags,
                        struct hash_table *ht,
-                       bool *already_present)
+                       boolean *already_present)
 {
    assert(buf);
-   *already_present = false;
+   *already_present = FALSE;
    if (!buf)
       return PIPE_ERROR;
 
@@ -85,7 +85,7 @@ pb_validate_add_buffer(struct pb_validate *vl,
 
          assert(entry->buf == buf);
          entry->flags |= flags;
-         *already_present = true;
+         *already_present = TRUE;
 
          return PIPE_OK;
       }

@@ -26,6 +26,28 @@
 
 #include "vn_renderer_internal.h"
 
+/* XXX WIP kernel uapi */
+#ifndef VIRTGPU_PARAM_CONTEXT_INIT
+#define VIRTGPU_PARAM_CONTEXT_INIT 6
+#define VIRTGPU_CONTEXT_PARAM_CAPSET_ID 0x0001
+struct drm_virtgpu_context_set_param {
+   __u64 param;
+   __u64 value;
+};
+struct drm_virtgpu_context_init {
+   __u32 num_params;
+   __u32 pad;
+   __u64 ctx_set_params;
+};
+#define DRM_VIRTGPU_CONTEXT_INIT 0xb
+#define DRM_IOCTL_VIRTGPU_CONTEXT_INIT                                       \
+   DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_CONTEXT_INIT,                     \
+            struct drm_virtgpu_context_init)
+#endif /* VIRTGPU_PARAM_CONTEXT_INIT */
+#ifndef VIRTGPU_PARAM_MAX_SYNC_QUEUE_COUNT
+#define VIRTGPU_PARAM_MAX_SYNC_QUEUE_COUNT 100
+#endif /* VIRTGPU_PARAM_MAX_SYNC_QUEUE_COUNT */
+
 #ifndef VIRTGPU_PARAM_GUEST_VRAM
 /* All guest allocations happen via virtgpu dedicated heap. */
 #define VIRTGPU_PARAM_GUEST_VRAM 9
@@ -37,8 +59,9 @@
 
 /* XXX comment these out to really use kernel uapi */
 #define SIMULATE_BO_SIZE_FIX 1
-#define SIMULATE_SYNCOBJ     1
-#define SIMULATE_SUBMIT      1
+// #define SIMULATE_CONTEXT_INIT 1
+#define SIMULATE_SYNCOBJ 1
+#define SIMULATE_SUBMIT 1
 
 #define VIRTGPU_PCI_VENDOR_ID 0x1af4
 #define VIRTGPU_PCI_DEVICE_ID 0x1050
@@ -93,7 +116,7 @@ struct virtgpu {
    int bustype;
    drmPciBusInfo pci_bus_info;
 
-   uint32_t max_timeline_count;
+   uint32_t max_sync_queue_count;
 
    struct {
       enum virgl_renderer_capset id;
@@ -161,8 +184,7 @@ sim_syncobj_create(struct virtgpu *gpu, bool signaled)
       util_idalloc_init(&sim.ida, 32);
 
       struct drm_virtgpu_execbuffer args = {
-         .flags = VIRTGPU_EXECBUF_RING_IDX | VIRTGPU_EXECBUF_FENCE_FD_OUT,
-         .ring_idx = 0, /* CPU ring */
+         .flags = VIRTGPU_EXECBUF_FENCE_FD_OUT,
       };
       int ret = drmIoctl(gpu->fd, DRM_IOCTL_VIRTGPU_EXECBUFFER, &args);
       if (ret || args.fence_fd < 0) {
@@ -519,20 +541,16 @@ sim_submit(struct virtgpu *gpu, const struct vn_renderer_submit *submit)
          return -1;
    }
 
-   assert(submit->batch_count);
-
    int ret = 0;
    for (uint32_t i = 0; i < submit->batch_count; i++) {
       const struct vn_renderer_submit_batch *batch = &submit->batches[i];
 
       struct drm_virtgpu_execbuffer args = {
-         .flags = VIRTGPU_EXECBUF_RING_IDX |
-                  (batch->sync_count ? VIRTGPU_EXECBUF_FENCE_FD_OUT : 0),
+         .flags = batch->sync_count ? VIRTGPU_EXECBUF_FENCE_FD_OUT : 0,
          .size = batch->cs_size,
          .command = (uintptr_t)batch->cs_data,
          .bo_handles = (uintptr_t)gem_handles,
          .num_bo_handles = submit->bo_count,
-         .ring_idx = batch->ring_idx,
       };
 
       ret = drmIoctl(gpu->fd, DRM_IOCTL_VIRTGPU_EXECBUFFER, &args);
@@ -544,14 +562,26 @@ sim_submit(struct virtgpu *gpu, const struct vn_renderer_submit *submit)
       if (batch->sync_count) {
          ret = sim_submit_signal_syncs(gpu, args.fence_fd, batch->syncs,
                                        batch->sync_values, batch->sync_count,
-                                       batch->ring_idx == 0);
+                                       batch->sync_queue_cpu);
          close(args.fence_fd);
          if (ret)
             break;
       }
    }
 
+   if (!submit->batch_count && submit->bo_count) {
+      struct drm_virtgpu_execbuffer args = {
+         .bo_handles = (uintptr_t)gem_handles,
+         .num_bo_handles = submit->bo_count,
+      };
+
+      ret = drmIoctl(gpu->fd, DRM_IOCTL_VIRTGPU_EXECBUFFER, &args);
+      if (ret)
+         vn_log(gpu->instance, "failed to execbuffer: %s", strerror(errno));
+   }
+
    free(gem_handles);
+
    return ret;
 }
 
@@ -566,6 +596,15 @@ virtgpu_ioctl(struct virtgpu *gpu, unsigned long request, void *args)
 static uint64_t
 virtgpu_ioctl_getparam(struct virtgpu *gpu, uint64_t param)
 {
+#ifdef SIMULATE_CONTEXT_INIT
+   if (param == VIRTGPU_PARAM_CONTEXT_INIT)
+      return 1;
+#endif
+#ifdef SIMULATE_SUBMIT
+   if (param == VIRTGPU_PARAM_MAX_SYNC_QUEUE_COUNT)
+      return 16;
+#endif
+
    /* val must be zeroed because kernel only writes the lower 32 bits */
    uint64_t val = 0;
    struct drm_virtgpu_getparam args = {
@@ -584,6 +623,11 @@ virtgpu_ioctl_get_caps(struct virtgpu *gpu,
                        void *capset,
                        size_t capset_size)
 {
+#ifdef SIMULATE_CONTEXT_INIT
+   if (id == VIRGL_RENDERER_CAPSET_VENUS && version == 0)
+      return 0;
+#endif
+
    struct drm_virtgpu_get_caps args = {
       .cap_set_id = id,
       .cap_set_ver = version,
@@ -598,24 +642,18 @@ static int
 virtgpu_ioctl_context_init(struct virtgpu *gpu,
                            enum virgl_renderer_capset capset_id)
 {
-   struct drm_virtgpu_context_set_param ctx_set_params[3] = {
-      {
-         .param = VIRTGPU_CONTEXT_PARAM_CAPSET_ID,
-         .value = capset_id,
-      },
-      {
-         .param = VIRTGPU_CONTEXT_PARAM_NUM_RINGS,
-         .value = 64,
-      },
-      {
-         .param = VIRTGPU_CONTEXT_PARAM_POLL_RINGS_MASK,
-         .value = 0, /* don't generate drm_events on fence signaling */
-      },
-   };
+#ifdef SIMULATE_CONTEXT_INIT
+   if (capset_id == VIRGL_RENDERER_CAPSET_VENUS)
+      return 0;
+#endif
 
    struct drm_virtgpu_context_init args = {
-      .num_params = ARRAY_SIZE(ctx_set_params),
-      .ctx_set_params = (uintptr_t)&ctx_set_params,
+      .num_params = 1,
+      .ctx_set_params = (uintptr_t) &
+                        (struct drm_virtgpu_context_set_param){
+                           .param = VIRTGPU_CONTEXT_PARAM_CAPSET_ID,
+                           .value = capset_id,
+                        },
    };
 
    return virtgpu_ioctl(gpu, DRM_IOCTL_VIRTGPU_CONTEXT_INIT, &args);
@@ -1156,19 +1194,18 @@ virtgpu_bo_create_from_dma_buf(struct vn_renderer *renderer,
    if (virtgpu_ioctl_resource_info(gpu, gem_handle, &info))
       goto fail;
 
-   /* Upon import, blob_flags is not passed to the kernel and is only for
-    * internal use. Set it to what works best for us.
-    * - blob mem: SHAREABLE + conditional MAPPABLE per VkMemoryPropertyFlags
-    * - classic 3d: SHAREABLE only for export and to fail the map
-    */
-   uint32_t blob_flags = VIRTGPU_BLOB_FLAG_USE_SHAREABLE;
-   size_t mmap_size = 0;
+   uint32_t blob_flags;
+   size_t mmap_size;
    if (info.blob_mem) {
       /* must be VIRTGPU_BLOB_MEM_HOST3D or VIRTGPU_BLOB_MEM_GUEST_VRAM */
       if (info.blob_mem != gpu->bo_blob_mem)
          goto fail;
 
-      blob_flags |= virtgpu_bo_blob_flags(flags, 0);
+      /* blob_flags is not passed to the kernel and is only for internal use
+       * on imports.  Set it to what works best for us.
+       */
+      blob_flags = virtgpu_bo_blob_flags(flags, 0);
+      blob_flags |= VIRTGPU_BLOB_FLAG_USE_SHAREABLE;
 
       /* mmap_size is only used when mappable */
       mmap_size = 0;
@@ -1178,6 +1215,13 @@ virtgpu_bo_create_from_dma_buf(struct vn_renderer *renderer,
 
          mmap_size = size;
       }
+   } else {
+      /* must be classic resource here
+       * set blob_flags to 0 to fail virtgpu_bo_map
+       * set mmap_size to 0 since mapping is not allowed
+       */
+      blob_flags = 0;
+      mmap_size = 0;
    }
 
    /* we check bo->gem_handle instead of bo->refcount because bo->refcount
@@ -1364,10 +1408,16 @@ virtgpu_init_renderer_info(struct virtgpu *gpu)
    }
 
    info->has_dma_buf_import = true;
-   /* TODO switch from emulation to drm_syncobj */
-   info->has_external_sync = true;
+   /* Kernel makes every mapping coherent.  We are better off filtering
+    * incoherent memory types out than silently making them coherent.
+    */
+   info->has_cache_management = false;
+   /* TODO drm_syncobj */
+   info->has_external_sync = false;
 
    info->has_implicit_fencing = false;
+
+   info->max_sync_queue_count = gpu->max_sync_queue_count;
 
    const struct virgl_renderer_capset_venus *capset = &gpu->capset.data;
    info->wire_format_version = capset->wire_format_version;
@@ -1376,7 +1426,7 @@ virtgpu_init_renderer_info(struct virtgpu *gpu)
       capset->vk_ext_command_serialization_spec_version;
    info->vk_mesa_venus_protocol_spec_version =
       capset->vk_mesa_venus_protocol_spec_version;
-   assert(capset->supports_blob_id_0);
+   info->supports_blob_id_0 = capset->supports_blob_id_0;
 
    /* ensure vk_extension_mask is large enough to hold all capset masks */
    STATIC_ASSERT(sizeof(info->vk_extension_mask) >=
@@ -1384,16 +1434,9 @@ virtgpu_init_renderer_info(struct virtgpu *gpu)
    memcpy(info->vk_extension_mask, capset->vk_extension_mask1,
           sizeof(capset->vk_extension_mask1));
 
-   assert(capset->allow_vk_wait_syncs);
-
-   assert(capset->supports_multiple_timelines);
-   info->max_timeline_count = gpu->max_timeline_count;
+   info->allow_vk_wait_syncs = capset->allow_vk_wait_syncs;
 
    if (gpu->bo_blob_mem == VIRTGPU_BLOB_MEM_GUEST_VRAM)
-      info->has_guest_vram = true;
-
-   /* Use guest blob allocations from dedicated heap (Host visible memory) */
-   if (gpu->bo_blob_mem == VIRTGPU_BLOB_MEM_HOST3D && capset->use_guest_vram)
       info->has_guest_vram = true;
 }
 
@@ -1416,8 +1459,8 @@ virtgpu_destroy(struct vn_renderer *renderer,
    vk_free(alloc, gpu);
 }
 
-static inline void
-virtgpu_init_shmem_blob_mem(ASSERTED struct virtgpu *gpu)
+static void
+virtgpu_init_shmem_blob_mem(struct virtgpu *gpu)
 {
    /* VIRTGPU_BLOB_MEM_GUEST allocates from the guest system memory.  They are
     * logically contiguous in the guest but are sglists (iovecs) in the host.
@@ -1436,10 +1479,11 @@ virtgpu_init_shmem_blob_mem(ASSERTED struct virtgpu *gpu)
     *
     * it allocates a host shmem.
     *
-    * supports_blob_id_0 has been enforced by mandated render server config.
+    * TODO cache shmems as they are costly to set up and usually require syncs
     */
-   assert(gpu->capset.data.supports_blob_id_0);
-   gpu->shmem_blob_mem = VIRTGPU_BLOB_MEM_HOST3D;
+   gpu->shmem_blob_mem = gpu->capset.data.supports_blob_id_0
+                            ? VIRTGPU_BLOB_MEM_HOST3D
+                            : VIRTGPU_BLOB_MEM_GUEST;
 }
 
 static VkResult
@@ -1515,8 +1559,13 @@ virtgpu_init_params(struct virtgpu *gpu)
       return VK_ERROR_INITIALIZATION_FAILED;
    }
 
-   /* implied by CONTEXT_INIT uapi */
-   gpu->max_timeline_count = 64;
+   val = virtgpu_ioctl_getparam(gpu, VIRTGPU_PARAM_MAX_SYNC_QUEUE_COUNT);
+   if (!val) {
+      if (VN_DEBUG(INIT))
+         vn_log(gpu->instance, "no sync queue support");
+      return VK_ERROR_INITIALIZATION_FAILED;
+   }
+   gpu->max_sync_queue_count = val;
 
    return VK_SUCCESS;
 }

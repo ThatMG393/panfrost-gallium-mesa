@@ -29,12 +29,10 @@ extern "C" {
 #endif
 
 struct pipe_screen;
-struct pipe_screen_config;
 struct renderonly;
 
 struct pipe_screen *
-panfrost_create_screen(int fd, const struct pipe_screen_config *config,
-                       struct renderonly *ro);
+panfrost_create_screen(int fd, struct renderonly *ro);
 
 #ifdef __cplusplus
 }

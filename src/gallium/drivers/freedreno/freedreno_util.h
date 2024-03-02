@@ -37,9 +37,6 @@
 #include "util/compiler.h"
 #include "util/half_float.h"
 #include "util/log.h"
-#ifndef __cplusplus  // TODO fix cpu_trace.h to be c++ friendly
-#include "util/perf/cpu_trace.h"
-#endif
 #include "util/u_debug.h"
 #include "util/u_dynarray.h"
 #include "util/u_math.h"
@@ -394,11 +391,10 @@ __OUT_IB5(struct fd_ringbuffer *ring, struct fd_ringbuffer *target)
    }
 }
 
-/* CP_SCRATCH_REG4 is used to hold base address for query results:
- * Note the scratch register move on a5xx+ but this is only used
- * for pre-a5xx hw queries where we cannot allocate the query buf
- * until the # of tiles is known.
- */
+/* CP_SCRATCH_REG4 is used to hold base address for query results: */
+// XXX annoyingly scratch regs move on a5xx.. and additionally different
+// packet types.. so freedreno_query_hw is going to need a bit of
+// rework..
 #define HW_QUERY_BASE_REG REG_AXXX_CP_SCRATCH_REG4
 
 #ifdef DEBUG
@@ -422,6 +418,13 @@ emit_marker(struct fd_ringbuffer *ring, int scratch_idx)
    }
 }
 
+static inline uint32_t
+pack_rgba(enum pipe_format format, const float *rgba)
+{
+   union util_color uc;
+   util_pack_color(rgba, format, &uc);
+   return uc.ui[0];
+}
 
 /*
  * a3xx+ helpers:
@@ -505,13 +508,6 @@ fd4_size2indextype(unsigned index_size)
    DBG("unsupported index size: %d", index_size);
    assert(0);
    return INDEX4_SIZE_32_BIT;
-}
-
-/* Convert 19.2MHz RBBM always-on timer ticks to ns */
-static inline uint64_t
-ticks_to_ns(uint64_t ts)
-{
-   return ts * (1000000000 / 19200000);
 }
 
 #ifdef __cplusplus

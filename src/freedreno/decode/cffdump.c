@@ -35,7 +35,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <inttypes.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -50,7 +49,9 @@
 #include "script.h"
 #include "rdutil.h"
 
-static struct cffdec_options options;
+static struct cffdec_options options = {
+   .gpu_id = 220,
+};
 
 static bool needs_wfi = false;
 static bool is_blob = false;
@@ -334,26 +335,16 @@ handle_file(const char *filename, int start, int end, int draw)
             uint32_t gpu_id = parse_gpu_id(ps.buf);
             if (!gpu_id)
                break;
-            options.dev_id.gpu_id = gpu_id;
-            printl(2, "gpu_id: %d\n", options.dev_id.gpu_id);
-
-            options.info = fd_dev_info_raw(&options.dev_id);
-            if (!options.info)
-               break;
-
+            options.gpu_id = gpu_id;
+            printl(2, "gpu_id: %d\n", options.gpu_id);
             cffdec_init(&options);
             got_gpu_id = 1;
          }
          break;
       case RD_CHIP_ID:
          if (!got_gpu_id) {
-            options.dev_id.chip_id = parse_chip_id(ps.buf);
-            printl(2, "chip_id: 0x%" PRIx64 "\n", options.dev_id.chip_id);
-
-            options.info = fd_dev_info_raw(&options.dev_id);
-            if (!options.info)
-               break;
-
+            options.gpu_id = parse_chip_id(ps.buf);
+            printl(2, "gpu_id: %d\n", options.gpu_id);
             cffdec_init(&options);
             got_gpu_id = 1;
          }
@@ -364,8 +355,6 @@ handle_file(const char *filename, int start, int end, int draw)
    }
 
    script_end_cmdstream();
-
-   reset_buffers();
 
    io_close(io);
    fflush(stdout);

@@ -168,25 +168,25 @@ nvgl_stencil_op(unsigned op)
 static inline unsigned
 nvgl_primitive(unsigned prim) {
 	switch (prim) {
-	case MESA_PRIM_POINTS:
+	case PIPE_PRIM_POINTS:
 		return 0x0001;
-	case MESA_PRIM_LINES:
+	case PIPE_PRIM_LINES:
 		return 0x0002;
-	case MESA_PRIM_LINE_LOOP:
+	case PIPE_PRIM_LINE_LOOP:
 		return 0x0003;
-	case MESA_PRIM_LINE_STRIP:
+	case PIPE_PRIM_LINE_STRIP:
 		return 0x0004;
-	case MESA_PRIM_TRIANGLES:
+	case PIPE_PRIM_TRIANGLES:
 		return 0x0005;
-	case MESA_PRIM_TRIANGLE_STRIP:
+	case PIPE_PRIM_TRIANGLE_STRIP:
 		return 0x0006;
-	case MESA_PRIM_TRIANGLE_FAN:
+	case PIPE_PRIM_TRIANGLE_FAN:
 		return 0x0007;
-	case MESA_PRIM_QUADS:
+	case PIPE_PRIM_QUADS:
 		return 0x0008;
-	case MESA_PRIM_QUAD_STRIP:
+	case PIPE_PRIM_QUAD_STRIP:
 		return 0x0009;
-	case MESA_PRIM_POLYGON:
+	case PIPE_PRIM_POLYGON:
 		return 0x000a;
 	default:
 		return 0;

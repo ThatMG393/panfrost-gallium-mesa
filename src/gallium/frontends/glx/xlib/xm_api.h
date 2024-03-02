@@ -68,7 +68,6 @@ and create a window, you must do the following to use the X/Mesa interface:
 # include <X11/Xlibint.h>
 # include <X11/Xutil.h>
 
-struct st_context;
 struct hud_context;
 
 typedef struct xmesa_display *XMesaDisplay;
@@ -82,7 +81,7 @@ struct xmesa_display {
 
    Display *display;
    struct pipe_screen *screen;
-   struct pipe_frontend_screen *fscreen;
+   struct st_manager *smapi;
 
    struct pipe_context *pipe;
 };
@@ -305,7 +304,7 @@ struct xmesa_visual {
  * Basically corresponds to a GLXContext.
  */
 struct xmesa_context {
-   struct st_context *st;
+   struct st_context_iface *st;
    XMesaVisual xm_visual;	/** pixel format info */
    XMesaBuffer xm_buffer;	/** current drawbuffer */
    XMesaBuffer xm_read_buffer;  /** current readbuffer */
@@ -329,7 +328,7 @@ typedef enum {
  * Basically corresponds to a GLXDrawable.
  */
 struct xmesa_buffer {
-   struct pipe_frontend_drawable *drawable;
+   struct st_framebuffer_iface *stfb;
    struct xlib_drawable ws;
 
    GLboolean wasCurrent;	/* was ever the current buffer? */

@@ -28,7 +28,7 @@
 #ifndef U_TESTS_H
 #define U_TESTS_H
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 
 #ifdef __cplusplus
 extern "C" {

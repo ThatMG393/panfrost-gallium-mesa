@@ -46,6 +46,7 @@
 #include "util/u_upload_mgr.h"
 #include "util/ralloc.h"
 #include "util/xmlconfig.h"
+#include "drm-uapi/i915_drm.h"
 #include "iris_context.h"
 #include "iris_defines.h"
 #include "iris_fence.h"
@@ -53,6 +54,7 @@
 #include "iris_resource.h"
 #include "iris_screen.h"
 #include "compiler/glsl_types.h"
+#include "intel/compiler/brw_compiler.h"
 #include "intel/common/intel_gem.h"
 #include "intel/common/intel_l3_config.h"
 #include "intel/common/intel_uuid.h"
@@ -60,9 +62,6 @@
 
 #define genX_call(devinfo, func, ...)             \
    switch ((devinfo)->verx10) {                   \
-   case 200:                                      \
-      gfx20_##func(__VA_ARGS__);                  \
-      break;                                      \
    case 125:                                      \
       gfx125_##func(__VA_ARGS__);                 \
       break;                                      \
@@ -99,14 +98,14 @@ iris_get_device_uuid(struct pipe_screen *pscreen, char *uuid)
 {
    struct iris_screen *screen = (struct iris_screen *)pscreen;
 
-   intel_uuid_compute_device_id((uint8_t *)uuid, screen->devinfo, PIPE_UUID_SIZE);
+   intel_uuid_compute_device_id((uint8_t *)uuid, &screen->devinfo, PIPE_UUID_SIZE);
 }
 
 static void
 iris_get_driver_uuid(struct pipe_screen *pscreen, char *uuid)
 {
    struct iris_screen *screen = (struct iris_screen *)pscreen;
-   const struct intel_device_info *devinfo = screen->devinfo;
+   const struct intel_device_info *devinfo = &screen->devinfo;
 
    intel_uuid_compute_driver_id((uint8_t *)uuid, devinfo, PIPE_UUID_SIZE);
 }
@@ -121,14 +120,14 @@ iris_enable_clover()
 }
 
 static void
-iris_warn_cl()
+iris_warn_clover()
 {
    static bool warned = false;
    if (warned)
       return;
 
    warned = true;
-   fprintf(stderr, "WARNING: OpenCL support via iris driver is incomplete.\n"
+   fprintf(stderr, "WARNING: OpenCL support via iris+clover is incomplete.\n"
                    "For a complete and conformant OpenCL implementation, use\n"
                    "https://github.com/intel/compute-runtime instead\n");
 }
@@ -137,7 +136,7 @@ static const char *
 iris_get_name(struct pipe_screen *pscreen)
 {
    struct iris_screen *screen = (struct iris_screen *)pscreen;
-   const struct intel_device_info *devinfo = screen->devinfo;
+   const struct intel_device_info *devinfo = &screen->devinfo;
    static char buf[128];
 
    snprintf(buf, sizeof(buf), "Mesa %s", devinfo->name);
@@ -148,7 +147,7 @@ static const char *
 iris_get_cl_cts_version(struct pipe_screen *pscreen)
 {
    struct iris_screen *screen = (struct iris_screen *)pscreen;
-   const struct intel_device_info *devinfo = screen->devinfo;
+   const struct intel_device_info *devinfo = &screen->devinfo;
 
    /* https://www.khronos.org/conformance/adopters/conformant-products/opencl#submission_405 */
    if (devinfo->verx10 == 120)
@@ -173,7 +172,7 @@ iris_get_video_memory(struct iris_screen *screen)
        * We should probably never end up here. This is just a fallback to get
        * some kind of value in case os_get_available_system_memory fails.
        */
-      const struct intel_device_info *devinfo = screen->devinfo;
+      const struct intel_device_info *devinfo = &screen->devinfo;
       /* Once a batch uses more than 75% of the maximum mappable size, we
        * assume that there's some fragmentation, and we start doing extra
        * flushing, etc.  That's the big cliff apps will care about.
@@ -201,7 +200,7 @@ static int
 iris_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
 {
    struct iris_screen *screen = (struct iris_screen *)pscreen;
-   const struct intel_device_info *devinfo = screen->devinfo;
+   const struct intel_device_info *devinfo = &screen->devinfo;
 
    switch (param) {
    case PIPE_CAP_NPOT_TEXTURES:
@@ -217,6 +216,7 @@ iris_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_PRIMITIVE_RESTART_FIXED_INDEX:
    case PIPE_CAP_INDEP_BLEND_ENABLE:
    case PIPE_CAP_INDEP_BLEND_FUNC:
+   case PIPE_CAP_RGB_OVERRIDE_DST_ALPHA_BLEND:
    case PIPE_CAP_FS_COORD_ORIGIN_UPPER_LEFT:
    case PIPE_CAP_FS_COORD_PIXEL_CENTER_INTEGER:
    case PIPE_CAP_DEPTH_CLIP_DISABLE:
@@ -253,6 +253,7 @@ iris_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_STREAM_OUTPUT_INTERLEAVE_BUFFERS:
    case PIPE_CAP_DOUBLES:
    case PIPE_CAP_INT64:
+   case PIPE_CAP_INT64_DIVMOD:
    case PIPE_CAP_SAMPLER_VIEW_TARGET:
    case PIPE_CAP_ROBUST_BUFFER_ACCESS_BEHAVIOR:
    case PIPE_CAP_DEVICE_RESET_STATUS_QUERY:
@@ -271,6 +272,7 @@ iris_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_SHADER_CLOCK:
    case PIPE_CAP_SHADER_BALLOT:
    case PIPE_CAP_MULTISAMPLE_Z_RESOLVE:
+   case PIPE_CAP_CLEAR_TEXTURE:
    case PIPE_CAP_CLEAR_SCISSORED:
    case PIPE_CAP_SHADER_GROUP_VOTE:
    case PIPE_CAP_VS_WINDOW_SPACE_POSITION:
@@ -297,18 +299,13 @@ iris_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_IMAGE_STORE_FORMATTED:
    case PIPE_CAP_LEGACY_MATH_RULES:
    case PIPE_CAP_ALPHA_TO_COVERAGE_DITHER_CONTROL:
-   case PIPE_CAP_MAP_UNSYNCHRONIZED_THREAD_SAFE:
-   case PIPE_CAP_HAS_CONST_BW:
-   case PIPE_CAP_CL_GL_SHARING:
       return true;
    case PIPE_CAP_UMA:
       return iris_bufmgr_vram_size(screen->bufmgr) == 0;
-   case PIPE_CAP_QUERY_MEMORY_INFO:
-      return iris_bufmgr_vram_size(screen->bufmgr) != 0;
    case PIPE_CAP_PREFER_BACK_BUFFER_REUSE:
       return false;
    case PIPE_CAP_FBFETCH:
-      return IRIS_MAX_DRAW_BUFFERS;
+      return BRW_MAX_DRAW_BUFFERS;
    case PIPE_CAP_FBFETCH_COHERENT:
    case PIPE_CAP_CONSERVATIVE_RASTER_INNER_COVERAGE:
    case PIPE_CAP_POST_DEPTH_COVERAGE:
@@ -322,7 +319,7 @@ iris_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_MAX_DUAL_SOURCE_RENDER_TARGETS:
       return 1;
    case PIPE_CAP_MAX_RENDER_TARGETS:
-      return IRIS_MAX_DRAW_BUFFERS;
+      return BRW_MAX_DRAW_BUFFERS;
    case PIPE_CAP_MAX_TEXTURE_2D_SIZE:
       return 16384;
    case PIPE_CAP_MAX_TEXTURE_CUBE_LEVELS:
@@ -334,9 +331,9 @@ iris_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_MAX_TEXTURE_ARRAY_LAYERS:
       return 2048;
    case PIPE_CAP_MAX_STREAM_OUTPUT_SEPARATE_COMPONENTS:
-      return IRIS_MAX_SOL_BINDINGS / IRIS_MAX_SOL_BUFFERS;
+      return BRW_MAX_SOL_BINDINGS / IRIS_MAX_SOL_BUFFERS;
    case PIPE_CAP_MAX_STREAM_OUTPUT_INTERLEAVED_COMPONENTS:
-      return IRIS_MAX_SOL_BINDINGS;
+      return BRW_MAX_SOL_BINDINGS;
    case PIPE_CAP_GLSL_FEATURE_LEVEL:
    case PIPE_CAP_GLSL_FEATURE_LEVEL_COMPATIBILITY:
       return 460;
@@ -351,10 +348,6 @@ iris_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return 1 << 27;
    case PIPE_CAP_TEXTURE_BUFFER_OFFSET_ALIGNMENT:
       return 16; // XXX: u_screen says 256 is the minimum value...
-   case PIPE_CAP_LINEAR_IMAGE_PITCH_ALIGNMENT:
-      return 1;
-   case PIPE_CAP_LINEAR_IMAGE_BASE_ADDRESS_ALIGNMENT:
-      return 1;
    case PIPE_CAP_TEXTURE_TRANSFER_MODES:
       return PIPE_TEXTURE_TRANSFER_BLIT;
    case PIPE_CAP_MAX_TEXEL_BUFFER_ELEMENTS_UINT:
@@ -378,7 +371,7 @@ iris_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_VENDOR_ID:
       return 0x8086;
    case PIPE_CAP_DEVICE_ID:
-      return screen->devinfo->pci_device_id;
+      return screen->devinfo.pci_device_id;
    case PIPE_CAP_VIDEO_MEMORY:
       return iris_get_video_memory(screen);
    case PIPE_CAP_MAX_SHADER_PATCH_VARYINGS:
@@ -430,14 +423,11 @@ iris_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
        */
       return devinfo->ver >= 11;
 
-   case PIPE_CAP_TIMER_RESOLUTION:
-      return DIV_ROUND_UP(1000000000ull, devinfo->timestamp_frequency);
+   case PIPE_CAP_QUERY_TIMESTAMP_BITS:
+      return TIMESTAMP_BITS;
 
    case PIPE_CAP_DEVICE_PROTECTED_CONTEXT:
       return screen->kernel_features & KERNEL_HAS_PROTECTED_CONTEXT;
-
-   case PIPE_CAP_ASTC_VOID_EXTENTS_NEED_DENORM_FLUSH:
-      return devinfo->ver == 9 && !intel_device_info_is_9lp(devinfo);
 
    default:
       return u_pipe_screen_get_param_defaults(pscreen, param);
@@ -486,10 +476,6 @@ iris_get_shader_param(struct pipe_screen *pscreen,
                       enum pipe_shader_cap param)
 {
    gl_shader_stage stage = stage_from_pipe(p_stage);
-
-   if (p_stage == PIPE_SHADER_MESH ||
-       p_stage == PIPE_SHADER_TASK)
-      return 0;
 
    /* this is probably not totally correct.. but it's a start: */
    switch (param) {
@@ -546,12 +532,18 @@ iris_get_shader_param(struct pipe_screen *pscreen,
    case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTERS:
    case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTER_BUFFERS:
       return 0;
+   case PIPE_SHADER_CAP_PREFERRED_IR:
+      return PIPE_SHADER_IR_NIR;
    case PIPE_SHADER_CAP_SUPPORTED_IRS: {
       int irs = 1 << PIPE_SHADER_IR_NIR;
       if (iris_enable_clover())
          irs |= 1 << PIPE_SHADER_IR_NIR_SERIALIZED;
       return irs;
    }
+   case PIPE_SHADER_CAP_DROUND_SUPPORTED:
+   case PIPE_SHADER_CAP_LDEXP_SUPPORTED:
+      return 1;
+   case PIPE_SHADER_CAP_DFRACEXP_DLDEXP_SUPPORTED:
    case PIPE_SHADER_CAP_TGSI_ANY_INOUT_DECL_RANGE:
    case PIPE_SHADER_CAP_TGSI_SQRT_SUPPORTED:
       return 0;
@@ -567,7 +559,7 @@ iris_get_compute_param(struct pipe_screen *pscreen,
                        void *ret)
 {
    struct iris_screen *screen = (struct iris_screen *)pscreen;
-   const struct intel_device_info *devinfo = screen->devinfo;
+   const struct intel_device_info *devinfo = &screen->devinfo;
 
    const uint32_t max_invocations =
       MIN2(1024, 32 * devinfo->max_cs_workgroup_threads);
@@ -580,10 +572,10 @@ iris_get_compute_param(struct pipe_screen *pscreen,
 
    switch (param) {
    case PIPE_COMPUTE_CAP_ADDRESS_BITS:
-      /* This gets queried on OpenCL device init and is never queried by the
+      /* This gets queried on clover device init and is never queried by the
        * OpenGL state tracker.
        */
-      iris_warn_cl();
+      iris_warn_clover();
       RET((uint32_t []){ 64 });
 
    case PIPE_COMPUTE_CAP_IR_TARGET:
@@ -614,11 +606,8 @@ iris_get_compute_param(struct pipe_screen *pscreen,
    case PIPE_COMPUTE_CAP_IMAGES_SUPPORTED:
       RET((uint32_t []) { 1 });
 
-   case PIPE_COMPUTE_CAP_SUBGROUP_SIZES:
-      RET((uint32_t []) { 32 | 16 | 8 });
-
-   case PIPE_COMPUTE_CAP_MAX_SUBGROUPS:
-      RET((uint32_t []) { devinfo->max_cs_workgroup_threads });
+   case PIPE_COMPUTE_CAP_SUBGROUP_SIZE:
+      RET((uint32_t []) { BRW_SUBGROUP_SIZE });
 
    case PIPE_COMPUTE_CAP_MAX_MEM_ALLOC_SIZE:
    case PIPE_COMPUTE_CAP_MAX_GLOBAL_SIZE:
@@ -651,10 +640,11 @@ iris_get_timestamp(struct pipe_screen *pscreen)
    uint64_t result;
 
    if (!intel_gem_read_render_timestamp(iris_bufmgr_get_fd(screen->bufmgr),
-                                        screen->devinfo->kmd_type, &result))
+                                        &result))
       return 0;
 
-   result = intel_device_info_timebase_scale(screen->devinfo, result);
+   result = intel_device_info_timebase_scale(&screen->devinfo, result);
+   result &= (1ull << TIMESTAMP_BITS) - 1;
 
    return result;
 }
@@ -666,7 +656,6 @@ iris_screen_destroy(struct iris_screen *screen)
    util_queue_destroy(&screen->shader_compiler_queue);
    glsl_type_singleton_decref();
    iris_bo_unreference(screen->workaround_bo);
-   iris_bo_unreference(screen->breakpoint_bo);
    u_transfer_helper_destroy(screen->base.transfer_helper);
    iris_bufmgr_unref(screen->bufmgr);
    disk_cache_destroy(screen->disk_cache);
@@ -684,23 +673,18 @@ static void
 iris_query_memory_info(struct pipe_screen *pscreen,
                        struct pipe_memory_info *info)
 {
-   struct iris_screen *screen = (struct iris_screen *)pscreen;
-   struct intel_device_info di;
-   memcpy(&di, screen->devinfo, sizeof(di));
+}
 
-   if (!intel_device_info_update_memory_info(&di, screen->fd))
-      return;
+static const void *
+iris_get_compiler_options(struct pipe_screen *pscreen,
+                          enum pipe_shader_ir ir,
+                          enum pipe_shader_type pstage)
+{
+   struct iris_screen *screen = (struct iris_screen *) pscreen;
+   gl_shader_stage stage = stage_from_pipe(pstage);
+   assert(ir == PIPE_SHADER_IR_NIR);
 
-   info->total_device_memory =
-      (di.mem.vram.mappable.size + di.mem.vram.unmappable.size) / 1024;
-   info->avail_device_memory =
-      (di.mem.vram.mappable.free + di.mem.vram.unmappable.free) / 1024;
-   info->total_staging_memory = di.mem.sram.mappable.size / 1024;
-   info->avail_staging_memory = di.mem.sram.mappable.free / 1024;
-
-   /* Neither kernel gives us any way to calculate this information */
-   info->device_memory_evicted = 0;
-   info->nr_device_memory_evictions = 0;
+   return screen->compiler->nir_options[stage];
 }
 
 static struct disk_cache *
@@ -722,13 +706,47 @@ iris_get_default_l3_config(const struct intel_device_info *devinfo,
 }
 
 static void
+iris_shader_debug_log(void *data, unsigned *id, const char *fmt, ...)
+{
+   struct util_debug_callback *dbg = data;
+   va_list args;
+
+   if (!dbg->debug_message)
+      return;
+
+   va_start(args, fmt);
+   dbg->debug_message(dbg->data, id, UTIL_DEBUG_TYPE_SHADER_INFO, fmt, args);
+   va_end(args);
+}
+
+static void
+iris_shader_perf_log(void *data, unsigned *id, const char *fmt, ...)
+{
+   struct util_debug_callback *dbg = data;
+   va_list args;
+   va_start(args, fmt);
+
+   if (INTEL_DEBUG(DEBUG_PERF)) {
+      va_list args_copy;
+      va_copy(args_copy, args);
+      vfprintf(stderr, fmt, args_copy);
+      va_end(args_copy);
+   }
+
+   if (dbg->debug_message) {
+      dbg->debug_message(dbg->data, id, UTIL_DEBUG_TYPE_PERF_INFO, fmt, args);
+   }
+
+   va_end(args);
+}
+
+static void
 iris_detect_kernel_features(struct iris_screen *screen)
 {
-   const struct intel_device_info *devinfo = screen->devinfo;
    /* Kernel 5.2+ */
    if (intel_gem_supports_syncobj_wait(screen->fd))
       screen->kernel_features |= KERNEL_HAS_WAIT_FOR_SUBMIT;
-   if (intel_gem_supports_protected_context(screen->fd, devinfo->kmd_type))
+   if (intel_gem_supports_protected_context(screen->fd))
       screen->kernel_features |= KERNEL_HAS_PROTECTED_CONTEXT;
 }
 
@@ -743,23 +761,17 @@ iris_init_identifier_bo(struct iris_screen *screen)
 
    assert(iris_bo_is_real(screen->workaround_bo));
 
+   screen->workaround_bo->real.kflags |=
+      EXEC_OBJECT_CAPTURE | EXEC_OBJECT_ASYNC;
    screen->workaround_address = (struct iris_address) {
       .bo = screen->workaround_bo,
       .offset = ALIGN(
-         intel_debug_write_identifiers(bo_map, 4096, "Iris"), 32),
+         intel_debug_write_identifiers(bo_map, 4096, "Iris") + 8, 8),
    };
 
    iris_bo_unmap(screen->workaround_bo);
 
    return true;
-}
-
-static int
-iris_screen_get_fd(struct pipe_screen *pscreen)
-{
-   struct iris_screen *screen = (struct iris_screen *) pscreen;
-
-   return screen->winsys_fd;
 }
 
 struct pipe_screen *
@@ -768,6 +780,29 @@ iris_screen_create(int fd, const struct pipe_screen_config *config)
    struct iris_screen *screen = rzalloc(NULL, struct iris_screen);
    if (!screen)
       return NULL;
+
+   if (!intel_get_device_info_from_fd(fd, &screen->devinfo))
+      return NULL;
+
+   p_atomic_set(&screen->refcount, 1);
+
+   if (screen->devinfo.ver < 8 || screen->devinfo.platform == INTEL_PLATFORM_CHV)
+      return NULL;
+
+   /* Here are the i915 features we need for Iris (in chronological order) :
+    *    - I915_PARAM_HAS_EXEC_NO_RELOC     (3.10)
+    *    - I915_PARAM_HAS_EXEC_HANDLE_LUT   (3.10)
+    *    - I915_PARAM_HAS_EXEC_BATCH_FIRST  (4.13)
+    *    - I915_PARAM_HAS_EXEC_FENCE_ARRAY  (4.14)
+    *    - I915_PARAM_HAS_CONTEXT_ISOLATION (4.16)
+    *
+    * Checking the last feature availability will include all previous ones.
+    */
+   if (!screen->devinfo.has_context_isolation) {
+      debug_error("Kernel is too old (4.16+ required) or unusable for Iris.\n"
+                  "Check your dmesg logs for loading failures.\n");
+      return NULL;
+   }
 
    driParseConfigFiles(config->options, config->options_info, 0, "iris",
                        NULL, NULL, NULL, 0, NULL, 0);
@@ -782,29 +817,11 @@ iris_screen_create(int fd, const struct pipe_screen_config *config)
       break;
    }
 
-   process_intel_debug_variable();
+   brw_process_intel_debug_variable();
 
-   screen->bufmgr = iris_bufmgr_get_for_fd(fd, bo_reuse);
+   screen->bufmgr = iris_bufmgr_get_for_fd(&screen->devinfo, fd, bo_reuse);
    if (!screen->bufmgr)
       return NULL;
-
-   screen->devinfo = iris_bufmgr_get_device_info(screen->bufmgr);
-   p_atomic_set(&screen->refcount, 1);
-
-   /* Here are the i915 features we need for Iris (in chronological order) :
-    *    - I915_PARAM_HAS_EXEC_NO_RELOC     (3.10)
-    *    - I915_PARAM_HAS_EXEC_HANDLE_LUT   (3.10)
-    *    - I915_PARAM_HAS_EXEC_BATCH_FIRST  (4.13)
-    *    - I915_PARAM_HAS_EXEC_FENCE_ARRAY  (4.14)
-    *    - I915_PARAM_HAS_CONTEXT_ISOLATION (4.16)
-    *
-    * Checking the last feature availability will include all previous ones.
-    */
-   if (!screen->devinfo->has_context_isolation) {
-      debug_error("Kernel is too old (4.16+ required) or unusable for Iris.\n"
-                  "Check your dmesg logs for loading failures.\n");
-      return NULL;
-   }
 
    screen->fd = iris_bufmgr_get_fd(screen->bufmgr);
    screen->winsys_fd = os_dupfd_cloexec(fd);
@@ -813,13 +830,8 @@ iris_screen_create(int fd, const struct pipe_screen_config *config)
 
    screen->workaround_bo =
       iris_bo_alloc(screen->bufmgr, "workaround", 4096, 4096,
-                    IRIS_MEMZONE_OTHER, BO_ALLOC_NO_SUBALLOC | BO_ALLOC_CAPTURE);
+                    IRIS_MEMZONE_OTHER, BO_ALLOC_NO_SUBALLOC);
    if (!screen->workaround_bo)
-      return NULL;
-
-   screen->breakpoint_bo = iris_bo_alloc(screen->bufmgr, "breakpoint", 4, 4,
-                                         IRIS_MEMZONE_OTHER, BO_ALLOC_ZEROED);
-   if (!screen->breakpoint_bo)
       return NULL;
 
    if (!iris_init_identifier_bo(screen))
@@ -829,7 +841,7 @@ iris_screen_create(int fd, const struct pipe_screen_config *config)
       driQueryOptionb(config->options, "dual_color_blend_by_location");
    screen->driconf.disable_throttling =
       driQueryOptionb(config->options, "disable_throttling");
-   screen->driconf.always_flush_cache = INTEL_DEBUG(DEBUG_STALL) ||
+   screen->driconf.always_flush_cache =
       driQueryOptionb(config->options, "always_flush_cache");
    screen->driconf.sync_compile =
       driQueryOptionb(config->options, "sync_compile");
@@ -837,21 +849,19 @@ iris_screen_create(int fd, const struct pipe_screen_config *config)
       driQueryOptionb(config->options, "limit_trig_input_range");
    screen->driconf.lower_depth_range_rate =
       driQueryOptionf(config->options, "lower_depth_range_rate");
-   screen->driconf.intel_enable_wa_14018912822 =
-      driQueryOptionb(config->options, "intel_enable_wa_14018912822");
-   screen->driconf.enable_tbimr =
-      driQueryOptionb(config->options, "intel_tbimr");
-   screen->driconf.generated_indirect_threshold =
-      driQueryOptioni(config->options, "generated_indirect_threshold");
 
    screen->precompile = debug_get_bool_option("shader_precompile", true);
 
-   isl_device_init(&screen->isl_dev, screen->devinfo);
+   isl_device_init(&screen->isl_dev, &screen->devinfo);
 
-   iris_compiler_init(screen);
+   screen->compiler = brw_compiler_create(screen, &screen->devinfo);
+   screen->compiler->shader_debug_log = iris_shader_debug_log;
+   screen->compiler->shader_perf_log = iris_shader_perf_log;
+   screen->compiler->supports_shader_constants = true;
+   screen->compiler->indirect_ubos_use_sampler = screen->devinfo.ver < 12;
 
-   screen->l3_config_3d = iris_get_default_l3_config(screen->devinfo, false);
-   screen->l3_config_cs = iris_get_default_l3_config(screen->devinfo, true);
+   screen->l3_config_3d = iris_get_default_l3_config(&screen->devinfo, false);
+   screen->l3_config_cs = iris_get_default_l3_config(&screen->devinfo, true);
 
    iris_disk_cache_init(screen);
 
@@ -871,7 +881,6 @@ iris_screen_create(int fd, const struct pipe_screen_config *config)
    pscreen->get_vendor = iris_get_vendor;
    pscreen->get_device_vendor = iris_get_device_vendor;
    pscreen->get_cl_cts_version = iris_get_cl_cts_version;
-   pscreen->get_screen_fd = iris_screen_get_fd;
    pscreen->get_param = iris_get_param;
    pscreen->get_shader_param = iris_get_shader_param;
    pscreen->get_compute_param = iris_get_compute_param;
@@ -888,8 +897,7 @@ iris_screen_create(int fd, const struct pipe_screen_config *config)
    pscreen->get_driver_query_info = iris_get_monitor_info;
    iris_init_screen_program_functions(pscreen);
 
-   genX_call(screen->devinfo, init_screen_state, screen);
-   genX_call(screen->devinfo, init_screen_gen_state, screen);
+   genX_call(&screen->devinfo, init_screen_state, screen);
 
    glsl_type_singleton_init_or_ref();
 

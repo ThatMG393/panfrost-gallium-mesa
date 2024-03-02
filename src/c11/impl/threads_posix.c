@@ -202,21 +202,6 @@ mtx_lock(mtx_t *mtx)
     return (pthread_mutex_lock(mtx) == 0) ? thrd_success : thrd_error;
 }
 
-static int
-threads_timespec_compare(const struct timespec *a, const struct timespec *b)
-{
-    if (a->tv_sec < b->tv_sec) {
-        return -1;
-    } else if (a->tv_sec > b->tv_sec) {
-        return 1;
-    } else if (a->tv_nsec < b->tv_nsec) {
-        return -1;
-    } else if (a->tv_nsec > b->tv_nsec) {
-        return 1;
-    }
-    return 0;
-}
-
 // 7.25.4.4
 int
 mtx_timedlock(mtx_t *mtx, const struct timespec *ts)
@@ -232,12 +217,11 @@ mtx_timedlock(mtx_t *mtx, const struct timespec *ts)
         return thrd_success;
     return (rt == ETIMEDOUT) ? thrd_timedout : thrd_error;
 #else
+    time_t expire = time(NULL);
+    expire += ts->tv_sec;
     while (mtx_trylock(mtx) != thrd_success) {
-        struct timespec now;
-        if (timespec_get(&now, TIME_UTC) != TIME_UTC) {
-            return thrd_error;
-        }
-        if (threads_timespec_compare(ts, &now) < 0)
+        time_t now = time(NULL);
+        if (expire < now)
             return thrd_timedout;
         // busy loop!
         thrd_yield();

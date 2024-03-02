@@ -30,14 +30,14 @@
 #define STATES_PER_THREAD 1024
 #define NUM_RUNS 64
 
-static struct job {
+struct job {
    pthread_t thread;
    unsigned id;
    struct anv_state_pool *pool;
    uint32_t offsets[STATES_PER_THREAD];
 } jobs[NUM_THREADS];
 
-static pthread_barrier_t barrier;
+pthread_barrier_t barrier;
 
 static void *alloc_states(void *_job)
 {
@@ -112,9 +112,7 @@ static void run_test()
    pthread_mutex_destroy(&device.mutex);
 }
 
-void state_pool_no_free_test(void);
-
-void state_pool_no_free_test(void)
+int main(void)
 {
    for (unsigned i = 0; i < NUM_RUNS; i++)
       run_test();

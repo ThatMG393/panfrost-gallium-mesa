@@ -23,7 +23,6 @@
 
 #include <inttypes.h> /* for PRIx64 macro */
 #include "ir_print_visitor.h"
-#include "linker_util.h"
 #include "compiler/glsl_types.h"
 #include "glsl_parser_extras.h"
 #include "main/macros.h"
@@ -46,20 +45,6 @@ ir_instruction::fprint(FILE *f) const
    deconsted->accept(&v);
 }
 
-static void
-glsl_print_type(FILE *f, const glsl_type *t)
-{
-   if (glsl_type_is_array(t)) {
-      fprintf(f, "(array ");
-      glsl_print_type(f, t->fields.array);
-      fprintf(f, " %u)", t->length);
-   } else if (glsl_type_is_struct(t) && !is_gl_identifier(glsl_get_type_name(t))) {
-      fprintf(f, "%s@%p", glsl_get_type_name(t), (void *) t);
-   } else {
-      fprintf(f, "%s", glsl_get_type_name(t));
-   }
-}
-
 extern "C" {
 void
 _mesa_print_ir(FILE *f, exec_list *instructions,
@@ -70,7 +55,7 @@ _mesa_print_ir(FILE *f, exec_list *instructions,
 	 const glsl_type *const s = state->user_structures[i];
 
 	 fprintf(f, "(structure (%s) (%s@%p) (%u) (\n",
-                 glsl_get_type_name(s), glsl_get_type_name(s), (void *) s, s->length);
+                 s->name, s->name, (void *) s, s->length);
 
 	 for (unsigned j = 0; j < s->length; j++) {
 	    fprintf(f, "\t((");
@@ -213,7 +198,7 @@ void ir_print_visitor::visit(ir_variable *ir)
                                 "in ", "out ", "inout ",
 			        "const_in ", "sys ", "temporary " };
    STATIC_ASSERT(ARRAY_SIZE(mode) == ir_var_mode_count);
-   const char *const interp[] = { "", "smooth", "flat", "noperspective", "explicit" };
+   const char *const interp[] = { "", "smooth", "flat", "noperspective", "explicit", "color" };
    STATIC_ASSERT(ARRAY_SIZE(interp) == INTERP_MODE_COUNT);
    const char *const precision[] = { "", "highp ", "mediump ", "lowp "};
 
@@ -500,17 +485,17 @@ void ir_print_visitor::visit(ir_constant *ir)
    glsl_print_type(f, ir->type);
    fprintf(f, " (");
 
-   if (glsl_type_is_array(ir->type)) {
+   if (ir->type->is_array()) {
       for (unsigned i = 0; i < ir->type->length; i++)
 	 ir->get_array_element(i)->accept(this);
-   } else if (glsl_type_is_struct(ir->type)) {
+   } else if (ir->type->is_struct()) {
       for (unsigned i = 0; i < ir->type->length; i++) {
 	 fprintf(f, "(%s ", ir->type->fields.structure[i].name);
          ir->get_record_field(i)->accept(this);
 	 fprintf(f, ")");
       }
    } else {
-      for (unsigned i = 0; i < glsl_get_components(ir->type); i++) {
+      for (unsigned i = 0; i < ir->type->components(); i++) {
 	 if (i != 0)
 	    fprintf(f, " ");
 	 switch (ir->type->base_type) {

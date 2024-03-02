@@ -55,7 +55,6 @@ These are some display drivers that have been tested with Lima:
 - Exynos: ``exynos``
 - Rockchip: ``rockchip``
 - Tiny DRM: ``tinydrm``
-- Xilinx ZynqMP: ``zynqmp-dpsub``
 
 Environment variables
 ---------------------

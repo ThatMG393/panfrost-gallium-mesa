@@ -60,7 +60,7 @@ struct svga_tracked_state svga_update_need_swvfetch =
 static enum pipe_error
 update_need_pipeline(struct svga_context *svga, uint64_t dirty)
 {
-   bool need_pipeline = false;
+   boolean need_pipeline = FALSE;
    struct svga_vertex_shader *vs = svga->curr.vs;
    const char *reason = "";
 
@@ -77,16 +77,16 @@ update_need_pipeline(struct svga_context *svga, uint64_t dirty)
                  svga->curr.rast->need_pipeline_tris_str,
                  svga->curr.rast->need_pipeline_lines_str,
                  svga->curr.rast->need_pipeline_points_str);
-      need_pipeline = true;
+      need_pipeline = TRUE;
 
       switch (svga->curr.reduced_prim) {
-      case MESA_PRIM_POINTS:
+      case PIPE_PRIM_POINTS:
          reason = svga->curr.rast->need_pipeline_points_str;
          break;
-      case MESA_PRIM_LINES:
+      case PIPE_PRIM_LINES:
          reason = svga->curr.rast->need_pipeline_lines_str;
          break;
-      case MESA_PRIM_TRIANGLES:
+      case PIPE_PRIM_TRIANGLES:
          reason = svga->curr.rast->need_pipeline_tris_str;
          break;
       default:
@@ -98,13 +98,13 @@ update_need_pipeline(struct svga_context *svga, uint64_t dirty)
     */
     if (vs && vs->base.info.writes_edgeflag) {
       SVGA_DBG(DEBUG_SWTNL, "%s: edgeflags\n", __func__);
-      need_pipeline = true;
+      need_pipeline = TRUE;
       reason = "edge flags";
    }
 
    /* SVGA_NEW_FS, SVGA_NEW_RAST, SVGA_NEW_REDUCED_PRIMITIVE
     */
-   if (svga->curr.rast && svga->curr.reduced_prim == MESA_PRIM_POINTS) {
+   if (svga->curr.rast && svga->curr.reduced_prim == PIPE_PRIM_POINTS) {
       unsigned sprite_coord_gen = svga->curr.rast->templ.sprite_coord_enable;
       unsigned generic_inputs =
          svga->curr.fs ? svga->curr.fs->generic_inputs : 0;
@@ -120,7 +120,7 @@ update_need_pipeline(struct svga_context *svga, uint64_t dirty)
           * To solve this, we have to use the draw-module's wide/sprite
           * point stage.
           */
-         need_pipeline = true;
+         need_pipeline = TRUE;
          reason = "point sprite coordinate generation";
       }
    }
@@ -158,18 +158,18 @@ struct svga_tracked_state svga_update_need_pipeline =
 static enum pipe_error
 update_need_swtnl(struct svga_context *svga, uint64_t dirty)
 {
-   bool need_swtnl;
+   boolean need_swtnl;
 
    if (svga->debug.no_swtnl) {
-      svga->state.sw.need_swvfetch = false;
-      svga->state.sw.need_pipeline = false;
+      svga->state.sw.need_swvfetch = FALSE;
+      svga->state.sw.need_pipeline = FALSE;
    }
 
    need_swtnl = (svga->state.sw.need_swvfetch ||
                  svga->state.sw.need_pipeline);
 
    if (svga->debug.force_swtnl) {
-      need_swtnl = true;
+      need_swtnl = TRUE;
    }
 
    /*
@@ -178,7 +178,7 @@ update_need_swtnl(struct svga_context *svga, uint64_t dirty)
     * the wrong buffers and vertex formats. Try trivial/line-wide.
     */
    if (svga->state.sw.in_swtnl_draw)
-      need_swtnl = true;
+      need_swtnl = TRUE;
 
    if (need_swtnl != svga->state.sw.need_swtnl) {
       SVGA_DBG(DEBUG_SWTNL|DEBUG_PERF,
@@ -189,7 +189,7 @@ update_need_swtnl(struct svga_context *svga, uint64_t dirty)
 
       svga->state.sw.need_swtnl = need_swtnl;
       svga->dirty |= SVGA_NEW_NEED_SWTNL;
-      svga->swtnl.new_vdecl = true;
+      svga->swtnl.new_vdecl = TRUE;
    }
 
    return PIPE_OK;

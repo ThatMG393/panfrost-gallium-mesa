@@ -44,8 +44,7 @@ _mesa_sha1_init(struct mesa_sha1 *ctx)
 static inline void
 _mesa_sha1_update(struct mesa_sha1 *ctx, const void *data, size_t size)
 {
-   if (size)
-      SHA1Update(ctx, (const unsigned char *)data, size);
+   SHA1Update(ctx, (const unsigned char *)data, size);
 }
 
 static inline void

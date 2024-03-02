@@ -23,7 +23,7 @@
 
 #include "anv_nir.h"
 #include "nir_builder.h"
-#include "compiler/elk/elk_nir.h"
+#include "compiler/brw_nir.h"
 #include "util/mesa-sha1.h"
 
 #define sizeof_field(type, field) sizeof(((type *)0)->field)
@@ -31,18 +31,21 @@
 void
 anv_nir_compute_push_layout(nir_shader *nir,
                             const struct anv_physical_device *pdevice,
-                            enum elk_robustness_flags robust_flags,
-                            struct elk_stage_prog_data *prog_data,
+                            bool robust_buffer_access,
+                            struct brw_stage_prog_data *prog_data,
                             struct anv_pipeline_bind_map *map,
                             void *mem_ctx)
 {
-   const struct elk_compiler *compiler = pdevice->compiler;
+   const struct brw_compiler *compiler = pdevice->compiler;
    memset(map->push_ranges, 0, sizeof(map->push_ranges));
 
    bool has_const_ubo = false;
    unsigned push_start = UINT_MAX, push_end = 0;
-   nir_foreach_function_impl(impl, nir) {
-      nir_foreach_block(block, impl) {
+   nir_foreach_function(function, nir) {
+      if (!function->impl)
+         continue;
+
+      nir_foreach_block(block, function->impl) {
          nir_foreach_instr(instr, block) {
             if (instr->type != nir_instr_type_intrinsic)
                continue;
@@ -74,9 +77,10 @@ anv_nir_compute_push_layout(nir_shader *nir,
 
    const bool push_ubo_ranges =
       pdevice->info.verx10 >= 75 &&
-      has_const_ubo && nir->info.stage != MESA_SHADER_COMPUTE;
+      has_const_ubo && nir->info.stage != MESA_SHADER_COMPUTE &&
+      !brw_shader_stage_requires_bindless_resources(nir->info.stage);
 
-   if (push_ubo_ranges && (robust_flags & ELK_ROBUSTNESS_UBO)) {
+   if (push_ubo_ranges && robust_buffer_access) {
       /* We can't on-the-fly adjust our push ranges because doing so would
        * mess up the layout in the shader.  When robustBufferAccess is
        * enabled, we push a mask into the shader indicating which pushed
@@ -106,13 +110,13 @@ anv_nir_compute_push_layout(nir_shader *nir,
     * push_end (no push constants is indicated by push_start = UINT_MAX).
     */
    push_start = MIN2(push_start, push_end);
-   push_start = ROUND_DOWN_TO(push_start, 32);
+   push_start = align_down_u32(push_start, 32);
 
    /* For vec4 our push data size needs to be aligned to a vec4 and for
     * scalar, it needs to be aligned to a DWORD.
     */
-   const unsigned alignment = compiler->scalar_stage[nir->info.stage] ? 4 : 16;
-   nir->num_uniforms = ALIGN(push_end - push_start, alignment);
+   const unsigned align = compiler->scalar_stage[nir->info.stage] ? 4 : 16;
+   nir->num_uniforms = ALIGN(push_end - push_start, align);
    prog_data->nr_params = nir->num_uniforms / 4;
    prog_data->param = rzalloc_array(mem_ctx, uint32_t, prog_data->nr_params);
 
@@ -123,8 +127,14 @@ anv_nir_compute_push_layout(nir_shader *nir,
    };
 
    if (has_push_intrinsic) {
-      nir_foreach_function_impl(impl, nir) {
-         nir_foreach_block(block, impl) {
+      nir_foreach_function(function, nir) {
+         if (!function->impl)
+            continue;
+
+         nir_builder build, *b = &build;
+         nir_builder_init(b, function->impl);
+
+         nir_foreach_block(block, function->impl) {
             nir_foreach_instr_safe(instr, block) {
                if (instr->type != nir_instr_type_intrinsic)
                   continue;
@@ -136,9 +146,10 @@ anv_nir_compute_push_layout(nir_shader *nir,
                    * messages. All the push constants are located after the
                    * RT_DISPATCH_GLOBALS. We just need to add the offset to
                    * the address right after RT_DISPATCH_GLOBALS (see
-                   * elk_nir_lower_rt_intrinsics.c).
+                   * brw_nir_lower_rt_intrinsics.c).
                    */
-                  unsigned base_offset = push_start;
+                  unsigned base_offset =
+                     brw_shader_stage_requires_bindless_resources(nir->info.stage) ? 0 : push_start;
                   intrin->intrinsic = nir_intrinsic_load_uniform;
                   nir_intrinsic_set_base(intrin,
                                          nir_intrinsic_base(intrin) -
@@ -155,7 +166,7 @@ anv_nir_compute_push_layout(nir_shader *nir,
    }
 
    if (push_ubo_ranges) {
-      elk_nir_analyze_ubo_ranges(compiler, nir, prog_data->ubo_ranges);
+      brw_nir_analyze_ubo_ranges(compiler, nir, NULL, prog_data->ubo_ranges);
 
       /* The vec4 back-end pushes at most 32 regs while the scalar back-end
        * pushes up to 64.  This is primarily because the scalar back-end has a
@@ -178,7 +189,7 @@ anv_nir_compute_push_layout(nir_shader *nir,
       if (push_constant_range.length > 0)
          map->push_ranges[n++] = push_constant_range;
 
-      if (robust_flags & ELK_ROBUSTNESS_UBO) {
+      if (robust_buffer_access) {
          const uint32_t push_reg_mask_offset =
             offsetof(struct anv_push_constants, push_reg_mask[nir->info.stage]);
          assert(push_reg_mask_offset >= push_start);
@@ -189,7 +200,7 @@ anv_nir_compute_push_layout(nir_shader *nir,
       unsigned range_start_reg = push_constant_range.length;
 
       for (int i = 0; i < 4; i++) {
-         struct elk_ubo_range *ubo_range = &prog_data->ubo_ranges[i];
+         struct brw_ubo_range *ubo_range = &prog_data->ubo_ranges[i];
          if (ubo_range->length == 0)
             continue;
 
@@ -210,8 +221,7 @@ anv_nir_compute_push_layout(nir_shader *nir,
          };
 
          /* We only bother to shader-zero pushed client UBOs */
-         if (binding->set < MAX_SETS &&
-             (robust_flags & ELK_ROBUSTNESS_UBO)) {
+         if (binding->set < MAX_SETS && robust_buffer_access) {
             prog_data->zero_push_reg |= BITFIELD64_RANGE(range_start_reg,
                                                          ubo_range->length);
          }
@@ -240,7 +250,7 @@ anv_nir_compute_push_layout(nir_shader *nir,
 }
 
 void
-anv_nir_validate_push_layout(struct elk_stage_prog_data *prog_data,
+anv_nir_validate_push_layout(struct brw_stage_prog_data *prog_data,
                              struct anv_pipeline_bind_map *map)
 {
 #ifndef NDEBUG

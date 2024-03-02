@@ -441,8 +441,7 @@ def generate_unpack_kernel(format, dst_channel, dst_native_type):
 
     def unpack_from_bitmask(channels, swizzles):
         depth = format.block_size()
-        print('         uint%u_t value;' % (depth))
-        print('         memcpy(&value, src, sizeof value);')
+        print('         uint%u_t value = *(const uint%u_t *)src;' % (depth, depth))
 
         # Compute the intermediate unshifted values
         for i in range(format.nr_channels()):
@@ -568,7 +567,7 @@ def generate_pack_kernel(format, src_channel, src_native_type):
                 if value is not None:
                     print('         value |= %s;' % (value))
 
-        print('         memcpy(dst, &value, sizeof value);')
+        print('         *(uint%u_t *)dst = value;' % depth)
 
     def pack_into_struct(channels, swizzles):
         inv_swizzle = inv_swizzles(swizzles)
@@ -692,7 +691,7 @@ def is_format_hand_written(format):
 
 def generate(formats):
     print()
-    print('#include "util/compiler.h"')
+    print('#include "pipe/p_compiler.h"')
     print('#include "util/u_math.h"')
     print('#include "util/half_float.h"')
     print('#include "u_format.h"')

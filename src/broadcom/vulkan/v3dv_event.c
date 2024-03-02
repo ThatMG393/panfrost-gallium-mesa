@@ -24,8 +24,6 @@
 #include "v3dv_private.h"
 #include "compiler/nir/nir_builder.h"
 
-#include "vk_common_entrypoints.h"
-
 static nir_shader *
 get_set_event_cs()
 {
@@ -33,16 +31,20 @@ get_set_event_cs()
    nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_COMPUTE, options,
                                                   "set event cs");
 
-   nir_def *buf =
+   b.shader->info.workgroup_size[0] = 1;
+   b.shader->info.workgroup_size[1] = 1;
+   b.shader->info.workgroup_size[2] = 1;
+
+   nir_ssa_def *buf =
       nir_vulkan_resource_index(&b, 2, 32, nir_imm_int(&b, 0),
                                 .desc_set = 0,
                                 .binding = 0,
                                 .desc_type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
-   nir_def *offset =
+   nir_ssa_def *offset =
       nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 0, .range = 4);
 
-   nir_def *value =
+   nir_ssa_def *value =
       nir_load_push_constant(&b, 1, 8, nir_imm_int(&b, 0), .base = 4, .range = 4);
 
    nir_store_ssbo(&b, value, buf, offset,
@@ -58,19 +60,23 @@ get_wait_event_cs()
    nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_COMPUTE, options,
                                                   "wait event cs");
 
-   nir_def *buf =
+   b.shader->info.workgroup_size[0] = 1;
+   b.shader->info.workgroup_size[1] = 1;
+   b.shader->info.workgroup_size[2] = 1;
+
+   nir_ssa_def *buf =
       nir_vulkan_resource_index(&b, 2, 32, nir_imm_int(&b, 0),
                                 .desc_set = 0,
                                 .binding = 0,
                                 .desc_type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
-   nir_def *offset =
+   nir_ssa_def *offset =
       nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 0, .range = 4);
 
    nir_loop *loop = nir_push_loop(&b);
-      nir_def *load =
+      nir_ssa_def *load =
          nir_load_ssbo(&b, 1, 8, buf, offset, .access = 0, .align_mul = 4);
-      nir_def *value = nir_i2i32(&b, load);
+      nir_ssa_def *value = nir_i2i32(&b, load);
 
       nir_if *if_stmt = nir_push_if(&b, nir_ieq_imm(&b, value, 1));
       nir_jump(&b, nir_jump_break);
@@ -504,9 +510,9 @@ cmd_buffer_emit_set_event(struct v3dv_cmd_buffer *cmd_buffer,
                          VK_SHADER_STAGE_COMPUTE_BIT,
                          4, 1, &value);
 
-   vk_common_CmdDispatch(commandBuffer, 1, 1, 1);
+   v3dv_CmdDispatch(commandBuffer, 1, 1, 1);
 
-   v3dv_cmd_buffer_meta_state_pop(cmd_buffer, false);
+   v3dv_cmd_buffer_meta_state_pop(cmd_buffer, 0, false);
 }
 
 static void
@@ -534,9 +540,9 @@ cmd_buffer_emit_wait_event(struct v3dv_cmd_buffer *cmd_buffer,
                          VK_SHADER_STAGE_COMPUTE_BIT,
                          0, 4, &offset);
 
-   vk_common_CmdDispatch(commandBuffer, 1, 1, 1);
+   v3dv_CmdDispatch(commandBuffer, 1, 1, 1);
 
-   v3dv_cmd_buffer_meta_state_pop(cmd_buffer, false);
+   v3dv_cmd_buffer_meta_state_pop(cmd_buffer, 0, false);
 }
 
 VKAPI_ATTR void VKAPI_CALL

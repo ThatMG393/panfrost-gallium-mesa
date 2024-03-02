@@ -99,7 +99,6 @@ static void virgl_init_temp_resource_from_box(struct pipe_resource *res,
       res->bind = PIPE_BIND_RENDER_TARGET;
 
    switch (res->target) {
-   case PIPE_TEXTURE_CUBE:
    case PIPE_TEXTURE_1D_ARRAY:
    case PIPE_TEXTURE_2D_ARRAY:
    case PIPE_TEXTURE_CUBE_ARRAY:
@@ -151,9 +150,6 @@ static void *texture_transfer_map_resolve(struct pipe_context *ctx,
             util_format_get_blockwidth(resource->format));
       dst_box.height = align(dst_box.height,
             util_format_get_blockheight(resource->format));
-      if (resource->target == PIPE_TEXTURE_3D)
-         dst_box.depth = align(dst_box.depth,
-               util_format_get_blockdepth(resource->format));
    }
 
    virgl_init_temp_resource_from_box(&templ, resource, &dst_box, level, 0, fmt);
@@ -190,7 +186,7 @@ static void *texture_transfer_map_resolve(struct pipe_context *ctx,
             goto fail;
 
          if (!util_format_translate_3d(resource->format,
-                                       (uint8_t *)ptr + vtex->metadata.level_offset[level],
+                                       ptr + vtex->metadata.level_offset[level],
                                        trans->base.stride,
                                        trans->base.layer_stride,
                                        box->x, box->y, box->z,
@@ -212,7 +208,7 @@ static void *texture_transfer_map_resolve(struct pipe_context *ctx,
       if ((usage & PIPE_MAP_WRITE) == 0)
          pipe_resource_reference(&trans->resolve_transfer->resource, NULL);
 
-      return (uint8_t *)ptr + trans->offset;
+      return ptr + trans->offset;
    }
 
 fail:

@@ -37,7 +37,7 @@
 #ifndef LP_RAST_H
 #define LP_RAST_H
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "util/u_pack_color.h"
 #include "util/u_rect.h"
 #include "lp_jit.h"
@@ -86,7 +86,6 @@ struct lp_rast_state {
     * the fragment shader, such as blend color and alpha ref value.
     */
    struct lp_jit_context jit_context;
-   struct lp_jit_resources jit_resources;
 
    /* The shader itself.  Probably we also need to pass a pointer to
     * the tile color/z/stencil data somehow

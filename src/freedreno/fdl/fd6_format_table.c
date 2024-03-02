@@ -25,6 +25,7 @@
  *    Rob Clark <robclark@freedesktop.org>
  */
 
+#include "pipe/p_defines.h"
 #include "util/format/u_format.h"
 
 #include "fd6_format_table.h"
@@ -38,7 +39,7 @@ struct fd6_format {
    enum a6xx_format tex;
    enum a6xx_format rb;
    enum a3xx_color_swap swap;
-   bool present;
+   boolean present;
 };
 
 #define FMT(pipe, vtxfmt, texfmt, rbfmt, swapfmt)                              \
@@ -68,9 +69,8 @@ static const struct fd6_format formats[PIPE_FORMAT_COUNT] = {
    _TC(R8_SRGB,    8_UNORM,                     WZYX),
    _TC(Y8_UNORM,   NV12_Y,                      WZYX),
 
-   _TC(A8_UNORM,   A8_UNORM,                    WZYX),
+   FMT(A8_UNORM,   NONE, 8_UNORM, A8_UNORM,     WZYX),
    _TC(L8_UNORM,   8_UNORM,                     WZYX),
-   _TC(L8_SRGB,    8_UNORM,                     WZYX),
    _TC(L8_SNORM,   8_SNORM,                     WZYX),
    _T_(I8_UNORM,   8_UNORM,                     WZYX),
    _T_(I8_SNORM,   8_SNORM,                     WZYX),
@@ -125,7 +125,6 @@ static const struct fd6_format formats[PIPE_FORMAT_COUNT] = {
    _TC(R5G6B5_UNORM,   5_6_5_UNORM,             WZYX),
    _TC(B5G6R5_UNORM,   5_6_5_UNORM,             WXYZ),
 
-   _TC(R5G5B5A1_UNORM, 5_5_5_1_UNORM,           WZYX),
    _TC(B5G5R5A1_UNORM, 5_5_5_1_UNORM,           WXYZ),
    _TC(B5G5R5X1_UNORM, 5_5_5_1_UNORM,           WXYZ),
    _TC(A1R5G5B5_UNORM, 5_5_5_1_UNORM,           ZYXW),

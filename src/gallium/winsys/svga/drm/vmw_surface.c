@@ -1,5 +1,5 @@
 /**********************************************************
- * Copyright 2009-2023 VMware, Inc.  All rights reserved.
+ * Copyright 2009-2015 VMware, Inc.  All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -54,7 +54,7 @@ vmw_svga_winsys_surface_init(struct svga_winsys_screen *sws,
    if (data)
       goto out_mapped;
 
-   provider = vws->pools.dma_fenced;
+   provider = vws->pools.mob_fenced;
    memset(&desc, 0, sizeof(desc));
    desc.alignment = 4096;
    pb_buf = provider->create_buffer(provider, vsrf->size, &desc);
@@ -64,7 +64,7 @@ vmw_svga_winsys_surface_init(struct svga_winsys_screen *sws,
 
       data = vmw_svga_winsys_buffer_map(&vws->base, vbuf, pb_flags);
       if (data) {
-         vsrf->rebind = true;
+         vsrf->rebind = TRUE;
          if (vsrf->buf)
             vmw_svga_winsys_buffer_destroy(&vws->base, vsrf->buf);
          vsrf->buf = vbuf;
@@ -98,11 +98,12 @@ out_unlock:
 }
 
  
+ 
 void *
 vmw_svga_winsys_surface_map(struct svga_winsys_context *swc,
                             struct svga_winsys_surface *srf,
-                            unsigned flags, bool *retry,
-                            bool *rebind)
+                            unsigned flags, boolean *retry,
+                            boolean *rebind)
 {
    struct vmw_svga_winsys_surface *vsrf = vmw_svga_winsys_surface(srf);
    void *data = NULL;
@@ -110,8 +111,8 @@ vmw_svga_winsys_surface_map(struct svga_winsys_context *swc,
    uint32_t pb_flags;
    struct vmw_winsys_screen *vws = vsrf->screen;
 
-   *retry = false;
-   *rebind = false;
+   *retry = FALSE;
+   *rebind = FALSE;
    assert((flags & (PIPE_MAP_READ | PIPE_MAP_WRITE)) != 0);
    mtx_lock(&vsrf->mutex);
 
@@ -120,7 +121,7 @@ vmw_svga_winsys_surface_map(struct svga_winsys_context *swc,
       flags &= ~PIPE_MAP_DISCARD_WHOLE_RESOURCE;
    }
 
-   vsrf->rebind = false;
+   vsrf->rebind = FALSE;
 
    /*
     * If we intend to read, there's no point discarding the
@@ -143,7 +144,7 @@ vmw_svga_winsys_surface_map(struct svga_winsys_context *swc,
    if (!(flags & (PIPE_MAP_DISCARD_WHOLE_RESOURCE |
                   PIPE_MAP_UNSYNCHRONIZED)) &&
        p_atomic_read(&vsrf->validated)) {
-      *retry = true;
+      *retry = TRUE;
       goto out_unlock;
    }
 
@@ -167,7 +168,7 @@ vmw_svga_winsys_surface_map(struct svga_winsys_context *swc,
       /*
        * Attempt to get a new buffer.
        */
-      provider = vws->pools.dma_fenced;
+      provider = vws->pools.mob_fenced;
       memset(&desc, 0, sizeof(desc));
       desc.alignment = 4096;
       pb_buf = provider->create_buffer(provider, vsrf->size, &desc);
@@ -177,7 +178,7 @@ vmw_svga_winsys_surface_map(struct svga_winsys_context *swc,
 
          data = vmw_svga_winsys_buffer_map(&vws->base, vbuf, pb_flags);
          if (data) {
-            vsrf->rebind = true;
+            vsrf->rebind = TRUE;
             /*
              * We've discarded data on this surface and thus
              * it's data is no longer consider referenced.
@@ -189,8 +190,8 @@ vmw_svga_winsys_surface_map(struct svga_winsys_context *swc,
 
             /* Rebind persistent maps immediately */
             if (flags & PIPE_MAP_PERSISTENT) {
-               *rebind = true;
-               vsrf->rebind = false;
+               *rebind = TRUE;
+               vsrf->rebind = FALSE;
             }
             goto out_mapped;
          } else
@@ -204,7 +205,7 @@ vmw_svga_winsys_surface_map(struct svga_winsys_context *swc,
        */
       if (!(flags & PIPE_MAP_UNSYNCHRONIZED) && 
           p_atomic_read(&vsrf->validated)) {
-         *retry = true;
+         *retry = TRUE;
          goto out_unlock;
       }
    }
@@ -227,15 +228,15 @@ out_unlock:
 void
 vmw_svga_winsys_surface_unmap(struct svga_winsys_context *swc,
                               struct svga_winsys_surface *srf,
-                              bool *rebind)
+                              boolean *rebind)
 {
    struct vmw_svga_winsys_surface *vsrf = vmw_svga_winsys_surface(srf);
    mtx_lock(&vsrf->mutex);
    if (--vsrf->mapcount == 0) {
       *rebind = vsrf->rebind;
-      vsrf->rebind = false;
+      vsrf->rebind = FALSE;
    } else {
-      *rebind = false;
+      *rebind = FALSE;
    }
    vmw_svga_winsys_buffer_unmap(&vsrf->screen->base, vsrf->buf);
    mtx_unlock(&vsrf->mutex);

@@ -44,8 +44,8 @@ using std::vector;
 struct nir_intrinsic_instr_less {
    bool operator()(const nir_intrinsic_instr *lhs, const nir_intrinsic_instr *rhs) const
    {
-      nir_variable *vlhs = nir_intrinsic_get_var(lhs, 0);
-      nir_variable *vrhs = nir_intrinsic_get_var(rhs, 0);
+      nir_variable *vlhs = nir_deref_instr_get_variable(nir_src_as_deref(lhs->src[0]));
+      nir_variable *vrhs = nir_deref_instr_get_variable(nir_src_as_deref(rhs->src[0]));
 
       auto ltype = glsl_get_base_type(vlhs->type);
       auto rtype = glsl_get_base_type(vrhs->type);
@@ -92,7 +92,7 @@ private:
    virtual void create_new_io(nir_builder *b,
                               nir_intrinsic_instr *intr,
                               nir_variable *var,
-                              nir_def **srcs,
+                              nir_ssa_def **srcs,
                               unsigned first_comp,
                               unsigned num_comps) = 0;
 
@@ -109,13 +109,13 @@ private:
    void create_new_io(nir_builder *b,
                       nir_intrinsic_instr *intr,
                       nir_variable *var,
-                      nir_def **srcs,
+                      nir_ssa_def **srcs,
                       unsigned first_comp,
                       unsigned num_comps) override;
    bool instr_can_rewrite_type(nir_intrinsic_instr *intr) const override;
 
-   nir_def *create_combined_vector(nir_builder *b,
-                                       nir_def **srcs,
+   nir_ssa_def *create_combined_vector(nir_builder *b,
+                                       nir_ssa_def **srcs,
                                        int first_comp,
                                        int num_comp);
 };
@@ -128,8 +128,10 @@ r600_lower_fs_out_to_vector(nir_shader *shader)
    assert(shader->info.stage == MESA_SHADER_FRAGMENT);
    bool progress = false;
 
-   nir_foreach_function_impl(impl, shader) {
-      progress |= processor.run(impl);
+   nir_foreach_function(function, shader)
+   {
+      if (function->impl)
+         progress |= processor.run(function->impl);
    }
    return progress;
 }
@@ -146,7 +148,8 @@ NirLowerIOToVector::NirLowerIOToVector(int base_slot):
 bool
 NirLowerIOToVector::run(nir_function_impl *impl)
 {
-   nir_builder b = nir_builder_create(impl);
+   nir_builder b;
+   nir_builder_init(&b, impl);
 
    nir_metadata_require(impl, nir_metadata_dominance);
    create_new_io_vars(impl->function->shader);
@@ -324,7 +327,7 @@ NirLowerIOToVector::clone_deref_array(nir_builder *b,
 
    dst_tail = clone_deref_array(b, dst_tail, parent);
 
-   return nir_build_deref_array(b, dst_tail, src_head->arr.index.ssa);
+   return nir_build_deref_array(b, dst_tail, nir_ssa_for_src(b, src_head->arr.index, 1));
 }
 
 NirLowerFSOutToVector::NirLowerFSOutToVector():
@@ -354,7 +357,7 @@ NirLowerIOToVector::vec_instr_stack_pop(nir_builder *b,
              });
 
    nir_intrinsic_instr *intr = *ir_sorted_set.begin();
-   nir_variable *var = nir_intrinsic_get_var(intr, 0);
+   nir_variable *var = nir_deref_instr_get_variable(nir_src_as_deref(intr->src[0]));
 
    unsigned loc = var->data.location - m_base_slot;
 
@@ -372,10 +375,10 @@ NirLowerIOToVector::vec_instr_stack_pop(nir_builder *b,
    }
 
    b->cursor = nir_after_instr(&intr->instr);
-   nir_undef_instr *instr_undef = nir_undef_instr_create(b->shader, 1, 32);
+   nir_ssa_undef_instr *instr_undef = nir_ssa_undef_instr_create(b->shader, 1, 32);
    nir_builder_instr_insert(b, &instr_undef->instr);
 
-   nir_def *srcs[4];
+   nir_ssa_def *srcs[4];
    for (int i = 0; i < 4; i++) {
       srcs[i] = &instr_undef->def;
    }
@@ -383,7 +386,7 @@ NirLowerIOToVector::vec_instr_stack_pop(nir_builder *b,
 
    for (auto k = ir_sorted_set.begin() + 1; k != ir_sorted_set.end(); ++k) {
       nir_intrinsic_instr *intr2 = *k;
-      nir_variable *var2 = nir_intrinsic_get_var(intr2, 0);
+      nir_variable *var2 = nir_deref_instr_get_variable(nir_src_as_deref(intr2->src[0]));
       unsigned loc2 = var->data.location - m_base_slot;
 
       if (m_vars[loc][var->data.location_frac] !=
@@ -394,6 +397,7 @@ NirLowerIOToVector::vec_instr_stack_pop(nir_builder *b,
       assert(glsl_get_vector_elements(glsl_without_array(var2->type)) < 4);
 
       if (srcs[var2->data.location_frac] == &instr_undef->def) {
+         assert(intr2->src[1].is_ssa);
          assert(intr2->src[1].ssa);
          srcs[var2->data.location_frac] = intr2->src[1].ssa;
       }
@@ -414,7 +418,7 @@ void
 NirLowerFSOutToVector::create_new_io(nir_builder *b,
                                      nir_intrinsic_instr *intr,
                                      nir_variable *var,
-                                     nir_def **srcs,
+                                     nir_ssa_def **srcs,
                                      unsigned first_comp,
                                      unsigned num_comps)
 {
@@ -428,7 +432,7 @@ NirLowerFSOutToVector::create_new_io(nir_builder *b,
    nir_deref_instr *deref = nir_build_deref_var(b, var);
    deref = clone_deref_array(b, deref, nir_src_as_deref(intr->src[0]));
 
-   new_intr->src[0] = nir_src_for_ssa(&deref->def);
+   new_intr->src[0] = nir_src_for_ssa(&deref->dest.ssa);
    new_intr->src[1] =
       nir_src_for_ssa(create_combined_vector(b, srcs, first_comp, num_comps));
 
@@ -451,9 +455,9 @@ NirLowerFSOutToVector::instr_can_rewrite_type(nir_intrinsic_instr *intr) const
    return var_can_rewrite(nir_deref_instr_get_variable(deref));
 }
 
-nir_def *
+nir_ssa_def *
 NirLowerFSOutToVector::create_combined_vector(nir_builder *b,
-                                              nir_def **srcs,
+                                              nir_ssa_def **srcs,
                                               int first_comp,
                                               int num_comp)
 {
@@ -477,7 +481,7 @@ NirLowerFSOutToVector::create_combined_vector(nir_builder *b,
    int i = 0;
    unsigned k = 0;
    while (i < num_comp) {
-      nir_def *s = srcs[first_comp + k];
+      nir_ssa_def *s = srcs[first_comp + k];
       for (uint8_t kk = 0; kk < s->num_components && i < num_comp; ++kk) {
          instr->src[i].src = nir_src_for_ssa(s);
          instr->src[i].swizzle[0] = kk;
@@ -486,9 +490,10 @@ NirLowerFSOutToVector::create_combined_vector(nir_builder *b,
       k += s->num_components;
    }
 
-   nir_def_init(&instr->instr, &instr->def, num_comp, 32);
+   nir_ssa_dest_init(&instr->instr, &instr->dest.dest, num_comp, 32, NULL);
+   instr->dest.write_mask = (1 << num_comp) - 1;
    nir_builder_instr_insert(b, &instr->instr);
-   return &instr->def;
+   return &instr->dest.dest.ssa;
 }
 
 } // namespace r600

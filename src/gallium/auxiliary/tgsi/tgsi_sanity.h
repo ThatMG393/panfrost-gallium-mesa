@@ -28,7 +28,7 @@
 #ifndef TGSI_SANITY_H
 #define TGSI_SANITY_H
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 
 #if defined __cplusplus
 extern "C" {
@@ -41,7 +41,7 @@ struct tgsi_token;
  * controlled by the debug option TGSI_PRINT_SANITY (default false).
  * Returns TRUE if there are no errors, even though there could be some warnings.
  */
-bool
+boolean
 tgsi_sanity_check(
    const struct tgsi_token *tokens );
 

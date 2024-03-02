@@ -39,7 +39,6 @@
 #include "sp_quad_pipe.h"
 #include "sp_setup.h"
 
-#include "tgsi/tgsi_exec.h"
 
 struct softpipe_vbuf_render;
 struct draw_context;
@@ -106,10 +105,11 @@ struct softpipe_context {
    unsigned active_query_count;
 
    /** Mapped vertex buffers */
-   uint8_t *mapped_vbuffer[PIPE_MAX_ATTRIBS];
+   ubyte *mapped_vbuffer[PIPE_MAX_ATTRIBS];
 
    /** Mapped constant buffers */
-   struct tgsi_exec_consts_info mapped_constants[PIPE_SHADER_TYPES][PIPE_MAX_CONSTANT_BUFFERS];
+   const void *mapped_constants[PIPE_SHADER_TYPES][PIPE_MAX_CONSTANT_BUFFERS];
+   unsigned const_buffer_size[PIPE_SHADER_TYPES][PIPE_MAX_CONSTANT_BUFFERS];
 
    /** Vertex format */
    struct sp_setup_info setup_info;
@@ -173,7 +173,7 @@ struct softpipe_context {
 
    struct blitter_context *blitter;
 
-   bool dirty_render_cache;
+   boolean dirty_render_cache;
 
    struct softpipe_tile_cache *cbuf_cache[PIPE_MAX_COLOR_BUFS];
    struct softpipe_tile_cache *zsbuf_cache;

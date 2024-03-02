@@ -23,6 +23,7 @@
 
 #include "brw_eu.h"
 #include "brw_fs.h"
+#include "brw_vec4.h"
 #include "brw_cfg.h"
 
 using namespace brw;
@@ -70,8 +71,10 @@ namespace {
    enum intel_eu_dependency_id {
       /* Register part of the GRF. */
       EU_DEPENDENCY_ID_GRF0 = 0,
+      /* Register part of the MRF.  Only used on Gfx4-6. */
+      EU_DEPENDENCY_ID_MRF0 = EU_DEPENDENCY_ID_GRF0 + BRW_MAX_GRF,
       /* Address register part of the ARF. */
-      EU_DEPENDENCY_ID_ADDR0 = EU_DEPENDENCY_ID_GRF0 + XE2_MAX_GRF,
+      EU_DEPENDENCY_ID_ADDR0 = EU_DEPENDENCY_ID_MRF0 + 24,
       /* Accumulator register part of the ARF. */
       EU_DEPENDENCY_ID_ACCUM0 = EU_DEPENDENCY_ID_ADDR0 + 1,
       /* Flag register part of the ARF. */
@@ -79,9 +82,9 @@ namespace {
       /* SBID token write completion.  Only used on Gfx12+. */
       EU_DEPENDENCY_ID_SBID_WR0 = EU_DEPENDENCY_ID_FLAG0 + 8,
       /* SBID token read completion.  Only used on Gfx12+. */
-      EU_DEPENDENCY_ID_SBID_RD0 = EU_DEPENDENCY_ID_SBID_WR0 + 32,
+      EU_DEPENDENCY_ID_SBID_RD0 = EU_DEPENDENCY_ID_SBID_WR0 + 16,
       /* Number of computation dependencies currently tracked. */
-      EU_NUM_DEPENDENCY_IDS = EU_DEPENDENCY_ID_SBID_RD0 + 32
+      EU_NUM_DEPENDENCY_IDS = EU_DEPENDENCY_ID_SBID_RD0 + 16
    };
 
    /**
@@ -145,8 +148,29 @@ namespace {
              !brw_reg_type_is_floating_point(tx) && type_sz(tx) == 4 &&
              type_sz(inst->src[0].type) == type_sz(inst->src[1].type))
             tx = brw_int_type(8, tx == BRW_REGISTER_TYPE_D);
+      }
 
-         rcount = inst->opcode == BRW_OPCODE_DPAS ? inst->rcount : 0;
+      instruction_info(const struct brw_isa_info *isa,
+                       const vec4_instruction *inst) :
+         isa(isa), devinfo(isa->devinfo), op(inst->opcode),
+         td(inst->dst.type), sd(DIV_ROUND_UP(inst->size_written, REG_SIZE)),
+         tx(get_exec_type(inst)), sx(0), ss(0), sc(0),
+         desc(inst->desc), sfid(inst->sfid)
+      {
+         /* Compute the maximum source size. */
+         for (unsigned i = 0; i < ARRAY_SIZE(inst->src); i++)
+            ss = MAX2(ss, DIV_ROUND_UP(inst->size_read(i), REG_SIZE));
+
+         /* Convert the execution size to GRF units. */
+         sx = DIV_ROUND_UP(inst->exec_size * type_sz(tx), REG_SIZE);
+
+         /* 32x32 integer multiplication has half the usual ALU throughput.
+          * Treat it as double-precision.
+          */
+         if ((inst->opcode == BRW_OPCODE_MUL || inst->opcode == BRW_OPCODE_MAD) &&
+             !brw_reg_type_is_floating_point(tx) && type_sz(tx) == 4 &&
+             type_sz(inst->src[0].type) == type_sz(inst->src[1].type))
+            tx = brw_int_type(8, tx == BRW_REGISTER_TYPE_D);
       }
 
       /** ISA encoding information */
@@ -171,8 +195,6 @@ namespace {
       uint32_t desc;
       /** Send message shared function ID. */
       uint8_t sfid;
-      /** Repeat count for DPAS instructions. */
-      uint8_t rcount;
    };
 
    /**
@@ -281,8 +303,10 @@ namespace {
       case BRW_OPCODE_XOR:
       case BRW_OPCODE_SHR:
       case BRW_OPCODE_SHL:
+      case BRW_OPCODE_DIM:
       case BRW_OPCODE_ASR:
       case BRW_OPCODE_CMPN:
+      case BRW_OPCODE_F16TO32:
       case BRW_OPCODE_BFREV:
       case BRW_OPCODE_BFI1:
       case BRW_OPCODE_AVG:
@@ -312,17 +336,46 @@ namespace {
       case FS_OPCODE_DDY_COARSE:
       case FS_OPCODE_PIXEL_X:
       case FS_OPCODE_PIXEL_Y:
+      case FS_OPCODE_SET_SAMPLE_ID:
+      case VEC4_OPCODE_MOV_BYTES:
+      case VEC4_OPCODE_UNPACK_UNIFORM:
+      case VEC4_OPCODE_DOUBLE_TO_F32:
+      case VEC4_OPCODE_DOUBLE_TO_D32:
+      case VEC4_OPCODE_DOUBLE_TO_U32:
+      case VEC4_OPCODE_TO_DOUBLE:
+      case VEC4_OPCODE_PICK_LOW_32BIT:
+      case VEC4_OPCODE_PICK_HIGH_32BIT:
+      case VEC4_OPCODE_SET_LOW_32BIT:
+      case VEC4_OPCODE_SET_HIGH_32BIT:
+      case VEC4_OPCODE_ZERO_OOB_PUSH_REGS:
+      case GS_OPCODE_SET_DWORD_2:
+      case GS_OPCODE_SET_WRITE_OFFSET:
+      case GS_OPCODE_SET_VERTEX_COUNT:
+      case GS_OPCODE_PREPARE_CHANNEL_MASKS:
+      case GS_OPCODE_SET_CHANNEL_MASKS:
+      case GS_OPCODE_GET_INSTANCE_ID:
+      case GS_OPCODE_SET_PRIMITIVE_ID:
+      case GS_OPCODE_SVB_SET_DST_INDEX:
+      case TCS_OPCODE_SRC0_010_IS_ZERO:
+      case TCS_OPCODE_GET_PRIMITIVE_ID:
+      case TES_OPCODE_GET_PRIMITIVE_ID:
       case SHADER_OPCODE_READ_SR_REG:
          if (devinfo->ver >= 11) {
             return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
                                   0, 10, 6 /* XXX */, 14, 0, 0);
-         } else {
+         } else if (devinfo->ver >= 8) {
             if (type_sz(info.tx) > 4)
                return calculate_desc(info, EU_UNIT_FPU, 0, 4, 0, 0, 4,
                                      0, 12, 8 /* XXX */, 16 /* XXX */, 0, 0);
             else
                return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
                                      0, 8, 4, 12, 0, 0);
+         } else if (devinfo->verx10 >= 75) {
+            return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
+                                  0, 10, 6 /* XXX */, 16, 0, 0);
+         } else {
+            return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
+                                  0, 12, 8 /* XXX */, 18, 0, 0);
          }
 
       case BRW_OPCODE_MOV:
@@ -331,16 +384,36 @@ namespace {
       case BRW_OPCODE_ADD3:
       case BRW_OPCODE_MUL:
       case SHADER_OPCODE_MOV_RELOC_IMM:
+      case VEC4_OPCODE_MOV_FOR_SCRATCH:
          if (devinfo->ver >= 11) {
             return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
                                   0, 10, 6, 14, 0, 0);
-         } else {
+         } else if (devinfo->ver >= 8) {
             if (type_sz(info.tx) > 4)
                return calculate_desc(info, EU_UNIT_FPU, 0, 4, 0, 0, 4,
                                      0, 12, 8 /* XXX */, 16 /* XXX */, 0, 0);
             else
                return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
                                      0, 8, 4, 12, 0, 0);
+         } else if (devinfo->verx10 >= 75) {
+            if (info.tx == BRW_REGISTER_TYPE_F)
+               return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
+                                     0, 12, 8 /* XXX */, 18, 0, 0);
+            else
+               return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
+                                     0, 10, 6 /* XXX */, 16, 0, 0);
+         } else if (devinfo->ver >= 7) {
+            if (info.tx == BRW_REGISTER_TYPE_F)
+               return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
+                                     0, 14, 10 /* XXX */, 20, 0, 0);
+            else
+               return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
+                                     0, 12, 8 /* XXX */, 18, 0, 0);
+         } else {
+            return calculate_desc(info, EU_UNIT_FPU, 0, 2 /* XXX */, 0,
+                                  0, 2 /* XXX */,
+                                  0, 12 /* XXX */, 8 /* XXX */, 18 /* XXX */,
+                                  0, 0);
          }
 
       case BRW_OPCODE_BFE:
@@ -349,29 +422,81 @@ namespace {
          if (devinfo->ver >= 11)
             return calculate_desc(info, EU_UNIT_FPU, 0, 2, 1, 0, 2,
                                   0, 10, 6 /* XXX */, 14 /* XXX */, 0, 0);
-         else
+         else if (devinfo->ver >= 8)
             return calculate_desc(info, EU_UNIT_FPU, 0, 2, 1, 0, 2,
                                   0, 8, 4 /* XXX */, 12 /* XXX */, 0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_FPU, 0, 2, 1, 0, 2,
+                                  0, 10, 6 /* XXX */, 16 /* XXX */, 0, 0);
+         else if (devinfo->ver >= 7)
+            return calculate_desc(info, EU_UNIT_FPU, 0, 2, 1, 0, 2,
+                                  0, 12, 8 /* XXX */, 18 /* XXX */, 0, 0);
+         else
+            abort();
 
       case BRW_OPCODE_MAD:
          if (devinfo->ver >= 11) {
             return calculate_desc(info, EU_UNIT_FPU, 0, 2, 1, 0, 2,
                                   0, 10, 6 /* XXX */, 14 /* XXX */, 0, 0);
-         } else {
+         } else if (devinfo->ver >= 8) {
             if (type_sz(info.tx) > 4)
                return calculate_desc(info, EU_UNIT_FPU, 0, 4, 1, 0, 4,
                                      0, 12, 8 /* XXX */, 16 /* XXX */, 0, 0);
             else
                return calculate_desc(info, EU_UNIT_FPU, 0, 2, 1, 0, 2,
                                      0, 8, 4 /* XXX */, 12 /* XXX */, 0, 0);
+         } else if (devinfo->verx10 >= 75) {
+            if (info.tx == BRW_REGISTER_TYPE_F)
+               return calculate_desc(info, EU_UNIT_FPU, 0, 2, 1, 0, 2,
+                                     0, 12, 8 /* XXX */, 18, 0, 0);
+            else
+               return calculate_desc(info, EU_UNIT_FPU, 0, 2, 1, 0, 2,
+                                     0, 10, 6 /* XXX */, 16, 0, 0);
+         } else if (devinfo->ver >= 7) {
+            if (info.tx == BRW_REGISTER_TYPE_F)
+               return calculate_desc(info, EU_UNIT_FPU, 0, 2, 1, 0, 2,
+                                     0, 14, 10 /* XXX */, 20, 0, 0);
+            else
+               return calculate_desc(info, EU_UNIT_FPU, 0, 2, 1, 0, 2,
+                                     0, 12, 8 /* XXX */, 18, 0, 0);
+         } else if (devinfo->ver >= 6) {
+            return calculate_desc(info, EU_UNIT_FPU, 0, 2 /* XXX */, 1 /* XXX */,
+                                  0, 2 /* XXX */,
+                                  0, 12 /* XXX */, 8 /* XXX */, 18 /* XXX */,
+                                  0, 0);
+         } else {
+            abort();
          }
+
+      case BRW_OPCODE_F32TO16:
+         if (devinfo->ver >= 11)
+            return calculate_desc(info, EU_UNIT_FPU, 0, 4, 0, 0, 4,
+                                  0, 10, 6 /* XXX */, 14 /* XXX */, 0, 0);
+         else if (devinfo->ver >= 8)
+            return calculate_desc(info, EU_UNIT_FPU, 0, 4, 0, 0, 4,
+                                  0, 8, 4 /* XXX */, 12 /* XXX */, 0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_FPU, 0, 4, 0, 0, 4,
+                                  0, 10, 6 /* XXX */, 16 /* XXX */, 0, 0);
+         else if (devinfo->ver >= 7)
+            return calculate_desc(info, EU_UNIT_FPU, 0, 4, 0, 0, 4,
+                                  0, 12, 8 /* XXX */, 18 /* XXX */, 0, 0);
+         else
+            abort();
 
       case BRW_OPCODE_DP4:
       case BRW_OPCODE_DPH:
       case BRW_OPCODE_DP3:
       case BRW_OPCODE_DP2:
-         return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
-                               0, 12, 8 /* XXX */, 16 /* XXX */, 0, 0);
+         if (devinfo->ver >= 8)
+            return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
+                                  0, 12, 8 /* XXX */, 16 /* XXX */, 0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
+                                  0, 10, 6 /* XXX */, 16 /* XXX */, 0, 0);
+         else
+            return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
+                                  0, 12, 8 /* XXX */, 18 /* XXX */, 0, 0);
 
       case BRW_OPCODE_DP4A:
          if (devinfo->ver >= 12)
@@ -380,32 +505,6 @@ namespace {
          else
             abort();
 
-      case BRW_OPCODE_DPAS: {
-         unsigned ld;
-
-         switch (info.rcount) {
-         case 1:
-            ld = 21;
-            break;
-         case 2:
-            ld = 22;
-            break;
-         case 8:
-         default:
-            ld = 32;
-            break;
-         }
-
-         /* DPAS cannot write the accumulator or the flags, so pass UINT_MAX
-          * for la and lf.
-          */
-         if (devinfo->verx10 >= 125)
-            return calculate_desc(info, EU_UNIT_FPU, 0, 2, 1, 0, 2,
-                                  0, ld, UINT_MAX, UINT_MAX, 0, 0);
-         else
-            abort();
-      }
-
       case SHADER_OPCODE_RCP:
       case SHADER_OPCODE_RSQ:
       case SHADER_OPCODE_SQRT:
@@ -413,21 +512,89 @@ namespace {
       case SHADER_OPCODE_LOG2:
       case SHADER_OPCODE_SIN:
       case SHADER_OPCODE_COS:
-         return calculate_desc(info, EU_UNIT_EM, -2, 4, 0, 0, 4,
-                               0, 16, 0, 0, 0, 0);
-
       case SHADER_OPCODE_POW:
-         return calculate_desc(info, EU_UNIT_EM, -2, 4, 0, 0, 8,
-                               0, 24, 0, 0, 0, 0);
-
       case SHADER_OPCODE_INT_QUOTIENT:
       case SHADER_OPCODE_INT_REMAINDER:
-         return calculate_desc(info, EU_UNIT_EM, 2, 0, 0, 26, 0,
-                               0, 28 /* XXX */, 0, 0, 0, 0);
+         if (devinfo->ver >= 6) {
+            switch (info.op) {
+            case SHADER_OPCODE_RCP:
+            case SHADER_OPCODE_RSQ:
+            case SHADER_OPCODE_SQRT:
+            case SHADER_OPCODE_EXP2:
+            case SHADER_OPCODE_LOG2:
+            case SHADER_OPCODE_SIN:
+            case SHADER_OPCODE_COS:
+               if (devinfo->ver >= 8)
+                  return calculate_desc(info, EU_UNIT_EM, -2, 4, 0, 0, 4,
+                                        0, 16, 0, 0, 0, 0);
+               else if (devinfo->verx10 >= 75)
+                  return calculate_desc(info, EU_UNIT_EM, 0, 2, 0, 0, 2,
+                                        0, 12, 0, 0, 0, 0);
+               else
+                  return calculate_desc(info, EU_UNIT_EM, 0, 2, 0, 0, 2,
+                                        0, 14, 0, 0, 0, 0);
+
+            case SHADER_OPCODE_POW:
+               if (devinfo->ver >= 8)
+                  return calculate_desc(info, EU_UNIT_EM, -2, 4, 0, 0, 8,
+                                        0, 24, 0, 0, 0, 0);
+               else if (devinfo->verx10 >= 75)
+                  return calculate_desc(info, EU_UNIT_EM, 0, 2, 0, 0, 4,
+                                        0, 20, 0, 0, 0, 0);
+               else
+                  return calculate_desc(info, EU_UNIT_EM, 0, 2, 0, 0, 4,
+                                        0, 22, 0, 0, 0, 0);
+
+            case SHADER_OPCODE_INT_QUOTIENT:
+            case SHADER_OPCODE_INT_REMAINDER:
+               return calculate_desc(info, EU_UNIT_EM, 2, 0, 0, 26, 0,
+                                     0, 28 /* XXX */, 0, 0, 0, 0);
+
+            default:
+               abort();
+            }
+         } else {
+            switch (info.op) {
+            case SHADER_OPCODE_RCP:
+               return calculate_desc(info, EU_UNIT_EM, 2, 0, 0, 0, 8,
+                                     0, 22, 0, 0, 0, 8);
+
+            case SHADER_OPCODE_RSQ:
+               return calculate_desc(info, EU_UNIT_EM, 2, 0, 0, 0, 16,
+                                     0, 44, 0, 0, 0, 8);
+
+            case SHADER_OPCODE_INT_QUOTIENT:
+            case SHADER_OPCODE_SQRT:
+            case SHADER_OPCODE_LOG2:
+               return calculate_desc(info, EU_UNIT_EM, 2, 0, 0, 0, 24,
+                                     0, 66, 0, 0, 0, 8);
+
+            case SHADER_OPCODE_INT_REMAINDER:
+            case SHADER_OPCODE_EXP2:
+               return calculate_desc(info, EU_UNIT_EM, 2, 0, 0, 0, 32,
+                                     0, 88, 0, 0, 0, 8);
+
+            case SHADER_OPCODE_SIN:
+            case SHADER_OPCODE_COS:
+               return calculate_desc(info, EU_UNIT_EM, 2, 0, 0, 0, 48,
+                                     0, 132, 0, 0, 0, 8);
+
+            case SHADER_OPCODE_POW:
+               return calculate_desc(info, EU_UNIT_EM, 2, 0, 0, 0, 64,
+                                     0, 176, 0, 0, 0, 8);
+
+            default:
+               abort();
+            }
+         }
 
       case BRW_OPCODE_DO:
-         return calculate_desc(info, EU_UNIT_NULL, 0, 0, 0, 0, 0,
-                               0, 0, 0, 0, 0, 0);
+         if (devinfo->ver >= 6)
+            return calculate_desc(info, EU_UNIT_NULL, 0, 0, 0, 0, 0,
+                                  0, 0, 0, 0, 0, 0);
+         else
+            return calculate_desc(info, EU_UNIT_NULL, 2 /* XXX */, 0, 0, 0, 0,
+                                  0, 0, 0, 0, 0, 0);
 
       case BRW_OPCODE_IF:
       case BRW_OPCODE_ELSE:
@@ -436,54 +603,110 @@ namespace {
       case BRW_OPCODE_BREAK:
       case BRW_OPCODE_CONTINUE:
       case BRW_OPCODE_HALT:
-         return calculate_desc(info, EU_UNIT_NULL, 8, 0, 0, 0, 0,
-                               0, 0, 0, 0, 0, 0);
+         if (devinfo->ver >= 8)
+            return calculate_desc(info, EU_UNIT_NULL, 8, 0, 0, 0, 0,
+                                  0, 0, 0, 0, 0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_NULL, 6, 0, 0, 0, 0,
+                                  0, 0, 0, 0, 0, 0);
+         else
+            return calculate_desc(info, EU_UNIT_NULL, 2, 0, 0, 0, 0,
+                                  0, 0, 0, 0, 0, 0);
 
       case FS_OPCODE_LINTERP:
-         return calculate_desc(info, EU_UNIT_FPU, 0, 4, 0, 0, 4,
-                               0, 12, 8 /* XXX */, 16 /* XXX */, 0, 0);
+         if (devinfo->ver >= 8)
+            return calculate_desc(info, EU_UNIT_FPU, 0, 4, 0, 0, 4,
+                                  0, 12, 8 /* XXX */, 16 /* XXX */, 0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
+                                  0, 10, 6 /* XXX */, 16 /* XXX */, 0, 0);
+         else
+            return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
+                                  0, 12, 8 /* XXX */, 18 /* XXX */, 0, 0);
 
       case BRW_OPCODE_LRP:
-         return calculate_desc(info, EU_UNIT_FPU, 0, 4, 1, 0, 4,
-                               0, 12, 8 /* XXX */, 16 /* XXX */, 0, 0);
+         if (devinfo->ver >= 8)
+            return calculate_desc(info, EU_UNIT_FPU, 0, 4, 1, 0, 4,
+                                  0, 12, 8 /* XXX */, 16 /* XXX */, 0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_FPU, 0, 2, 1, 0, 2,
+                                  0, 10, 6 /* XXX */, 16 /* XXX */, 0, 0);
+         else if (devinfo->ver >= 6)
+            return calculate_desc(info, EU_UNIT_FPU, 0, 2, 1, 0, 2,
+                                  0, 12, 8 /* XXX */, 18 /* XXX */, 0, 0);
+         else
+            abort();
 
       case FS_OPCODE_PACK_HALF_2x16_SPLIT:
          if (devinfo->ver >= 11)
             return calculate_desc(info, EU_UNIT_FPU, 20, 6, 0, 0, 6,
                                   0, 10 /* XXX */, 6 /* XXX */,
                                   14 /* XXX */, 0, 0);
-         else
+         else if (devinfo->ver >= 8)
             return calculate_desc(info, EU_UNIT_FPU, 16, 6, 0, 0, 6,
                                   0, 8 /* XXX */, 4 /* XXX */,
                                   12 /* XXX */, 0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_FPU, 20, 6, 0, 0, 6,
+                                  0, 10 /* XXX */, 6 /* XXX */,
+                                  16 /* XXX */, 0, 0);
+         else if (devinfo->ver >= 7)
+            return calculate_desc(info, EU_UNIT_FPU, 24, 6, 0, 0, 6,
+                                  0, 12 /* XXX */, 8 /* XXX */,
+                                  18 /* XXX */, 0, 0);
+         else
+            abort();
 
       case SHADER_OPCODE_MOV_INDIRECT:
          if (devinfo->ver >= 11)
             return calculate_desc(info, EU_UNIT_FPU, 34, 0, 0, 34, 0,
                                   0, 10 /* XXX */, 6 /* XXX */,
                                   14 /* XXX */, 0, 0);
-         else
+         else if (devinfo->ver >= 8)
             return calculate_desc(info, EU_UNIT_FPU, 34, 0, 0, 34, 0,
                                   0, 8 /* XXX */, 4 /* XXX */,
                                   12 /* XXX */, 0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_FPU, 34, 0, 0, 34, 0,
+                                  0, 10 /* XXX */, 6 /* XXX */,
+                                  16 /* XXX */, 0, 0);
+         else
+            return calculate_desc(info, EU_UNIT_FPU, 34, 0, 0, 34, 0,
+                                  0, 12 /* XXX */, 8 /* XXX */,
+                                  18 /* XXX */, 0, 0);
 
       case SHADER_OPCODE_BROADCAST:
          if (devinfo->ver >= 11)
             return calculate_desc(info, EU_UNIT_FPU, 20 /* XXX */, 0, 0, 4, 0,
                                   0, 10, 6 /* XXX */, 14 /* XXX */, 0, 0);
-         else
+         else if (devinfo->ver >= 8)
             return calculate_desc(info, EU_UNIT_FPU, 18, 0, 0, 4, 0,
                                   0, 8, 4 /* XXX */, 12 /* XXX */, 0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_FPU, 18, 0, 0, 4, 0,
+                                  0, 10, 6 /* XXX */, 16 /* XXX */, 0, 0);
+         else if (devinfo->ver >= 7)
+            return calculate_desc(info, EU_UNIT_FPU, 20, 0, 0, 4, 0,
+                                  0, 12, 8 /* XXX */, 18 /* XXX */, 0, 0);
+         else
+            abort();
 
       case SHADER_OPCODE_FIND_LIVE_CHANNEL:
       case SHADER_OPCODE_FIND_LAST_LIVE_CHANNEL:
-      case SHADER_OPCODE_LOAD_LIVE_CHANNELS:
          if (devinfo->ver >= 11)
             return calculate_desc(info, EU_UNIT_FPU, 2, 0, 0, 2, 0,
                                   0, 10, 6 /* XXX */, 14 /* XXX */, 0, 0);
-         else
+         else if (devinfo->ver >= 8)
             return calculate_desc(info, EU_UNIT_FPU, 2, 0, 0, 2, 0,
                                   0, 8, 4 /* XXX */, 12 /* XXX */, 0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_FPU, 36, 0, 0, 6, 0,
+                                  0, 10, 6 /* XXX */, 16 /* XXX */, 0, 0);
+         else if (devinfo->ver >= 7)
+            return calculate_desc(info, EU_UNIT_FPU, 40, 0, 0, 6, 0,
+                                  0, 12, 8 /* XXX */, 18 /* XXX */, 0, 0);
+         else
+            abort();
 
       case SHADER_OPCODE_RND_MODE:
       case SHADER_OPCODE_FLOAT_CONTROL_MODE:
@@ -491,10 +714,20 @@ namespace {
             return calculate_desc(info, EU_UNIT_FPU, 24 /* XXX */, 0, 0,
                                   4 /* XXX */, 0,
                                   0, 0, 0, 0, 0, 0);
-         else
+         else if (devinfo->ver >= 8)
             return calculate_desc(info, EU_UNIT_FPU, 20 /* XXX */, 0, 0,
                                   4 /* XXX */, 0,
                                   0, 0, 0, 0, 0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_FPU, 24 /* XXX */, 0, 0,
+                                  4 /* XXX */, 0,
+                                  0, 0, 0, 0, 0, 0);
+         else if (devinfo->ver >= 6)
+            return calculate_desc(info, EU_UNIT_FPU, 28 /* XXX */, 0, 0,
+                                  4 /* XXX */, 0,
+                                  0, 0, 0, 0, 0, 0);
+         else
+            abort();
 
       case SHADER_OPCODE_SHUFFLE:
          if (devinfo->ver >= 11)
@@ -502,11 +735,23 @@ namespace {
                                   44 /* XXX */, 0,
                                   0, 10 /* XXX */, 6 /* XXX */,
                                   14 /* XXX */, 0, 0);
-         else
+         else if (devinfo->ver >= 8)
             return calculate_desc(info, EU_UNIT_FPU, 42 /* XXX */, 0, 0,
                                   42 /* XXX */, 0,
                                   0, 8 /* XXX */, 4 /* XXX */,
                                   12 /* XXX */, 0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_FPU, 0, 44 /* XXX */, 0,
+                                  0, 44 /* XXX */,
+                                  0, 10 /* XXX */, 6 /* XXX */,
+                                  16 /* XXX */, 0, 0);
+         else if (devinfo->ver >= 6)
+            return calculate_desc(info, EU_UNIT_FPU, 0, 46 /* XXX */, 0,
+                                  0, 46 /* XXX */,
+                                  0, 12 /* XXX */, 8 /* XXX */,
+                                  18 /* XXX */, 0, 0);
+         else
+            abort();
 
       case SHADER_OPCODE_SEL_EXEC:
          if (devinfo->ver >= 11)
@@ -514,11 +759,21 @@ namespace {
                                   0, 4 /* XXX */,
                                   0, 10 /* XXX */, 6 /* XXX */,
                                   14 /* XXX */, 0, 0);
-         else
+         else if (devinfo->ver >= 8)
             return calculate_desc(info, EU_UNIT_FPU, 8 /* XXX */, 4 /* XXX */, 0,
                                   0, 4 /* XXX */,
                                   0, 8 /* XXX */, 4 /* XXX */,
                                   12 /* XXX */, 0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_FPU, 10 /* XXX */, 4 /* XXX */, 0,
+                                  0, 4 /* XXX */,
+                                  0, 10 /* XXX */, 6 /* XXX */,
+                                  16 /* XXX */, 0, 0);
+         else
+            return calculate_desc(info, EU_UNIT_FPU, 12 /* XXX */, 4 /* XXX */, 0,
+                                  0, 4 /* XXX */,
+                                  0, 12 /* XXX */, 8 /* XXX */,
+                                  18 /* XXX */, 0, 0);
 
       case SHADER_OPCODE_QUAD_SWIZZLE:
          if (devinfo->ver >= 11)
@@ -526,29 +781,124 @@ namespace {
                                   0, 8 /* XXX */,
                                   0, 10 /* XXX */, 6 /* XXX */,
                                   14 /* XXX */, 0, 0);
-         else
+         else if (devinfo->ver >= 8)
             return calculate_desc(info, EU_UNIT_FPU, 0 /* XXX */, 8 /* XXX */, 0,
                                   0, 8 /* XXX */,
                                   0, 8 /* XXX */, 4 /* XXX */,
                                   12 /* XXX */, 0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_FPU, 0 /* XXX */, 8 /* XXX */, 0,
+                                  0, 8 /* XXX */,
+                                  0, 10 /* XXX */, 6 /* XXX */,
+                                  16 /* XXX */, 0, 0);
+         else
+            return calculate_desc(info, EU_UNIT_FPU, 0 /* XXX */, 8 /* XXX */, 0,
+                                  0, 8 /* XXX */,
+                                  0, 12 /* XXX */, 8 /* XXX */,
+                                  18 /* XXX */, 0, 0);
 
       case FS_OPCODE_DDY_FINE:
          if (devinfo->ver >= 11)
             return calculate_desc(info, EU_UNIT_FPU, 0, 14, 0, 0, 4,
                                   0, 10, 6 /* XXX */, 14 /* XXX */, 0, 0);
-         else
+         else if (devinfo->ver >= 8)
             return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
                                   0, 8, 4 /* XXX */, 12 /* XXX */, 0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
+                                  0, 12, 8 /* XXX */, 18 /* XXX */, 0, 0);
+         else
+            return calculate_desc(info, EU_UNIT_FPU, 0, 2, 0, 0, 2,
+                                  0, 14, 10 /* XXX */, 20 /* XXX */, 0, 0);
 
       case FS_OPCODE_LOAD_LIVE_CHANNELS:
          if (devinfo->ver >= 11)
             return calculate_desc(info, EU_UNIT_FPU, 2 /* XXX */, 0, 0,
                                   2 /* XXX */, 0,
                                   0, 0, 0, 10 /* XXX */, 0, 0);
-         else
+         else if (devinfo->ver >= 8)
             return calculate_desc(info, EU_UNIT_FPU, 0, 2 /* XXX */, 0,
                                   0, 2 /* XXX */,
                                   0, 0, 0, 8 /* XXX */, 0, 0);
+         else
+            abort();
+
+      case VEC4_OPCODE_PACK_BYTES:
+         if (devinfo->ver >= 8)
+            return calculate_desc(info, EU_UNIT_FPU, 4 /* XXX */, 0, 0,
+                                  4 /* XXX */, 0,
+                                  0, 8 /* XXX */, 4 /* XXX */, 12 /* XXX */,
+                                  0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_FPU, 4 /* XXX */, 0, 0,
+                                  4 /* XXX */, 0,
+                                  0, 10 /* XXX */, 6 /* XXX */, 16 /* XXX */,
+                                  0, 0);
+         else
+            return calculate_desc(info, EU_UNIT_FPU, 4 /* XXX */, 0, 0,
+                                  4 /* XXX */, 0,
+                                  0, 12 /* XXX */, 8 /* XXX */, 18 /* XXX */,
+                                  0, 0);
+
+      case VS_OPCODE_UNPACK_FLAGS_SIMD4X2:
+      case TCS_OPCODE_GET_INSTANCE_ID:
+      case VEC4_TCS_OPCODE_SET_INPUT_URB_OFFSETS:
+      case VEC4_TCS_OPCODE_SET_OUTPUT_URB_OFFSETS:
+      case TES_OPCODE_CREATE_INPUT_READ_HEADER:
+         if (devinfo->ver >= 8)
+            return calculate_desc(info, EU_UNIT_FPU, 22 /* XXX */, 0, 0,
+                                  6 /* XXX */, 0,
+                                  0, 8 /* XXX */, 4 /* XXX */, 12 /* XXX */,
+                                  0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_FPU, 26 /* XXX */, 0, 0,
+                                  6 /* XXX */, 0,
+                                  0, 10 /* XXX */, 6 /* XXX */, 16 /* XXX */,
+                                  0, 0);
+         else
+            return calculate_desc(info, EU_UNIT_FPU, 30 /* XXX */, 0, 0,
+                                  6 /* XXX */, 0,
+                                  0, 12 /* XXX */, 8 /* XXX */, 18 /* XXX */,
+                                  0, 0);
+
+      case GS_OPCODE_FF_SYNC_SET_PRIMITIVES:
+      case TCS_OPCODE_CREATE_BARRIER_HEADER:
+         if (devinfo->ver >= 8)
+            return calculate_desc(info, EU_UNIT_FPU, 32 /* XXX */, 0, 0,
+                                  8 /* XXX */, 0,
+                                  0, 8 /* XXX */, 4 /* XXX */, 12 /* XXX */,
+                                  0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_FPU, 38 /* XXX */, 0, 0,
+                                  8 /* XXX */, 0,
+                                  0, 10 /* XXX */, 6 /* XXX */, 16 /* XXX */,
+                                  0, 0);
+         else if (devinfo->ver >= 6)
+            return calculate_desc(info, EU_UNIT_FPU, 44 /* XXX */, 0, 0,
+                                  8 /* XXX */, 0,
+                                  0, 12 /* XXX */, 8 /* XXX */, 18 /* XXX */,
+                                  0, 0);
+         else
+            abort();
+
+      case TES_OPCODE_ADD_INDIRECT_URB_OFFSET:
+         if (devinfo->ver >= 8)
+            return calculate_desc(info, EU_UNIT_FPU, 12 /* XXX */, 0, 0,
+                                  4 /* XXX */, 0,
+                                  0, 8 /* XXX */, 4 /* XXX */, 12 /* XXX */,
+                                  0, 0);
+         else if (devinfo->verx10 >= 75)
+            return calculate_desc(info, EU_UNIT_FPU, 14 /* XXX */, 0, 0,
+                                  4 /* XXX */, 0,
+                                  0, 10 /* XXX */, 6 /* XXX */, 16 /* XXX */,
+                                  0, 0);
+         else if (devinfo->ver >= 7)
+            return calculate_desc(info, EU_UNIT_FPU, 16 /* XXX */, 0, 0,
+                                  4 /* XXX */, 0,
+                                  0, 12 /* XXX */, 8 /* XXX */, 18 /* XXX */,
+                                  0, 0);
+         else
+            abort();
 
       case SHADER_OPCODE_TEX:
       case FS_OPCODE_TXB:
@@ -565,23 +915,34 @@ namespace {
       case SHADER_OPCODE_LOD:
       case SHADER_OPCODE_GET_BUFFER_SIZE:
       case SHADER_OPCODE_TG4:
-      case SHADER_OPCODE_TG4_BIAS:
-      case SHADER_OPCODE_TG4_EXPLICIT_LOD:
-      case SHADER_OPCODE_TG4_IMPLICIT_LOD:
       case SHADER_OPCODE_TG4_OFFSET:
-      case SHADER_OPCODE_TG4_OFFSET_LOD:
-      case SHADER_OPCODE_TG4_OFFSET_BIAS:
       case SHADER_OPCODE_SAMPLEINFO:
+      case FS_OPCODE_VARYING_PULL_CONSTANT_LOAD_GFX4:
          return calculate_desc(info, EU_UNIT_SAMPLER, 2, 0, 0, 0, 16 /* XXX */,
                                8 /* XXX */, 750 /* XXX */, 0, 0,
                                2 /* XXX */, 0);
+
+      case VEC4_OPCODE_URB_READ:
+      case VEC4_VS_OPCODE_URB_WRITE:
+      case VEC4_GS_OPCODE_URB_WRITE:
+      case VEC4_GS_OPCODE_URB_WRITE_ALLOCATE:
+      case GS_OPCODE_THREAD_END:
+      case GS_OPCODE_FF_SYNC:
+      case VEC4_TCS_OPCODE_URB_WRITE:
+      case TCS_OPCODE_RELEASE_INPUT:
+      case TCS_OPCODE_THREAD_END:
+         return calculate_desc(info, EU_UNIT_URB, 2, 0, 0, 0, 6 /* XXX */,
+                               32 /* XXX */, 200 /* XXX */, 0, 0, 0, 0);
 
       case SHADER_OPCODE_MEMORY_FENCE:
       case SHADER_OPCODE_INTERLOCK:
          switch (info.sfid) {
          case GFX6_SFID_DATAPORT_RENDER_CACHE:
-            return calculate_desc(info, EU_UNIT_DP_RC, 2, 0, 0, 30 /* XXX */, 0,
-                                  10 /* XXX */, 300 /* XXX */, 0, 0, 0, 0);
+            if (devinfo->ver >= 7)
+               return calculate_desc(info, EU_UNIT_DP_RC, 2, 0, 0, 30 /* XXX */, 0,
+                                     10 /* XXX */, 300 /* XXX */, 0, 0, 0, 0);
+            else
+               abort();
 
          case BRW_SFID_URB:
          case GFX7_SFID_DATAPORT_DATA_CACHE:
@@ -589,81 +950,155 @@ namespace {
          case GFX12_SFID_TGM:
          case GFX12_SFID_UGM:
          case HSW_SFID_DATAPORT_DATA_CACHE_1:
-            return calculate_desc(info, EU_UNIT_DP_DC, 2, 0, 0, 30 /* XXX */, 0,
-                                  10 /* XXX */, 100 /* XXX */, 0, 0, 0, 0);
+            if (devinfo->ver >= 7)
+               return calculate_desc(info, EU_UNIT_DP_DC, 2, 0, 0, 30 /* XXX */, 0,
+                                     10 /* XXX */, 100 /* XXX */, 0, 0, 0, 0);
+            else
+               abort();
 
          default:
             abort();
          }
 
+      case SHADER_OPCODE_GFX4_SCRATCH_READ:
+      case SHADER_OPCODE_GFX4_SCRATCH_WRITE:
+      case SHADER_OPCODE_GFX7_SCRATCH_READ:
+         return calculate_desc(info, EU_UNIT_DP_DC, 2, 0, 0, 0, 8 /* XXX */,
+                               10 /* XXX */, 100 /* XXX */, 0, 0, 0, 0);
+
+      case VEC4_OPCODE_UNTYPED_ATOMIC:
+         if (devinfo->ver >= 7)
+            return calculate_desc(info, EU_UNIT_DP_DC, 2, 0, 0,
+                                  30 /* XXX */, 400 /* XXX */,
+                                  10 /* XXX */, 100 /* XXX */, 0, 0,
+                                  0, 400 /* XXX */);
+         else
+            abort();
+
+      case VEC4_OPCODE_UNTYPED_SURFACE_READ:
+      case VEC4_OPCODE_UNTYPED_SURFACE_WRITE:
+         if (devinfo->ver >= 7)
+            return calculate_desc(info, EU_UNIT_DP_DC, 2, 0, 0,
+                                  0, 20 /* XXX */,
+                                  10 /* XXX */, 100 /* XXX */, 0, 0,
+                                  0, 0);
+         else
+            abort();
+
+      case FS_OPCODE_FB_WRITE:
       case FS_OPCODE_FB_READ:
+      case FS_OPCODE_REP_FB_WRITE:
          return calculate_desc(info, EU_UNIT_DP_RC, 2, 0, 0, 0, 450 /* XXX */,
                                10 /* XXX */, 300 /* XXX */, 0, 0, 0, 0);
 
+      case GS_OPCODE_SVB_WRITE:
+         if (devinfo->ver >= 6)
+            return calculate_desc(info, EU_UNIT_DP_RC, 2 /* XXX */, 0, 0,
+                                  0, 450 /* XXX */,
+                                  10 /* XXX */, 300 /* XXX */, 0, 0,
+                                  0, 0);
+         else
+            abort();
+
       case FS_OPCODE_UNIFORM_PULL_CONSTANT_LOAD:
+      case FS_OPCODE_UNIFORM_PULL_CONSTANT_LOAD_GFX7:
          return calculate_desc(info, EU_UNIT_DP_CC, 2, 0, 0, 0, 16 /* XXX */,
                                10 /* XXX */, 100 /* XXX */, 0, 0, 0, 0);
+
+      case VS_OPCODE_PULL_CONSTANT_LOAD:
+      case VS_OPCODE_PULL_CONSTANT_LOAD_GFX7:
+         return calculate_desc(info, EU_UNIT_SAMPLER, 2, 0, 0, 0, 16,
+                               8, 750, 0, 0, 2, 0);
 
       case FS_OPCODE_INTERPOLATE_AT_SAMPLE:
       case FS_OPCODE_INTERPOLATE_AT_SHARED_OFFSET:
       case FS_OPCODE_INTERPOLATE_AT_PER_SLOT_OFFSET:
-         return calculate_desc(info, EU_UNIT_PI, 2, 0, 0, 14 /* XXX */, 0,
-                               0, 90 /* XXX */, 0, 0, 0, 0);
+         if (devinfo->ver >= 7)
+            return calculate_desc(info, EU_UNIT_PI, 2, 0, 0, 14 /* XXX */, 0,
+                                  0, 90 /* XXX */, 0, 0, 0, 0);
+         else
+            abort();
 
       case SHADER_OPCODE_BARRIER:
-         return calculate_desc(info, EU_UNIT_GATEWAY, 90 /* XXX */, 0, 0,
-                               0 /* XXX */, 0,
-                               0, 0, 0, 0, 0, 0);
+         if (devinfo->ver >= 7)
+            return calculate_desc(info, EU_UNIT_GATEWAY, 90 /* XXX */, 0, 0,
+                                  0 /* XXX */, 0,
+                                  0, 0, 0, 0, 0, 0);
+         else
+            abort();
 
       case CS_OPCODE_CS_TERMINATE:
-         return calculate_desc(info, EU_UNIT_SPAWNER, 2, 0, 0, 0 /* XXX */, 0,
-                               10 /* XXX */, 0, 0, 0, 0, 0);
+         if (devinfo->ver >= 7)
+            return calculate_desc(info, EU_UNIT_SPAWNER, 2, 0, 0, 0 /* XXX */, 0,
+                                  10 /* XXX */, 0, 0, 0, 0, 0);
+         else
+            abort();
 
       case SHADER_OPCODE_SEND:
          switch (info.sfid) {
-         case GFX6_SFID_DATAPORT_CONSTANT_CACHE:
-            /* See FS_OPCODE_UNIFORM_PULL_CONSTANT_LOAD */
-            return calculate_desc(info, EU_UNIT_DP_CC, 2, 0, 0, 0, 16 /* XXX */,
-                                  10 /* XXX */, 100 /* XXX */, 0, 0, 0, 0);
          case GFX6_SFID_DATAPORT_RENDER_CACHE:
-            switch (brw_dp_desc_msg_type(devinfo, info.desc)) {
-            case GFX7_DATAPORT_RC_TYPED_ATOMIC_OP:
-               return calculate_desc(info, EU_UNIT_DP_RC, 2, 0, 0,
-                                     30 /* XXX */, 450 /* XXX */,
-                                     10 /* XXX */, 100 /* XXX */,
-                                     0, 0, 0, 400 /* XXX */);
-            default:
-               return calculate_desc(info, EU_UNIT_DP_RC, 2, 0, 0,
+            if (devinfo->ver >= 7) {
+               switch (brw_dp_desc_msg_type(devinfo, info.desc)) {
+               case GFX7_DATAPORT_RC_TYPED_ATOMIC_OP:
+                  return calculate_desc(info, EU_UNIT_DP_RC, 2, 0, 0,
+                                        30 /* XXX */, 450 /* XXX */,
+                                        10 /* XXX */, 100 /* XXX */,
+                                        0, 0, 0, 400 /* XXX */);
+               default:
+                  return calculate_desc(info, EU_UNIT_DP_RC, 2, 0, 0,
+                                        0, 450 /* XXX */,
+                                        10 /* XXX */, 300 /* XXX */, 0, 0,
+                                        0, 0);
+               }
+            } else if (devinfo->ver >= 6)  {
+               return calculate_desc(info, EU_UNIT_DP_RC, 2 /* XXX */, 0, 0,
                                      0, 450 /* XXX */,
-                                     10 /* XXX */, 300 /* XXX */, 0, 0,
-                                     0, 0);
+                                     10 /* XXX */, 300 /* XXX */, 0, 0, 0, 0);
+            } else {
+               abort();
             }
          case BRW_SFID_SAMPLER: {
-            return calculate_desc(info, EU_UNIT_SAMPLER, 2, 0, 0, 0, 16,
-                                  8, 750, 0, 0, 2, 0);
+            if (devinfo->ver >= 6)
+               return calculate_desc(info, EU_UNIT_SAMPLER, 2, 0, 0, 0, 16,
+                                     8, 750, 0, 0, 2, 0);
+            else
+               abort();
          }
          case GFX7_SFID_DATAPORT_DATA_CACHE:
          case HSW_SFID_DATAPORT_DATA_CACHE_1:
-            switch (brw_dp_desc_msg_type(devinfo, info.desc)) {
-            case HSW_DATAPORT_DC_PORT1_UNTYPED_ATOMIC_OP:
-            case HSW_DATAPORT_DC_PORT1_UNTYPED_ATOMIC_OP_SIMD4X2:
-            case HSW_DATAPORT_DC_PORT1_TYPED_ATOMIC_OP_SIMD4X2:
-            case HSW_DATAPORT_DC_PORT1_TYPED_ATOMIC_OP:
-               return calculate_desc(info, EU_UNIT_DP_DC, 2, 0, 0,
-                                     30 /* XXX */, 400 /* XXX */,
-                                     10 /* XXX */, 100 /* XXX */, 0, 0,
-                                     0, 400 /* XXX */);
+            if (devinfo->verx10 >= 75) {
+               switch (brw_dp_desc_msg_type(devinfo, info.desc)) {
+               case HSW_DATAPORT_DC_PORT1_UNTYPED_ATOMIC_OP:
+               case HSW_DATAPORT_DC_PORT1_UNTYPED_ATOMIC_OP_SIMD4X2:
+               case HSW_DATAPORT_DC_PORT1_TYPED_ATOMIC_OP_SIMD4X2:
+               case HSW_DATAPORT_DC_PORT1_TYPED_ATOMIC_OP:
+                  return calculate_desc(info, EU_UNIT_DP_DC, 2, 0, 0,
+                                        30 /* XXX */, 400 /* XXX */,
+                                        10 /* XXX */, 100 /* XXX */, 0, 0,
+                                        0, 400 /* XXX */);
 
-            default:
-               return calculate_desc(info, EU_UNIT_DP_DC, 2, 0, 0,
-                                     0, 20 /* XXX */,
-                                     10 /* XXX */, 100 /* XXX */, 0, 0,
-                                     0, 0);
+               default:
+                  return calculate_desc(info, EU_UNIT_DP_DC, 2, 0, 0,
+                                        0, 20 /* XXX */,
+                                        10 /* XXX */, 100 /* XXX */, 0, 0,
+                                        0, 0);
+               }
+            } else if (devinfo->ver >= 7) {
+               switch (brw_dp_desc_msg_type(devinfo, info.desc)) {
+               case GFX7_DATAPORT_DC_UNTYPED_ATOMIC_OP:
+                  return calculate_desc(info, EU_UNIT_DP_DC, 2, 0, 0,
+                                        30 /* XXX */, 400 /* XXX */,
+                                        10 /* XXX */, 100 /* XXX */,
+                                        0, 0, 0, 400 /* XXX */);
+               default:
+                  return calculate_desc(info, EU_UNIT_DP_DC, 2, 0, 0,
+                                        0, 20 /* XXX */,
+                                        10 /* XXX */, 100 /* XXX */, 0, 0,
+                                        0, 0);
+               }
+            } else {
+               abort();
             }
-
-         case GFX7_SFID_PIXEL_INTERPOLATOR:
-            return calculate_desc(info, EU_UNIT_PI, 2, 0, 0, 14 /* XXX */, 0,
-                                  0, 90 /* XXX */, 0, 0, 0, 0);
 
          case GFX12_SFID_UGM:
          case GFX12_SFID_TGM:
@@ -805,13 +1240,25 @@ namespace {
    {
       if (r.file == VGRF) {
          const unsigned i = r.nr + r.offset / REG_SIZE + delta;
-         assert(i < EU_DEPENDENCY_ID_ADDR0 - EU_DEPENDENCY_ID_GRF0);
+         assert(i < EU_DEPENDENCY_ID_MRF0 - EU_DEPENDENCY_ID_GRF0);
          return intel_eu_dependency_id(EU_DEPENDENCY_ID_GRF0 + i);
 
       } else if (r.file == FIXED_GRF) {
          const unsigned i = r.nr + delta;
-         assert(i < EU_DEPENDENCY_ID_ADDR0 - EU_DEPENDENCY_ID_GRF0);
+         assert(i < EU_DEPENDENCY_ID_MRF0 - EU_DEPENDENCY_ID_GRF0);
          return intel_eu_dependency_id(EU_DEPENDENCY_ID_GRF0 + i);
+
+      } else if (r.file == MRF && devinfo->ver >= 7) {
+         const unsigned i = GFX7_MRF_HACK_START +
+                            r.nr + r.offset / REG_SIZE + delta;
+         assert(i < EU_DEPENDENCY_ID_MRF0 - EU_DEPENDENCY_ID_GRF0);
+         return intel_eu_dependency_id(EU_DEPENDENCY_ID_GRF0 + i);
+
+      } else if (r.file == MRF && devinfo->ver < 7) {
+         const unsigned i = (r.nr & ~BRW_MRF_COMPR4) +
+                            r.offset / REG_SIZE + delta;
+         assert(i < EU_DEPENDENCY_ID_ADDR0 - EU_DEPENDENCY_ID_MRF0);
+         return intel_eu_dependency_id(EU_DEPENDENCY_ID_MRF0 + i);
 
       } else if (r.file == ARF && r.nr >= BRW_ARF_ADDRESS &&
                  r.nr < BRW_ARF_ACCUMULATOR) {
@@ -883,8 +1330,8 @@ namespace {
       assert(inst->reads_accumulator_implicitly() ||
              inst->writes_accumulator_implicitly(devinfo));
       const unsigned offset = (inst->group + i) * type_sz(tx) *
-         (brw_reg_type_is_floating_point(tx) ? 1 : 2);
-      return offset / (reg_unit(devinfo) * REG_SIZE) % 2;
+         (devinfo->ver < 7 || brw_reg_type_is_floating_point(tx) ? 1 : 2);
+      return offset / REG_SIZE % 2;
    }
 
    /**
@@ -912,6 +1359,13 @@ namespace {
                                         inst->exec_size - 1); j++)
             stall_on_dependency(
                st, reg_dependency_id(devinfo, brw_acc_reg(8), j));
+      }
+
+      if (is_send(inst) && inst->base_mrf != -1) {
+         for (unsigned j = 0; j < inst->mlen; j++)
+            stall_on_dependency(
+               st, reg_dependency_id(
+                  devinfo, brw_uvec_mrf(8, inst->base_mrf, 0), j));
       }
 
       if (const unsigned mask = inst->flags_read(devinfo)) {
@@ -965,6 +1419,12 @@ namespace {
          }
       }
 
+      if (is_send(inst) && inst->base_mrf != -1) {
+         for (unsigned j = 0; j < inst->mlen; j++)
+            mark_read_dependency(st, perf,
+               reg_dependency_id(devinfo, brw_uvec_mrf(8, inst->base_mrf, 0), j));
+      }
+
       /* Mark any destination dependencies. */
       if (inst->dst.file != BAD_FILE && !inst->dst.is_null()) {
          for (unsigned j = 0; j < regs_written(inst); j++) {
@@ -993,6 +1453,102 @@ namespace {
          mark_read_dependency(st, perf, tgl_swsb_rd_dependency_id(inst->sched));
          mark_write_dependency(st, perf, tgl_swsb_wr_dependency_id(inst->sched));
       }
+   }
+
+   /**
+    * Model the performance behavior of a VEC4 back-end instruction.
+    */
+   void
+   issue_vec4_instruction(state &st, const struct brw_isa_info *isa,
+                          const backend_instruction *be_inst)
+   {
+      const struct intel_device_info *devinfo = isa->devinfo;
+      const vec4_instruction *inst =
+         static_cast<const vec4_instruction *>(be_inst);
+      const instruction_info info(isa, inst);
+      const perf_desc perf = instruction_desc(info);
+
+      /* Stall on any source dependencies. */
+      for (unsigned i = 0; i < ARRAY_SIZE(inst->src); i++) {
+         for (unsigned j = 0; j < regs_read(inst, i); j++)
+            stall_on_dependency(
+               st, reg_dependency_id(devinfo, inst->src[i], j));
+      }
+
+      if (inst->reads_accumulator_implicitly()) {
+         for (unsigned j = accum_reg_of_channel(devinfo, inst, info.tx, 0);
+              j <= accum_reg_of_channel(devinfo, inst, info.tx,
+                                        inst->exec_size - 1); j++)
+            stall_on_dependency(
+               st, reg_dependency_id(devinfo, brw_acc_reg(8), j));
+      }
+
+      if (inst->base_mrf != -1) {
+         for (unsigned j = 0; j < inst->mlen; j++)
+            stall_on_dependency(
+               st, reg_dependency_id(
+                  devinfo, brw_uvec_mrf(8, inst->base_mrf, 0), j));
+      }
+
+      if (inst->reads_flag())
+         stall_on_dependency(st, EU_DEPENDENCY_ID_FLAG0);
+
+      /* Stall on any write dependencies. */
+      if (!inst->no_dd_check) {
+         if (inst->dst.file != BAD_FILE && !inst->dst.is_null()) {
+            for (unsigned j = 0; j < regs_written(inst); j++)
+               stall_on_dependency(
+                  st, reg_dependency_id(devinfo, inst->dst, j));
+         }
+
+         if (inst->writes_accumulator_implicitly(devinfo)) {
+            for (unsigned j = accum_reg_of_channel(devinfo, inst, info.tx, 0);
+                 j <= accum_reg_of_channel(devinfo, inst, info.tx,
+                                           inst->exec_size - 1); j++)
+               stall_on_dependency(
+                  st, reg_dependency_id(devinfo, brw_acc_reg(8), j));
+         }
+
+         if (inst->writes_flag(devinfo))
+            stall_on_dependency(st, EU_DEPENDENCY_ID_FLAG0);
+      }
+
+      /* Execute the instruction. */
+      execute_instruction(st, perf);
+
+      /* Mark any source dependencies. */
+      if (inst->is_send_from_grf()) {
+         for (unsigned i = 0; i < ARRAY_SIZE(inst->src); i++) {
+            for (unsigned j = 0; j < regs_read(inst, i); j++)
+               mark_read_dependency(
+                  st, perf, reg_dependency_id(devinfo, inst->src[i], j));
+         }
+      }
+
+      if (inst->base_mrf != -1) {
+         for (unsigned j = 0; j < inst->mlen; j++)
+            mark_read_dependency(st, perf,
+               reg_dependency_id(devinfo, brw_uvec_mrf(8, inst->base_mrf, 0), j));
+      }
+
+      /* Mark any destination dependencies. */
+      if (inst->dst.file != BAD_FILE && !inst->dst.is_null()) {
+         for (unsigned j = 0; j < regs_written(inst); j++) {
+            mark_write_dependency(st, perf,
+                                  reg_dependency_id(devinfo, inst->dst, j));
+         }
+      }
+
+      if (inst->writes_accumulator_implicitly(devinfo)) {
+         for (unsigned j = accum_reg_of_channel(devinfo, inst, info.tx, 0);
+              j <= accum_reg_of_channel(devinfo, inst, info.tx,
+                                        inst->exec_size - 1); j++)
+            mark_write_dependency(st, perf,
+                                  reg_dependency_id(devinfo, brw_acc_reg(8), j));
+      }
+
+      if (inst->writes_flag(devinfo))
+         mark_write_dependency(st, perf, EU_DEPENDENCY_ID_FLAG0);
    }
 
    /**
@@ -1084,6 +1640,12 @@ brw::performance::performance(const fs_visitor *v) :
    block_latency(new unsigned[v->cfg->num_blocks])
 {
    calculate_performance(*this, v, issue_fs_inst, v->dispatch_width);
+}
+
+brw::performance::performance(const vec4_visitor *v) :
+   block_latency(new unsigned[v->cfg->num_blocks])
+{
+   calculate_performance(*this, v, issue_vec4_instruction, 8);
 }
 
 brw::performance::~performance()

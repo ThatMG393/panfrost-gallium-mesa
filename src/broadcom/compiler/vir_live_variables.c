@@ -179,22 +179,17 @@ vir_setup_def_use(struct v3d_compile *c)
                                 flags_inst = NULL;
                         }
 
-                        /* Payload registers: for fragment shaders, W,
-                         * centroid W, and Z will be initialized in r0/1/2
-                         * until v42, or r1/r2/r3 since v71.
-                         *
-                         * For compute shaders, payload is in r0/r2 up to v42,
-                         * r2/r3 since v71.
-                         *
-                         * Register allocation will force their nodes to those
-                         * registers.
+                        /* Payload registers: r0/1/2 contain W, centroid W,
+                         * and Z at program start.  Register allocation will
+                         * force their nodes to R0/1/2.
                          */
                         if (inst->src[0].file == QFILE_REG) {
-                                uint32_t min_payload_r = c->devinfo->ver >= 71 ? 1 : 0;
-                                uint32_t max_payload_r = c->devinfo->ver >= 71 ? 3 : 2;
-                                if (inst->src[0].index >= min_payload_r ||
-                                    inst->src[0].index <= max_payload_r) {
+                                switch (inst->src[0].index) {
+                                case 0:
+                                case 1:
+                                case 2:
                                         c->temp_start[inst->dst.index] = 0;
+                                        break;
                                 }
                         }
 
@@ -311,8 +306,6 @@ vir_calculate_live_intervals(struct v3d_compile *c)
 
                 vir_for_each_block(block, c) {
                         ralloc_free(block->def);
-                        ralloc_free(block->defin);
-                        ralloc_free(block->defout);
                         ralloc_free(block->use);
                         ralloc_free(block->live_in);
                         ralloc_free(block->live_out);

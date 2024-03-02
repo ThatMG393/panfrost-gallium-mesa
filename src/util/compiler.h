@@ -35,16 +35,10 @@
 
 
 #include <assert.h>
-#include <limits.h>
-#include <stdarg.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
 
-#include "util/detect.h"
 #include "util/macros.h"
+#include "util/u_endian.h"
+#include "util/detect_arch.h"
 
 /**
  * Define CPU_TO_LE32
@@ -105,20 +99,6 @@
 #define FALLTHROUGH __attribute__((fallthrough))
 #else
 #define FALLTHROUGH do { } while(0)
-#endif
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#if !defined(__HAIKU__) && !defined(__USE_MISC)
-#if !DETECT_OS_ANDROID
-typedef unsigned int       uint;
-#endif
-#endif
-
-#if defined(__cplusplus)
-}
 #endif
 
 #endif /* COMPILER_H */

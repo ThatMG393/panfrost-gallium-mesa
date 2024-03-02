@@ -1393,7 +1393,7 @@ get_texture_image(struct gl_context *ctx,
 {
    struct gl_texture_image *texImage;
    unsigned firstFace, numFaces, i;
-   intptr_t imageStride;
+   GLint imageStride;
 
    FLUSH_VERTICES(ctx, 0, 0);
 

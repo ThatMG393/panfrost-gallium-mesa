@@ -42,11 +42,6 @@ fence_flush(struct pipe_context *pctx, struct pipe_fence_handle *fence,
     */
    in_dt
 {
-   if (fence->flushed)
-      return true;
-
-   MESA_TRACE_FUNC();
-
    if (!util_queue_fence_is_signalled(&fence->ready)) {
       if (fence->tc_token) {
          threaded_context_flush(pctx, fence->tc_token, timeout == 0);
@@ -55,7 +50,7 @@ fence_flush(struct pipe_context *pctx, struct pipe_fence_handle *fence,
       if (!timeout)
          return false;
 
-      if (timeout == OS_TIMEOUT_INFINITE) {
+      if (timeout == PIPE_TIMEOUT_INFINITE) {
          util_queue_fence_wait(&fence->ready);
       } else {
          int64_t abs_timeout = os_time_get_absolute_timeout(timeout);
@@ -64,61 +59,68 @@ fence_flush(struct pipe_context *pctx, struct pipe_fence_handle *fence,
          }
       }
 
-      goto out;
+      util_queue_fence_wait(&fence->submit_fence.ready);
+
+      /* We've already waited for batch to be flushed and fence->batch
+       * to be cleared:
+       */
+      assert(!fence->batch);
+      return true;
    }
 
    if (fence->batch)
       fd_batch_flush(fence->batch);
 
-out:
-   if (fence->fence)
-      fd_fence_flush(fence->fence);
+   util_queue_fence_wait(&fence->submit_fence.ready);
 
    assert(!fence->batch);
-   fence->flushed = true;
+
    return true;
 }
 
 void
-fd_pipe_fence_repopulate(struct pipe_fence_handle *fence,
-                         struct pipe_fence_handle *last_fence)
+fd_fence_repopulate(struct pipe_fence_handle *fence, struct pipe_fence_handle *last_fence)
 {
    if (last_fence->last_fence)
-      fd_pipe_fence_repopulate(fence, last_fence->last_fence);
+      fd_fence_repopulate(fence, last_fence->last_fence);
 
    /* The fence we are re-populating must not be an fd-fence (but last_fince
     * might have been)
     */
-   assert(!fence->use_fence_fd);
+   assert(!fence->submit_fence.use_fence_fd);
    assert(!last_fence->batch);
 
-   fd_pipe_fence_ref(&fence->last_fence, last_fence);
+   fd_fence_ref(&fence->last_fence, last_fence);
 
    /* We have nothing to flush, so nothing will clear the batch reference
     * (which is normally done when the batch is flushed), so do it now:
     */
-   fd_pipe_fence_set_batch(fence, NULL);
+   fd_fence_set_batch(fence, NULL);
 }
 
 static void
 fd_fence_destroy(struct pipe_fence_handle *fence)
 {
-   fd_pipe_fence_ref(&fence->last_fence, NULL);
+   fd_fence_ref(&fence->last_fence, NULL);
 
    tc_unflushed_batch_token_reference(&fence->tc_token, NULL);
 
+   /* If the submit is enqueued to the submit_queue, we need to wait until
+    * the fence_fd is valid before cleaning up.
+    */
+   util_queue_fence_wait(&fence->submit_fence.ready);
+
+   if (fence->submit_fence.use_fence_fd)
+      close(fence->submit_fence.fence_fd);
    if (fence->syncobj)
       drmSyncobjDestroy(fd_device_fd(fence->screen->dev), fence->syncobj);
    fd_pipe_del(fence->pipe);
-   if (fence->fence)
-      fd_fence_del(fence->fence);
 
    FREE(fence);
 }
 
 void
-fd_pipe_fence_ref(struct pipe_fence_handle **ptr,
-                  struct pipe_fence_handle *pfence)
+fd_fence_ref(struct pipe_fence_handle **ptr, struct pipe_fence_handle *pfence)
 {
    if (pipe_reference(&(*ptr)->reference, &pfence->reference))
       fd_fence_destroy(*ptr);
@@ -127,11 +129,9 @@ fd_pipe_fence_ref(struct pipe_fence_handle **ptr,
 }
 
 bool
-fd_pipe_fence_finish(struct pipe_screen *pscreen, struct pipe_context *pctx,
-                     struct pipe_fence_handle *fence, uint64_t timeout)
+fd_fence_finish(struct pipe_screen *pscreen, struct pipe_context *pctx,
+                struct pipe_fence_handle *fence, uint64_t timeout)
 {
-   MESA_TRACE_SCOPE(timeout ? "fd_pipe_fence_finish(wait)" : "fd_pipe_fence_finish(nowait)");
-
    /* Note: for TC deferred fence, pctx->flush() may not have been called
     * yet, so always do fence_flush() *first* before delegating to
     * fence->last_fence
@@ -140,18 +140,17 @@ fd_pipe_fence_finish(struct pipe_screen *pscreen, struct pipe_context *pctx,
       return false;
 
    if (fence->last_fence)
-      return fd_pipe_fence_finish(pscreen, pctx, fence->last_fence, timeout);
+      return fd_fence_finish(pscreen, pctx, fence->last_fence, timeout);
 
    if (fence->last_fence)
       fence = fence->last_fence;
 
-   if (fence->use_fence_fd) {
-      assert(fence->fence);
-      int ret = sync_wait(fence->fence->fence_fd, timeout / 1000000);
+   if (fence->submit_fence.use_fence_fd) {
+      int ret = sync_wait(fence->submit_fence.fence_fd, timeout / 1000000);
       return ret == 0;
    }
 
-   if (fd_pipe_wait_timeout(fence->pipe, fence->fence, timeout))
+   if (fd_pipe_wait_timeout(fence->pipe, &fence->submit_fence.fence, timeout))
       return false;
 
    return true;
@@ -169,25 +168,22 @@ fence_create(struct fd_context *ctx, struct fd_batch *batch, int fence_fd,
 
    pipe_reference_init(&fence->reference, 1);
    util_queue_fence_init(&fence->ready);
+   util_queue_fence_init(&fence->submit_fence.ready);
 
    fence->ctx = ctx;
-   fd_pipe_fence_set_batch(fence, batch);
+   fd_fence_set_batch(fence, batch);
    fence->pipe = fd_pipe_ref(ctx->pipe);
    fence->screen = ctx->screen;
-   fence->use_fence_fd = (fence_fd != -1);
+   fence->submit_fence.fence_fd = fence_fd;
+   fence->submit_fence.use_fence_fd = (fence_fd != -1);
    fence->syncobj = syncobj;
-
-   if (fence_fd != -1) {
-      fence->fence = fd_fence_new(fence->pipe, fence->use_fence_fd);
-      fence->fence->fence_fd = fence_fd;
-   }
 
    return fence;
 }
 
 void
-fd_create_pipe_fence_fd(struct pipe_context *pctx, struct pipe_fence_handle **pfence,
-                        int fd, enum pipe_fd_type type)
+fd_create_fence_fd(struct pipe_context *pctx, struct pipe_fence_handle **pfence,
+                   int fd, enum pipe_fd_type type)
 {
    struct fd_context *ctx = fd_context(pctx);
 
@@ -214,11 +210,9 @@ fd_create_pipe_fence_fd(struct pipe_context *pctx, struct pipe_fence_handle **pf
 }
 
 void
-fd_pipe_fence_server_sync(struct pipe_context *pctx, struct pipe_fence_handle *fence)
+fd_fence_server_sync(struct pipe_context *pctx, struct pipe_fence_handle *fence)
 {
    struct fd_context *ctx = fd_context(pctx);
-
-   MESA_TRACE_FUNC();
 
    /* NOTE: we don't expect the combination of fence-fd + async-flush-fence,
     * so timeout==0 is ok here:
@@ -226,25 +220,22 @@ fd_pipe_fence_server_sync(struct pipe_context *pctx, struct pipe_fence_handle *f
    fence_flush(pctx, fence, 0);
 
    if (fence->last_fence) {
-      fd_pipe_fence_server_sync(pctx, fence->last_fence);
+      fd_fence_server_sync(pctx, fence->last_fence);
       return;
    }
 
    /* if not an external fence, then nothing more to do without preemption: */
-   if (!fence->use_fence_fd)
+   if (!fence->submit_fence.use_fence_fd)
       return;
 
-   ctx->no_implicit_sync = true;
-
-   assert(fence->fence);
-   if (sync_accumulate("freedreno", &ctx->in_fence_fd, fence->fence->fence_fd)) {
+   if (sync_accumulate("freedreno", &ctx->in_fence_fd, fence->submit_fence.fence_fd)) {
       /* error */
    }
 }
 
 void
-fd_pipe_fence_server_signal(struct pipe_context *pctx,
-                            struct pipe_fence_handle *fence)
+fd_fence_server_signal(struct pipe_context *pctx,
+                       struct pipe_fence_handle *fence)
 {
    struct fd_context *ctx = fd_context(pctx);
 
@@ -254,45 +245,42 @@ fd_pipe_fence_server_signal(struct pipe_context *pctx,
 }
 
 int
-fd_pipe_fence_get_fd(struct pipe_screen *pscreen, struct pipe_fence_handle *fence)
+fd_fence_get_fd(struct pipe_screen *pscreen, struct pipe_fence_handle *fence)
 {
-   MESA_TRACE_FUNC();
-
    /* We don't expect deferred flush to be combined with fence-fd: */
    assert(!fence->last_fence);
 
-   assert(fence->use_fence_fd);
+   assert(fence->submit_fence.use_fence_fd);
 
    /* NOTE: in the deferred fence case, the pctx we want is the threaded-ctx
     * but if TC is not used, this will be null.  Which is fine, we won't call
     * threaded_context_flush() in that case
     */
-   fence_flush(&fence->ctx->tc->base, fence, OS_TIMEOUT_INFINITE);
-   assert(fence->fence);
-   return os_dupfd_cloexec(fence->fence->fence_fd);
+   fence_flush(&fence->ctx->tc->base, fence, PIPE_TIMEOUT_INFINITE);
+   return os_dupfd_cloexec(fence->submit_fence.fence_fd);
 }
 
 bool
-fd_pipe_fence_is_fd(struct pipe_fence_handle *fence)
+fd_fence_is_fd(struct pipe_fence_handle *fence)
 {
-   return fence->use_fence_fd;
+   return fence->submit_fence.use_fence_fd;
 }
 
 struct pipe_fence_handle *
-fd_pipe_fence_create(struct fd_batch *batch)
+fd_fence_create(struct fd_batch *batch)
 {
    return fence_create(batch->ctx, batch, -1, 0);
 }
 
 void
-fd_pipe_fence_set_batch(struct pipe_fence_handle *fence, struct fd_batch *batch)
+fd_fence_set_batch(struct pipe_fence_handle *fence, struct fd_batch *batch)
 {
    if (batch) {
       assert(!fence->batch);
-      fd_batch_reference(&fence->batch, batch);
+      fence->batch = batch;
       fd_batch_needs_flush(batch);
    } else {
-      fd_batch_reference(&fence->batch, NULL);
+      fence->batch = NULL;
 
       /* When the batch is dis-associated with the fence, we can signal TC
        * that the fence is flushed
@@ -304,19 +292,9 @@ fd_pipe_fence_set_batch(struct pipe_fence_handle *fence, struct fd_batch *batch)
    }
 }
 
-void
-fd_pipe_fence_set_submit_fence(struct pipe_fence_handle *fence,
-                               struct fd_fence *submit_fence)
-{
-   /* Take ownership of the drm fence after batch/submit is flushed: */
-   assert(!fence->fence);
-   fence->fence = submit_fence;
-   fd_pipe_fence_set_batch(fence, NULL);
-}
-
 struct pipe_fence_handle *
-fd_pipe_fence_create_unflushed(struct pipe_context *pctx,
-                               struct tc_unflushed_batch_token *tc_token)
+fd_fence_create_unflushed(struct pipe_context *pctx,
+                          struct tc_unflushed_batch_token *tc_token)
 {
    struct pipe_fence_handle *fence =
       fence_create(fd_context(pctx), NULL, -1, 0);

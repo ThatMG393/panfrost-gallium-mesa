@@ -21,9 +21,9 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#include <assert.h>
-#include <stdint.h>
 #include <stdio.h>
+#include <stdint.h>
+#include <assert.h>
 #include <string.h>
 
 #include "compiler/nir/nir.h"
@@ -45,17 +45,17 @@ extern int bifrost_debug;
  * Compute a disk cache key for the given uncompiled shader and shader key.
  */
 static void
-panfrost_disk_cache_compute_key(
-   struct disk_cache *cache,
-   const struct panfrost_uncompiled_shader *uncompiled,
-   const struct panfrost_shader_key *shader_key, cache_key cache_key)
+panfrost_disk_cache_compute_key(struct disk_cache *cache,
+                                const struct panfrost_uncompiled_shader *uncompiled,
+                                const struct panfrost_shader_key *shader_key,
+                                cache_key cache_key)
 {
-   uint8_t data[sizeof(uncompiled->nir_sha1) + sizeof(*shader_key)];
+        uint8_t data[sizeof(uncompiled->nir_sha1) + sizeof(*shader_key)];
 
-   memcpy(data, uncompiled->nir_sha1, sizeof(uncompiled->nir_sha1));
-   memcpy(data + sizeof(uncompiled->nir_sha1), shader_key, sizeof(*shader_key));
+        memcpy(data, uncompiled->nir_sha1, sizeof(uncompiled->nir_sha1));
+        memcpy(data + sizeof(uncompiled->nir_sha1), shader_key, sizeof(*shader_key));
 
-   disk_cache_compute_key(cache, data, sizeof(data), cache_key);
+        disk_cache_compute_key(cache, data, sizeof(data), cache_key);
 }
 
 /**
@@ -71,35 +71,33 @@ panfrost_disk_cache_store(struct disk_cache *cache,
                           const struct panfrost_shader_binary *binary)
 {
 #ifdef ENABLE_SHADER_CACHE
-   if (!cache)
-      return;
+        if (!cache)
+                return;
 
-   cache_key cache_key;
-   panfrost_disk_cache_compute_key(cache, uncompiled, key, cache_key);
+        cache_key cache_key;
+        panfrost_disk_cache_compute_key(cache, uncompiled, key, cache_key);
 
-   if (debug) {
-      char sha1[41];
-      _mesa_sha1_format(sha1, cache_key);
-      fprintf(stderr, "[mesa disk cache] storing %s\n", sha1);
-   }
+        if (debug) {
+                char sha1[41];
+                _mesa_sha1_format(sha1, cache_key);
+                fprintf(stderr, "[mesa disk cache] storing %s\n", sha1);
+        }
 
-   struct blob blob;
-   blob_init(&blob);
+        struct blob blob;
+        blob_init(&blob);
 
-   /* We write the following data to the cache blob:
-    *
-    * 1. Size of program binary
-    * 2. Program binary
-    * 3. Shader info
-    * 4. System values
-    */
-   blob_write_uint32(&blob, binary->binary.size);
-   blob_write_bytes(&blob, binary->binary.data, binary->binary.size);
-   blob_write_bytes(&blob, &binary->info, sizeof(binary->info));
-   blob_write_bytes(&blob, &binary->sysvals, sizeof(binary->sysvals));
+        /* We write the following data to the cache blob:
+         *
+         * 1. Size of program binary
+         * 2. Program binary
+         * 3. Shader info
+         */
+        blob_write_uint32(&blob, binary->binary.size);
+        blob_write_bytes(&blob, binary->binary.data, binary->binary.size);
+        blob_write_bytes(&blob, &binary->info, sizeof(binary->info));
 
-   disk_cache_put(cache, cache_key, blob.data, blob.size, NULL);
-   blob_finish(&blob);
+        disk_cache_put(cache, cache_key, blob.data, blob.size, NULL);
+        blob_finish(&blob);
 #endif
 }
 
@@ -113,44 +111,43 @@ panfrost_disk_cache_retrieve(struct disk_cache *cache,
                              struct panfrost_shader_binary *binary)
 {
 #ifdef ENABLE_SHADER_CACHE
-   if (!cache)
-      return false;
+        if (!cache)
+                return false;
 
-   cache_key cache_key;
-   panfrost_disk_cache_compute_key(cache, uncompiled, key, cache_key);
+        cache_key cache_key;
+        panfrost_disk_cache_compute_key(cache, uncompiled, key, cache_key);
 
-   if (debug) {
-      char sha1[41];
-      _mesa_sha1_format(sha1, cache_key);
-      fprintf(stderr, "[mesa disk cache] retrieving %s: ", sha1);
-   }
+        if (debug) {
+                char sha1[41];
+                _mesa_sha1_format(sha1, cache_key);
+                fprintf(stderr, "[mesa disk cache] retrieving %s: ", sha1);
+        }
 
-   size_t size;
-   void *buffer = disk_cache_get(cache, cache_key, &size);
+        size_t size;
+        void *buffer = disk_cache_get(cache, cache_key, &size);
 
-   if (debug)
-      fprintf(stderr, "%s\n", buffer ? "found" : "missing");
+        if (debug)
+                fprintf(stderr, "%s\n", buffer ? "found" : "missing");
 
-   if (!buffer)
-      return false;
+        if (!buffer)
+                return false;
 
-   struct blob_reader blob;
-   blob_reader_init(&blob, buffer, size);
+        struct blob_reader blob;
+        blob_reader_init(&blob, buffer, size);
 
-   util_dynarray_init(&binary->binary, NULL);
+        util_dynarray_init(&binary->binary, NULL);
 
-   uint32_t binary_size = blob_read_uint32(&blob);
-   void *ptr = util_dynarray_resize_bytes(&binary->binary, binary_size, 1);
+        uint32_t binary_size = blob_read_uint32(&blob);
+        void *ptr = util_dynarray_resize_bytes(&binary->binary, binary_size, 1);
 
-   blob_copy_bytes(&blob, ptr, binary_size);
-   blob_copy_bytes(&blob, &binary->info, sizeof(binary->info));
-   blob_copy_bytes(&blob, &binary->sysvals, sizeof(binary->sysvals));
+        blob_copy_bytes(&blob, ptr, binary_size);
+        blob_copy_bytes(&blob, &binary->info, sizeof(binary->info));
 
-   free(buffer);
+        free(buffer);
 
-   return true;
+        return true;
 #else
-   return false;
+        return false;
 #endif
 }
 
@@ -161,18 +158,18 @@ void
 panfrost_disk_cache_init(struct panfrost_screen *screen)
 {
 #ifdef ENABLE_SHADER_CACHE
-   const char *renderer = screen->base.get_name(&screen->base);
+        const char *renderer = screen->base.get_name(&screen->base);
 
-   const uint8_t *id_sha1 = "1";
-   assert(id_sha1);
+        const uint8_t *id_sha1 = "1";
+        assert(id_sha1);
 
-   char timestamp[41];
-   _mesa_sha1_format(timestamp, id_sha1);
+        char timestamp[41];
+        _mesa_sha1_format(timestamp, id_sha1);
 
-   /* Consider any flags affecting the compile when caching */
-   uint64_t driver_flags = screen->dev.debug;
-   driver_flags |= ((uint64_t)(midgard_debug | bifrost_debug) << 32);
+        /* Consider any flags affecting the compile when caching */
+        uint64_t driver_flags = screen->dev.debug;
+        driver_flags |= ((uint64_t) (midgard_debug | bifrost_debug) << 32);
 
-   screen->disk_cache = disk_cache_create(renderer, timestamp, driver_flags);
+        screen->disk_cache = disk_cache_create(renderer, timestamp, driver_flags);
 #endif
 }

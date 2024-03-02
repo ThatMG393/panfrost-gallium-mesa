@@ -56,10 +56,9 @@ namespace nv50_ir {
 
 class NVC0LegalizeSSA : public Pass
 {
-protected:
-   using Pass::visit;
-   bool visit(BasicBlock *) override;
-   bool visit(Function *) override;
+private:
+   virtual bool visit(BasicBlock *);
+   virtual bool visit(Function *);
 
    // we want to insert calls to the builtin library only after optimization
    void handleDIV(Instruction *); // integer division, modulus
@@ -70,6 +69,7 @@ protected:
    void handleShift(Instruction *);
    void handleBREV(Instruction *);
 
+protected:
    void handleFTZ(Instruction *);
 
    BuildUtil bld;
@@ -80,12 +80,10 @@ class NVC0LegalizePostRA : public Pass
 public:
    NVC0LegalizePostRA(const Program *);
 
-protected:
-   using Pass::visit;
-   bool visit(Function *) override;
-   bool visit(BasicBlock *) override;
-
 private:
+   virtual bool visit(Function *);
+   virtual bool visit(BasicBlock *);
+
    void replaceCvt(Instruction *);
    void replaceZero(Instruction *);
    bool tryReplaceContWithBra(BasicBlock *);
@@ -129,11 +127,13 @@ public:
 
 protected:
    bool handleRDSV(Instruction *);
+   bool handleWRSV(Instruction *);
    bool handleEXPORT(Instruction *);
    bool handleOUT(Instruction *);
    bool handleDIV(Instruction *);
    bool handleMOD(Instruction *);
    bool handleSQRT(Instruction *);
+   bool handlePOW(Instruction *);
    bool handleTEX(TexInstruction *);
    bool handleTXD(TexInstruction *);
    bool handleTXQ(TexInstruction *);
@@ -155,11 +155,12 @@ protected:
    void checkPredicate(Instruction *);
    Value *loadMsAdjInfo32(TexInstruction::Target targ, uint32_t index, int slot, Value *ind, bool bindless);
 
-   bool visit(Instruction *) override;
-   bool visit(Function *) override;
-   bool visit(BasicBlock *) override;
+   virtual bool visit(Instruction *);
 
 private:
+   virtual bool visit(Function *);
+   virtual bool visit(BasicBlock *);
+
    void readTessCoord(LValue *dst, int c);
 
    Value *loadResInfo32(Value *ptr, uint32_t off, uint16_t base);

@@ -39,7 +39,7 @@ The exact supported features vary per driver:
      - ``gpu.renderstages.msm``
    * - Intel
      - ``gpu.counters.i915``
-     - ``gpu.renderstages.intel``
+     - ``gpu.renderstages.i915``
    * - Panfrost
      - ``gpu.counters.panfrost``
      -
@@ -61,7 +61,7 @@ To capture a trace with Perfetto you need to take the following steps:
    `convenience script <https://perfetto.dev/docs/quickstart/linux-tracing#capturing-a-trace>`__
    to start the tracing service:
 
-   .. code-block:: sh
+   .. code-block:: console
 
       cd subprojects/perfetto
       CONFIG=<path/to/gpu.cfg> OUT=out/linux_clang_release ./tools/tmux -n
@@ -83,12 +83,12 @@ To capture a trace with Perfetto you need to take the following steps:
 To be a bit more explicit, here is a listing of commands reproducing
 the steps above :
 
-.. code-block:: sh
+.. code-block:: console
 
    # Configure Mesa with perfetto
    mesa $ meson . build -Dperfetto=true -Dvulkan-drivers=intel,broadcom -Dgallium-drivers=
    # Build mesa
-   mesa $ meson compile -C build
+   mesa $ ninja -C build
 
    # Within the Mesa repo, build perfetto
    mesa $ cd subprojects/perfetto
@@ -124,7 +124,7 @@ actually collecting traces.
 This can be achieved by setting the :envvar:`MESA_GPU_TRACES`
 environment variable before starting a Vulkan application :
 
-.. code-block:: sh
+.. code-block:: console
 
    MESA_GPU_TRACES=perfetto ./build/my_vulkan_app
 
@@ -139,7 +139,7 @@ Freedreno / Turnip
 The Freedreno PPS driver needs root access to read system-wide
 performance counters, so you can simply run it with sudo:
 
-.. code-block:: sh
+.. code-block:: console
 
    sudo ./build/src/tool/pps/pps-producer
 
@@ -147,16 +147,16 @@ Intel
 ^^^^^
 
 The Intel PPS driver needs root access to read system-wide
-`RenderBasic <https://www.intel.com/content/www/us/en/docs/vtune-profiler/user-guide/2023-0/gpu-metrics-reference.html>`__
+`RenderBasic <https://www.intel.com/content/www/us/en/develop/documentation/vtune-help/top/reference/gpu-metrics-reference.html>`__
 performance counters, so you can simply run it with sudo:
 
-.. code-block:: sh
+.. code-block:: console
 
    sudo ./build/src/tool/pps/pps-producer
 
 Another option to enable access wide data without root permissions would be running the following:
 
-.. code-block:: sh
+.. code-block:: console
 
    sudo sysctl dev.i915.perf_stream_paranoid=0
 
@@ -165,7 +165,7 @@ Alternatively using the ``CAP_PERFMON`` permission on the binary should work too
 A particular metric set can also be selected to capture a different
 set of HW counters :
 
-.. code-block:: sh
+.. code-block:: console
 
    INTEL_PERFETTO_METRIC_SET=RasterizerAndPixelBackend ./build/src/tool/pps/pps-producer
 
@@ -173,7 +173,7 @@ Vulkan applications can also be instrumented to be Perfetto producers.
 To enable this for given application, set the environment variable as
 follow :
 
-.. code-block:: sh
+.. code-block:: console
 
    PERFETTO_TRACE=1 my_vulkan_app
 
@@ -188,7 +188,7 @@ To run the producer, follow these two simple steps:
 
 1. Enable Panfrost unstable ioctls via kernel parameter:
 
-   .. code-block:: sh
+   .. code-block:: console
 
       modprobe panfrost unstable_ioctls=1
 
@@ -196,7 +196,7 @@ To run the producer, follow these two simple steps:
 
 2. Run the producer:
 
-   .. code-block:: sh
+   .. code-block:: console
 
       ./build/pps-producer
 
@@ -210,7 +210,7 @@ If the convenience script ``tools/tmux`` keeps copying artifacts to your
 ``SSH_TARGET`` without starting the tmux session, make sure you have ``tmux``
 installed in your system.
 
-.. code-block:: sh
+.. code-block:: console
 
    apt install tmux
 

@@ -18,15 +18,13 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-files_shared_glapi = files(
+files_mapi_glapi = files(
   '../entry.c',
-  '../u_current.c',
-  '../u_current.h',
-  'glapi.c',
-  'stub.c',
-  'stub.h',
-  'table.c',
-  'table.h',
+  '../mapi_glapi.c',
+  '../stub.c',
+  '../stub.h',
+  '../table.c',
+  '../table.h',
 )
 
 shared_glapi_mapi_tmp_h = custom_target(
@@ -45,7 +43,7 @@ endif
 
 libglapi = shared_library(
   'glapi',
-  [files_shared_glapi, shared_glapi_mapi_tmp_h],
+  [files_mapi_glapi, files_mapi_util, shared_glapi_mapi_tmp_h],
   c_args : [
     _glapi_c_args,
     c_msvc_compat_args,
@@ -59,7 +57,7 @@ libglapi = shared_library(
   dependencies : [dep_thread, dep_selinux, idep_mesautil],
   soversion : host_machine.system() == 'windows' ? '' : '0',
   version : '0.0.0',
-  name_prefix : host_machine.system() == 'windows' ? 'lib' : [],  # always use lib, but avoid warnings on !windows
+  name_prefix : 'lib',
   install : true,
 )
 libglapi_build_dir = meson.current_build_dir()
@@ -76,7 +74,7 @@ if with_any_opengl and with_tests
       dependencies : [dep_thread, idep_gtest, idep_mesautilc11],
     ),
     suite : ['mapi'],
-    protocol : 'gtest',
+    protocol : gtest_test_protocol,
   )
   if with_symbols_check
     test(

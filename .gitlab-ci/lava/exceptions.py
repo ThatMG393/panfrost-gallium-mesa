@@ -12,10 +12,9 @@ class MesaCITimeoutError(MesaCIException):
 
 
 class MesaCIRetryError(MesaCIException):
-    def __init__(self, *args, retry_count: int, last_job: None) -> None:
+    def __init__(self, *args, retry_count: int) -> None:
         super().__init__(*args)
         self.retry_count = retry_count
-        self.last_job = last_job
 
 
 class MesaCIParseException(MesaCIException):

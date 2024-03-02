@@ -152,16 +152,6 @@ IfInstr::is_equal_to(const IfInstr& rhs) const
    return m_predicate->equal_to(*rhs.m_predicate);
 }
 
-uint32_t IfInstr::slots() const
-{
-   /* If we hava a literal value in the predicate evaluation, then
-    * we need at most two alu slots, otherwise it's just one. */
-   for (auto s : m_predicate->sources())
-      if (s->as_literal())
-         return 2;
-   return 1;
-};
-
 void
 IfInstr::accept(ConstInstrVisitor& visitor) const
 {
@@ -212,7 +202,7 @@ IfInstr::set_predicate(AluInstr *new_predicate)
 }
 
 Instr::Pointer
-IfInstr::from_string(std::istream& is, ValueFactory& value_factory, bool is_cayman)
+IfInstr::from_string(std::istream& is, ValueFactory& value_factory)
 {
    std::string pred_start;
    is >> pred_start;
@@ -236,7 +226,7 @@ IfInstr::from_string(std::istream& is, ValueFactory& value_factory, bool is_caym
    if (instr_type != "ALU")
       return nullptr;
 
-   auto pred = AluInstr::from_string(bufstr, value_factory, nullptr, is_cayman);
+   auto pred = AluInstr::from_string(bufstr, value_factory, nullptr);
    return new IfInstr(static_cast<AluInstr *>(pred));
 }
 

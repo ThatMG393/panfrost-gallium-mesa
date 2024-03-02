@@ -23,13 +23,13 @@
 #ifndef _NINE_GUID_H_
 #define _NINE_GUID_H_
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 
 #include "d3d9types.h"
 
 extern const GUID IID_ID3D9Adapter;
 
-bool
+boolean
 GUID_equal( const GUID *a,
             const GUID *b );
 

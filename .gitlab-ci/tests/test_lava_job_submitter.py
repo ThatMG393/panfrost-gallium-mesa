@@ -5,14 +5,10 @@
 #
 # SPDX-License-Identifier: MIT
 
-import os
 import xmlrpc.client
 from contextlib import nullcontext as does_not_raise
 from datetime import datetime
-from itertools import islice, repeat
-from pathlib import Path
-from typing import Generator
-from unittest.mock import MagicMock, patch
+from itertools import chain, repeat
 
 import pytest
 from lava.exceptions import MesaCIException, MesaCIRetryError
@@ -20,8 +16,6 @@ from lava.lava_job_submitter import (
     DEVICE_HANGING_TIMEOUT_SEC,
     NUMBER_OF_RETRIES_TIMEOUT_DETECTION,
     LAVAJob,
-    LAVAJobSubmitter,
-    bootstrap_log_follower,
     follow_job_execution,
     retriable_follow_job,
 )
@@ -53,39 +47,12 @@ def mock_proxy_waiting_time(mock_proxy):
     return update_mock_proxy
 
 
-@pytest.fixture(params=[{"CI": "true"}, {"CI": "false"}], ids=["Under CI", "Local run"])
-def ci_environment(request):
-    with patch.dict(os.environ, request.param):
-        yield
-
-
-@pytest.fixture
-def lava_job_submitter(
-    ci_environment,
-    tmp_path,
-    mock_proxy,
-):
-    os.chdir(tmp_path)
-    tmp_file = Path(tmp_path) / "log.json"
-
-    with patch("lava.lava_job_submitter.setup_lava_proxy") as mock_setup_lava_proxy:
-        mock_setup_lava_proxy.return_value = mock_proxy()
-        yield LAVAJobSubmitter(
-            boot_method="test_boot",
-            ci_project_dir="test_dir",
-            device_type="test_device",
-            job_timeout_min=1,
-            structured_log_file=tmp_file,
-        )
-
-
 @pytest.mark.parametrize("exception", [RuntimeError, SystemError, KeyError])
 def test_submit_and_follow_respects_exceptions(mock_sleep, mock_proxy, exception):
     with pytest.raises(MesaCIException):
         proxy = mock_proxy(side_effect=exception)
         job = LAVAJob(proxy, '')
-        log_follower = bootstrap_log_follower()
-        follow_job_execution(job, log_follower)
+        follow_job_execution(job)
 
 
 NETWORK_EXCEPTION = xmlrpc.client.ProtocolError("", 0, "test", {})
@@ -212,7 +179,7 @@ PROXY_SCENARIOS = {
         "fail",
         {},
     ),
-    "XMLRPC Fault": ([XMLRPC_FAULT], pytest.raises(MesaCIRetryError), False, {}),
+    "XMLRPC Fault": ([XMLRPC_FAULT], pytest.raises(SystemExit, match="1"), False, {}),
 }
 
 
@@ -330,64 +297,50 @@ def test_parse_job_result_from_log(message, expectation, mock_proxy):
 @pytest.mark.slow(
     reason="Slow and sketchy test. Needs a LAVA log raw file at /tmp/log.yaml"
 )
-@pytest.mark.skipif(
-    not Path("/tmp/log.yaml").is_file(), reason="Missing /tmp/log.yaml file."
-)
-def test_full_yaml_log(mock_proxy, frozen_time, lava_job_submitter):
+def test_full_yaml_log(mock_proxy, frozen_time):
+    import itertools
     import random
+    from datetime import datetime
 
-    from lavacli.utils import flow_yaml as lava_yaml
+    import yaml
 
     def time_travel_from_log_chunk(data_chunk):
         if not data_chunk:
             return
 
-        first_log = lava_yaml.load(data_chunk[0])[0]
-        first_log_time = first_log["dt"]
+        first_log_time = data_chunk[0]["dt"]
         frozen_time.move_to(first_log_time)
         yield
 
-        last_log = lava_yaml.load(data_chunk[-1])[0]
-        last_log_time = last_log["dt"]
+        last_log_time = data_chunk[-1]["dt"]
         frozen_time.move_to(last_log_time)
-        yield
+        return
 
     def time_travel_to_test_time():
         # Suppose that the first message timestamp of the entire LAVA job log is
         # the same of from the job submitter execution
         with open("/tmp/log.yaml", "r") as f:
             first_log = f.readline()
-            first_log_time = lava_yaml.load(first_log)[0]["dt"]
+            first_log_time = yaml.safe_load(first_log)[0]["dt"]
             frozen_time.move_to(first_log_time)
 
-    def load_lines() -> Generator[tuple[bool, str], None, None]:
+    def load_lines() -> list:
         with open("/tmp/log.yaml", "r") as f:
-            # data = yaml.safe_load(f)
-            log_lines = f.readlines()
-            serial_message: str = ""
-            chunk_start_line = 0
-            chunk_end_line = 0
-            chunk_max_size = 100
+            data = yaml.safe_load(f)
+            chain = itertools.chain(data)
             try:
                 while True:
-                    chunk_end_line = chunk_start_line + random.randint(1, chunk_max_size)
-                    # split the log in chunks of random size
-                    log_chunk = list(islice(log_lines, chunk_start_line, chunk_end_line))
-                    chunk_start_line = chunk_end_line + 1
-                    serial_message = "".join(log_chunk)
-                    # time_traveller_gen will make the time trave according to the timestamp from
-                    # the message
-                    time_traveller_gen = time_travel_from_log_chunk(log_chunk)
+                    data_chunk = [next(chain) for _ in range(random.randint(0, 50))]
                     # Suppose that the first message timestamp is the same of
                     # log fetch RPC call
-                    next(time_traveller_gen)
-                    yield False, "[]"
+                    time_travel_from_log_chunk(data_chunk)
+                    yield False, []
                     # Travel to the same datetime of the last fetched log line
                     # in the chunk
-                    next(time_traveller_gen)
-                    yield False, serial_message
+                    time_travel_from_log_chunk(data_chunk)
+                    yield False, data_chunk
             except StopIteration:
-                yield True, serial_message
+                yield True, data_chunk
                 return
 
     proxy = mock_proxy()
@@ -396,69 +349,6 @@ def test_full_yaml_log(mock_proxy, frozen_time, lava_job_submitter):
         proxy.scheduler.jobs.logs.side_effect = load_lines()
 
     proxy.scheduler.jobs.submit = reset_logs
-    try:
+    with pytest.raises(MesaCIRetryError):
         time_travel_to_test_time()
-        start_time = datetime.now()
         retriable_follow_job(proxy, "")
-    finally:
-        try:
-            # If the job fails, maybe there will be no structured log
-            print(lava_job_submitter.structured_log_file.read_text())
-        finally:
-            end_time = datetime.now()
-            print("---- Reproduction log stats ----")
-            print(f"Start time: {start_time}")
-            print(f"End time: {end_time}")
-            print(f"Duration: {end_time - start_time}")
-
-
-@pytest.mark.parametrize(
-    "validate_only,finished_job_status,expected_combined_status,expected_exit_code",
-    [
-        (True, "pass", None, None),
-        (False, "pass", "pass", 0),
-        (False, "fail", "fail", 1),
-    ],
-    ids=[
-        "validate_only_no_job_submission",
-        "successful_job_submission",
-        "failed_job_submission",
-    ],
-)
-def test_job_combined_status(
-    lava_job_submitter,
-    validate_only,
-    finished_job_status,
-    expected_combined_status,
-    expected_exit_code,
-):
-    lava_job_submitter.validate_only = validate_only
-
-    with patch(
-        "lava.lava_job_submitter.retriable_follow_job"
-    ) as mock_retriable_follow_job, patch(
-        "lava.lava_job_submitter.LAVAJobSubmitter._LAVAJobSubmitter__prepare_submission"
-    ) as mock_prepare_submission, patch(
-        "sys.exit"
-    ):
-        from lava.lava_job_submitter import STRUCTURAL_LOG
-
-        mock_retriable_follow_job.return_value = MagicMock(status=finished_job_status)
-
-        mock_job_definition = MagicMock(spec=str)
-        mock_prepare_submission.return_value = mock_job_definition
-        original_status: str = STRUCTURAL_LOG.get("job_combined_status")
-
-        if validate_only:
-            lava_job_submitter.submit()
-            mock_retriable_follow_job.assert_not_called()
-            assert STRUCTURAL_LOG.get("job_combined_status") == original_status
-            return
-
-        try:
-            lava_job_submitter.submit()
-
-        except SystemExit as e:
-            assert e.code == expected_exit_code
-
-        assert STRUCTURAL_LOG["job_combined_status"] == expected_combined_status

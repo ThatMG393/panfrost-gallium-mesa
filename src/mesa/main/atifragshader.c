@@ -216,14 +216,14 @@ _mesa_GenFragmentShadersATI(GLuint range)
       return 0;
    }
 
-   _mesa_HashLockMutex(&ctx->Shared->ATIShaders);
+   _mesa_HashLockMutex(ctx->Shared->ATIShaders);
 
-   first = _mesa_HashFindFreeKeyBlock(&ctx->Shared->ATIShaders, range);
+   first = _mesa_HashFindFreeKeyBlock(ctx->Shared->ATIShaders, range);
    for (i = 0; i < range; i++) {
-      _mesa_HashInsertLocked(&ctx->Shared->ATIShaders, first + i, &DummyShader);
+      _mesa_HashInsertLocked(ctx->Shared->ATIShaders, first + i, &DummyShader, true);
    }
 
-   _mesa_HashUnlockMutex(&ctx->Shared->ATIShaders);
+   _mesa_HashUnlockMutex(ctx->Shared->ATIShaders);
 
    return first;
 }
@@ -250,7 +250,7 @@ _mesa_BindFragmentShaderATI(GLuint id)
    if (curProg->Id != 0) {
       curProg->RefCount--;
       if (curProg->RefCount <= 0) {
-	 _mesa_HashRemove(&ctx->Shared->ATIShaders, id);
+	 _mesa_HashRemove(ctx->Shared->ATIShaders, id);
       }
    }
 
@@ -259,8 +259,10 @@ _mesa_BindFragmentShaderATI(GLuint id)
       newProg = ctx->Shared->DefaultFragmentShader;
    }
    else {
+      bool isGenName;
       newProg = (struct ati_fragment_shader *)
-         _mesa_HashLookup(&ctx->Shared->ATIShaders, id);
+         _mesa_HashLookup(ctx->Shared->ATIShaders, id);
+      isGenName = newProg != NULL;
       if (!newProg || newProg == &DummyShader) {
 	 /* allocate a new program now */
 	 newProg = _mesa_new_ati_fragment_shader(ctx, id);
@@ -268,7 +270,7 @@ _mesa_BindFragmentShaderATI(GLuint id)
 	    _mesa_error(ctx, GL_OUT_OF_MEMORY, "glBindFragmentShaderATI");
 	    return;
 	 }
-	 _mesa_HashInsert(&ctx->Shared->ATIShaders, id, newProg);
+	 _mesa_HashInsert(ctx->Shared->ATIShaders, id, newProg, isGenName);
       }
 
    }
@@ -293,9 +295,9 @@ _mesa_DeleteFragmentShaderATI(GLuint id)
 
    if (id != 0) {
       struct ati_fragment_shader *prog = (struct ati_fragment_shader *)
-	 _mesa_HashLookup(&ctx->Shared->ATIShaders, id);
+	 _mesa_HashLookup(ctx->Shared->ATIShaders, id);
       if (prog == &DummyShader) {
-	 _mesa_HashRemove(&ctx->Shared->ATIShaders, id);
+	 _mesa_HashRemove(ctx->Shared->ATIShaders, id);
       }
       else if (prog) {
 	 if (ctx->ATIFragmentShader.Current &&
@@ -306,7 +308,7 @@ _mesa_DeleteFragmentShaderATI(GLuint id)
       }
 
       /* The ID is immediately available for re-use now */
-      _mesa_HashRemove(&ctx->Shared->ATIShaders, id);
+      _mesa_HashRemove(ctx->Shared->ATIShaders, id);
       if (prog) {
 	 prog->RefCount--;
 	 if (prog->RefCount <= 0) {
@@ -430,29 +432,6 @@ _mesa_EndFragmentShaderATI(void)
                            NULL);
    /* Don't use _mesa_reference_program(), just take ownership */
    ctx->ATIFragmentShader.Current->Program = prog;
-
-   prog->SamplersUsed = 0;
-   prog->Parameters = _mesa_new_parameter_list();
-
-   /* fill in SamplersUsed, TexturesUsed */
-   for (unsigned pass = 0; pass < curProg->NumPasses; pass++) {
-      for (unsigned r = 0; r < MAX_NUM_FRAGMENT_REGISTERS_ATI; r++) {
-         struct atifs_setupinst *texinst = &curProg->SetupInst[pass][r];
-
-         if (texinst->Opcode == ATI_FRAGMENT_SHADER_SAMPLE_OP) {
-            /* by default there is 1:1 mapping between samplers and textures */
-            prog->SamplersUsed |= (1 << r);
-            /* the target is unknown here, it will be fixed in the draw call */
-            prog->TexturesUsed[r] = TEXTURE_2D_BIT;
-         }
-      }
-   }
-
-   /* we always have the ATI_fs constants */
-   for (unsigned i = 0; i < MAX_NUM_FRAGMENT_CONSTANTS_ATI; i++) {
-      _mesa_add_parameter(prog->Parameters, PROGRAM_UNIFORM,
-                          NULL, 4, GL_FLOAT, NULL, NULL, true);
-   }
 
    if (!st_program_string_notify(ctx, GL_FRAGMENT_SHADER_ATI,
                                  curProg->Program)) {
@@ -848,8 +827,7 @@ _mesa_SetFragmentShaderConstantATI(GLuint dst, const GLfloat * value)
       curProg->LocalConstDef |= 1 << dstindex;
    }
    else {
-      FLUSH_VERTICES(ctx, 0, 0);
-      ctx->NewDriverState |= ST_NEW_FS_CONSTANTS;
+      FLUSH_VERTICES(ctx, _NEW_PROGRAM, 0);
       COPY_4V(ctx->ATIFragmentShader.GlobalConstants[dstindex], value);
    }
 }

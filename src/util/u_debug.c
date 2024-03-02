@@ -67,11 +67,10 @@ _util_debug_message(struct util_debug_callback *cb,
                     enum util_debug_type type,
                     const char *fmt, ...)
 {
-   if (!cb || !cb->debug_message)
-      return;
    va_list args;
    va_start(args, fmt);
-   cb->debug_message(cb->data, id, type, fmt, args);
+   if (cb && cb->debug_message)
+      cb->debug_message(cb->data, id, type, fmt, args);
    va_end(args);
 }
 
@@ -86,7 +85,6 @@ debug_disable_win32_error_dialogs(void)
     */
    UINT uMode = SetErrorMode(0);
    SetErrorMode(uMode);
-#ifndef _GAMING_XBOX
    if (uMode & SEM_FAILCRITICALERRORS) {
       /* Disable assertion failure message box.
        * http://msdn.microsoft.com/en-us/library/sas1dkb2.aspx
@@ -99,13 +97,13 @@ debug_disable_win32_error_dialogs(void)
       _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
    }
-#endif /* _GAMING_XBOX */
 }
 #endif /* _WIN32 */
 
-bool
-debug_parse_bool_option(const char *str, bool dfault)
+static bool
+debug_get_bool_option_direct(const char *name, bool dfault)
 {
+   const char *str = os_get_option(name);
    bool result;
 
    if (str == NULL)
@@ -142,8 +140,7 @@ debug_get_option_should_print(void)
    static bool value = false;
 
    if (unlikely(!p_atomic_read_relaxed(&initialized))) {
-      bool parsed_value = debug_parse_bool_option(os_get_option("GALLIUM_PRINT_OPTIONS"), false);
-      p_atomic_set(&value, parsed_value);
+      value = debug_get_bool_option_direct("GALLIUM_PRINT_OPTIONS", false);
       p_atomic_set(&initialized, true);
    }
 
@@ -169,23 +166,6 @@ debug_get_option(const char *name, const char *dfault)
 }
 
 
-const char *
-debug_get_option_cached(const char *name, const char *dfault)
-{
-   const char *result;
-
-   result = os_get_option_cached(name);
-   if (!result)
-      result = dfault;
-
-   if (debug_get_option_should_print())
-      debug_printf("%s: %s = %s\n", __FUNCTION__, name,
-                   result ? result : "(null)");
-
-   return result;
-}
-
-
 /**
  * Reads an environment variable and interprets its value as a boolean.
  * Recognizes 0/n/no/f/false case insensitive as false.
@@ -195,7 +175,7 @@ debug_get_option_cached(const char *name, const char *dfault)
 bool
 debug_get_bool_option(const char *name, bool dfault)
 {
-   bool result = debug_parse_bool_option(os_get_option(name), dfault);
+   bool result = debug_get_bool_option_direct(name, dfault);
    if (debug_get_option_should_print())
       debug_printf("%s: %s = %s\n", __func__, name,
                    result ? "TRUE" : "FALSE");
@@ -204,31 +184,27 @@ debug_get_bool_option(const char *name, bool dfault)
 }
 
 
-int64_t
-debug_parse_num_option(const char *str, int64_t dfault)
+long
+debug_get_num_option(const char *name, long dfault)
 {
-   int64_t result;
+   long result;
+   const char *str;
+
+   str = os_get_option(name);
    if (!str) {
       result = dfault;
    } else {
       char *endptr;
 
-      result = strtoll(str, &endptr, 0);
+      result = strtol(str, &endptr, 0);
       if (str == endptr) {
          /* Restore the default value when no digits were found. */
          result = dfault;
       }
    }
-   return result;
-}
-
-int64_t
-debug_get_num_option(const char *name, int64_t dfault)
-{
-   int64_t result = debug_parse_num_option(os_get_option(name), dfault);
 
    if (debug_get_option_should_print())
-      debug_printf("%s: %s = %"PRId64"\n", __func__, name, result);
+      debug_printf("%s: %s = %li\n", __func__, name, result);
 
    return result;
 }
@@ -304,15 +280,16 @@ str_has_option(const char *str, const char *name)
 
 
 uint64_t
-debug_parse_flags_option(const char *name,
-                         const char *str,
-                         const struct debug_named_value *flags,
-                         uint64_t dfault)
+debug_get_flags_option(const char *name,
+                       const struct debug_named_value *flags,
+                       uint64_t dfault)
 {
    uint64_t result;
+   const char *str;
    const struct debug_named_value *orig = flags;
    unsigned namealign = 0;
 
+   str = os_get_option(name);
    if (!str)
       result = dfault;
    else if (!strcmp(str, "help")) {
@@ -328,22 +305,11 @@ debug_parse_flags_option(const char *name,
    else {
       result = 0;
       while (flags->name) {
-         if (str_has_option(str, flags->name))
-            result |= flags->value;
-         ++flags;
+	 if (str_has_option(str, flags->name))
+	    result |= flags->value;
+	 ++flags;
       }
    }
-
-   return result;
-}
-
-uint64_t
-debug_get_flags_option(const char *name,
-                       const struct debug_named_value *flags,
-                       uint64_t dfault)
-{
-   const char *str = os_get_option(name);
-   uint64_t result = debug_parse_flags_option(name, str, flags, dfault);
 
    if (debug_get_option_should_print()) {
       if (str) {
@@ -360,23 +326,23 @@ debug_get_flags_option(const char *name,
 
 const char *
 debug_dump_enum(const struct debug_named_value *names,
-                uint64_t value)
+                unsigned long value)
 {
    static char rest[64];
 
    while (names->name) {
       if (names->value == value)
-         return names->name;
+	 return names->name;
       ++names;
    }
 
-   snprintf(rest, sizeof(rest), "0x%08"PRIx64, value);
+   snprintf(rest, sizeof(rest), "0x%08lx", value);
    return rest;
 }
 
 
 const char *
-debug_dump_flags(const struct debug_named_value *names, uint64_t value)
+debug_dump_flags(const struct debug_named_value *names, unsigned long value)
 {
    static char output[4096];
    static char rest[256];
@@ -386,24 +352,24 @@ debug_dump_flags(const struct debug_named_value *names, uint64_t value)
 
    while (names->name) {
       if ((names->value & value) == names->value) {
-         if (!first)
-            strncat(output, "|", sizeof(output) - strlen(output) - 1);
-         else
-            first = 0;
-         strncat(output, names->name, sizeof(output) - strlen(output) - 1);
-         output[sizeof(output) - 1] = '\0';
-         value &= ~names->value;
+	 if (!first)
+	    strncat(output, "|", sizeof(output) - strlen(output) - 1);
+	 else
+	    first = 0;
+	 strncat(output, names->name, sizeof(output) - strlen(output) - 1);
+	 output[sizeof(output) - 1] = '\0';
+	 value &= ~names->value;
       }
       ++names;
    }
 
    if (value) {
       if (!first)
-         strncat(output, "|", sizeof(output) - strlen(output) - 1);
+	 strncat(output, "|", sizeof(output) - strlen(output) - 1);
       else
-         first = 0;
+	 first = 0;
 
-      snprintf(rest, sizeof(rest), "0x%08"PRIx64, value);
+      snprintf(rest, sizeof(rest), "0x%08lx", value);
       strncat(output, rest, sizeof(output) - strlen(output) - 1);
       output[sizeof(output) - 1] = '\0';
    }
@@ -423,7 +389,7 @@ parse_debug_string(const char *debug,
 
    if (debug != NULL) {
       for (; control->string != NULL; control++) {
-         if (!strncmp(debug, "all", strlen("all"))) {
+         if (!strcmp(debug, "all")) {
             flag |= control->flag;
 
          } else {

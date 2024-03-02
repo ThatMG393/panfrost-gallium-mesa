@@ -33,6 +33,5 @@ metro_exodus_GetSemaphoreCounterValue(VkDevice _device, VkSemaphore _semaphore, 
       return VK_SUCCESS;
    }
 
-   RADV_FROM_HANDLE(radv_device, device, _device);
-   return device->layer_dispatch.app.GetSemaphoreCounterValue(_device, _semaphore, pValue);
+   return vk_common_GetSemaphoreCounterValue(_device, _semaphore, pValue);
 }

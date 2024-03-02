@@ -303,10 +303,6 @@ opt_cmod_propagation_local(const intel_device_info *devinfo, bblock_t *block)
                 scan_inst->exec_size != inst->exec_size)
                break;
 
-            /* If the write mask is different we can't propagate. */
-            if (scan_inst->force_writemask_all != inst->force_writemask_all)
-               break;
-
             /* CMP's result is the same regardless of dest type. */
             if (inst->conditional_mod == BRW_CONDITIONAL_NZ &&
                 scan_inst->opcode == BRW_OPCODE_CMP &&
@@ -451,10 +447,18 @@ opt_cmod_propagation_local(const intel_device_info *devinfo, bblock_t *block)
                      break;
                   }
                } else if (scan_inst->conditional_mod == inst->conditional_mod) {
-                  /* sel.cond will not write the flags. */
-                  assert(scan_inst->opcode != BRW_OPCODE_SEL);
-                  inst->remove(block, true);
-                  progress = true;
+                  /* On Gfx4 and Gfx5 sel.cond will dirty the flags, but the
+                   * flags value is not based on the result stored in the
+                   * destination.  On all other platforms sel.cond will not
+                   * write the flags, so execution will not get to this point.
+                   */
+                  if (scan_inst->opcode == BRW_OPCODE_SEL) {
+                     assert(devinfo->ver <= 5);
+                  } else {
+                     inst->remove(block, true);
+                     progress = true;
+                  }
+
                   break;
                } else if (!read_flag && scan_inst->can_do_cmod()) {
                   scan_inst->conditional_mod = inst->conditional_mod;
@@ -542,18 +546,18 @@ opt_cmod_propagation_local(const intel_device_info *devinfo, bblock_t *block)
 }
 
 bool
-brw_fs_opt_cmod_propagation(fs_visitor &s)
+fs_visitor::opt_cmod_propagation()
 {
    bool progress = false;
 
-   foreach_block_reverse(block, s.cfg) {
-      progress = opt_cmod_propagation_local(s.devinfo, block) || progress;
+   foreach_block_reverse(block, cfg) {
+      progress = opt_cmod_propagation_local(devinfo, block) || progress;
    }
 
    if (progress) {
-      s.cfg->adjust_block_ips();
+      cfg->adjust_block_ips();
 
-      s.invalidate_analysis(DEPENDENCY_INSTRUCTIONS);
+      invalidate_analysis(DEPENDENCY_INSTRUCTIONS);
    }
 
    return progress;

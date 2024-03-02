@@ -26,14 +26,14 @@
 #ifndef SVGA_SWTNL_H
 #define SVGA_SWTNL_H
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 
 struct svga_context;
 struct pipe_context;
 struct vbuf_render;
 
 
-bool svga_init_swtnl( struct svga_context *svga );
+boolean svga_init_swtnl( struct svga_context *svga );
 void svga_destroy_swtnl( struct svga_context *svga );
 
 

@@ -102,7 +102,6 @@ def generateHeader(functions):
     #include <EGL/eglext.h>
     #include <EGL/eglmesaext.h>
     #include <EGL/eglext_angle.h>
-    #include <GL/mesa_glinterop.h>
     #include "glvnd/libeglabi.h"
 
     """.lstrip("\n"))

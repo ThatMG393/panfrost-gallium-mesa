@@ -38,6 +38,7 @@
 
 #include <llvm/Config/llvm-config.h>
 
+#include <llvm/ADT/Triple.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/LLVMContext.h>
@@ -58,23 +59,12 @@
 #include <llvm/Support/TargetRegistry.h>
 #endif
 
-#if LLVM_VERSION_MAJOR >= 17
-#include <llvm/TargetParser/Triple.h>
-#else
-#include <llvm/ADT/Triple.h>
-#endif
-
 namespace clover {
    namespace llvm {
       namespace compat {
 
-#if LLVM_VERSION_MAJOR >= 18
-         const auto CGFT_ObjectFile = ::llvm::CodeGenFileType::ObjectFile;
-         const auto CGFT_AssemblyFile = ::llvm::CodeGenFileType::AssemblyFile;
-#else
          const auto CGFT_ObjectFile = ::llvm::CGFT_ObjectFile;
          const auto CGFT_AssemblyFile = ::llvm::CGFT_AssemblyFile;
-#endif
          typedef ::llvm::CodeGenFileType CodeGenFileType;
 
          const clang::InputKind ik_opencl = clang::Language::OpenCL;
@@ -104,16 +94,6 @@ namespace clover {
                                                c->getPreprocessorOpts(),
 #endif
                                                d);
-         }
-
-         static inline unsigned
-         get_abi_type_alignment(::llvm::DataLayout dl, ::llvm::Type *type)
-         {
-#if LLVM_VERSION_MAJOR >= 16
-            return dl.getABITypeAlign(type).value();
-#else
-            return dl.getABITypeAlignment(type);
-#endif
          }
 
          static inline bool

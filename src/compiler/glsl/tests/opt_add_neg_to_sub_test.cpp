@@ -51,15 +51,15 @@ add_neg_to_sub::SetUp()
    instructions.make_empty();
    body = new ir_factory(&instructions, mem_ctx);
 
-   var_a = new(mem_ctx) ir_variable(&glsl_type_builtin_float,
+   var_a = new(mem_ctx) ir_variable(glsl_type::float_type,
                                     "a",
                                     ir_var_temporary);
 
-   var_b = new(mem_ctx) ir_variable(&glsl_type_builtin_float,
+   var_b = new(mem_ctx) ir_variable(glsl_type::float_type,
                                     "b",
                                     ir_var_temporary);
 
-   var_c = new(mem_ctx) ir_variable(&glsl_type_builtin_float,
+   var_c = new(mem_ctx) ir_variable(glsl_type::float_type,
                                     "c",
                                     ir_var_temporary);
 }

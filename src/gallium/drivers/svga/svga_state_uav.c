@@ -29,6 +29,7 @@
 #include "util/u_inlines.h"
 #include "util/u_math.h"
 #include "util/u_memory.h"
+#include "tgsi/tgsi_parse.h"
 
 #include "svga_context.h"
 #include "svga_cmd.h"
@@ -61,7 +62,7 @@ svga_uav_cache_init(struct svga_context *svga)
  * Helper function to compare two image view descriptions.
  * Return TRUE if they are identical.
  */
-static bool
+static boolean
 image_view_desc_identical(struct pipe_image_view *img1,
                           struct pipe_image_view *img2)
 {
@@ -69,15 +70,15 @@ image_view_desc_identical(struct pipe_image_view *img1,
        (img1->format != img2->format) ||
        (img1->access != img2->access) ||
        (img1->shader_access != img2->shader_access))
-      return false;
+      return FALSE;
 
    if (img1->resource->target == PIPE_BUFFER) {
       if ((img1->u.buf.offset != img2->u.buf.offset) ||
           (img1->u.buf.size != img2->u.buf.size))
-         return false;
+         return FALSE;
    }
 
-   return true;
+   return TRUE;
 }
 
 
@@ -85,7 +86,7 @@ image_view_desc_identical(struct pipe_image_view *img1,
  * Helper function to compare two shader buffer descriptions.
  * Return TRUE if they are identical.
  */
-static bool
+static boolean
 shader_buffer_desc_identical(struct pipe_shader_buffer *buf1,
                              struct pipe_shader_buffer *buf2)
 {
@@ -97,7 +98,7 @@ shader_buffer_desc_identical(struct pipe_shader_buffer *buf1,
  * Helper function to compare two uav cache entry descriptions.
  * Return TRUE if they are identical.
  */
-static bool
+static boolean
 uav_desc_identical(enum svga_uav_type uav_type,
                    void *desc, void *uav_desc)
 {
@@ -105,7 +106,7 @@ uav_desc_identical(enum svga_uav_type uav_type,
       struct svga_image_view *img = (struct svga_image_view *)desc;
       struct svga_image_view *uav_img = (struct svga_image_view *)uav_desc;
       if (img->resource != uav_img->resource)
-         return false;
+         return FALSE;
 
       return image_view_desc_identical(&img->desc, &uav_img->desc);
    }
@@ -115,10 +116,10 @@ uav_desc_identical(enum svga_uav_type uav_type,
          (struct svga_shader_buffer *)uav_desc;
 
       if (buf->resource != uav_buf->resource)
-         return false;
+         return FALSE;
 
       if (buf->handle != uav_buf->handle)
-         return false;
+         return FALSE;
 
       return shader_buffer_desc_identical(&buf->desc, &uav_buf->desc);
    }
@@ -447,19 +448,6 @@ svga_create_uav_list(struct svga_context *svga,
                 &svga->curr.shader_buffers[shader][i];
             struct pipe_resource *res = cur_sbuf->resource;
             SVGA3dUAViewId uaViewId;
-	    enum pipe_error ret;
-
-            /* Use srv rawbuffer to access readonly shader buffer */
-	    if (svga_shader_buffer_can_use_srv(svga, shader, i, cur_sbuf)) {
-               ret = svga_shader_buffer_bind_srv(svga, shader, i, cur_sbuf);
-               if (ret != PIPE_OK)
-                  return ret;
-               continue;
-	    } else {
-               ret = svga_shader_buffer_unbind_srv(svga, shader, i, cur_sbuf);
-               if (ret != PIPE_OK)
-                  return ret;
-            }
 
             if (res) {
                /* Get the buffer handle that can be bound as uav. */

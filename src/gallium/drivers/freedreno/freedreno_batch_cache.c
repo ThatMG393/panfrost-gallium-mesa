@@ -196,8 +196,7 @@ fd_bc_flush(struct fd_context *ctx, bool deferred) assert_dt
       }
 
       for (unsigned i = 0; i < n; i++) {
-         if (batches[i] && (batches[i] != current_batch) &&
-               (batches[i]->ctx == current_batch->ctx)) {
+         if (batches[i] && (batches[i] != current_batch)) {
             fd_batch_add_dep(current_batch, batches[i]);
          }
       }
@@ -239,8 +238,7 @@ fd_bc_flush_writer(struct fd_context *ctx, struct fd_resource *rsc) assert_dt
    fd_screen_unlock(ctx->screen);
 
    if (write_batch) {
-      if (write_batch->ctx == ctx)
-         fd_batch_flush(write_batch);
+      fd_batch_flush(write_batch);
       fd_batch_reference(&write_batch, NULL);
    }
 }
@@ -265,8 +263,7 @@ fd_bc_flush_readers(struct fd_context *ctx, struct fd_resource *rsc) assert_dt
    fd_screen_unlock(ctx->screen);
 
    for (int i = 0; i < batch_count; i++) {
-      if (batches[i]->ctx == ctx)
-         fd_batch_flush(batches[i]);
+      fd_batch_flush(batches[i]);
       fd_batch_reference(&batches[i], NULL);
    }
 }
@@ -430,7 +427,7 @@ alloc_batch_locked(struct fd_batch_cache *cache, struct fd_context *ctx,
    if (!batch)
       return NULL;
 
-   batch->seqno = seqno_next(&cache->cnt);
+   batch->seqno = cache->cnt++;
    batch->idx = idx;
    cache->batch_mask |= (1 << idx);
 
@@ -438,34 +435,6 @@ alloc_batch_locked(struct fd_batch_cache *cache, struct fd_context *ctx,
    cache->batches[idx] = batch;
 
    return batch;
-}
-
-static void
-alloc_query_buf(struct fd_context *ctx, struct fd_batch *batch)
-{
-   if (batch->query_buf)
-      return;
-
-   if ((ctx->screen->gen < 3) || (ctx->screen->gen > 4))
-      return;
-
-   /* For gens that use fd_hw_query, pre-allocate an initially zero-sized
-    * (unbacked) query buffer.  This simplifies draw/grid/etc-time resource
-    * tracking.
-    */
-   struct pipe_screen *pscreen = &ctx->screen->base;
-   struct pipe_resource templ = {
-      .target = PIPE_BUFFER,
-      .format = PIPE_FORMAT_R8_UNORM,
-      .bind = PIPE_BIND_QUERY_BUFFER,
-      .width0 = 0, /* create initially zero size buffer */
-      .height0 = 1,
-      .depth0 = 1,
-      .array_size = 1,
-      .last_level = 0,
-      .nr_samples = 1,
-   };
-   batch->query_buf = pscreen->resource_create(pscreen, &templ);
 }
 
 struct fd_batch *
@@ -484,8 +453,6 @@ fd_bc_alloc_batch(struct fd_context *ctx, bool nondraw)
    fd_screen_lock(ctx->screen);
    batch = alloc_batch_locked(cache, ctx, nondraw);
    fd_screen_unlock(ctx->screen);
-
-   alloc_query_buf(ctx, batch);
 
    if (batch && nondraw)
       fd_context_switch_to(ctx, batch);
@@ -581,10 +548,6 @@ fd_batch_from_fb(struct fd_context *ctx,
    fd_screen_lock(ctx->screen);
    struct fd_batch *batch = batch_from_key(ctx, key);
    fd_screen_unlock(ctx->screen);
-
-   alloc_query_buf(ctx, batch);
-
-   fd_batch_set_fb(batch, pfb);
 
    return batch;
 }

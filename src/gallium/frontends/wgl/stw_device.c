@@ -25,8 +25,6 @@
  *
  **************************************************************************/
 
-#include "state_tracker/st_context.h"
-
 #include <windows.h>
 
 #include "glapi/glapi.h"
@@ -40,7 +38,6 @@
 #include "stw_device.h"
 #include "stw_winsys.h"
 #include "stw_pixelformat.h"
-#include "stw_gdishim.h"
 #include "gldrv.h"
 #include "stw_tls.h"
 #include "stw_framebuffer.h"
@@ -50,7 +47,7 @@
 struct stw_device *stw_dev = NULL;
 
 static int
-stw_get_param(struct pipe_frontend_screen *fscreen,
+stw_get_param(struct st_manager *smapi,
               enum st_manager_param param)
 {
    switch (param) {
@@ -73,7 +70,6 @@ stw_get_param(struct pipe_frontend_screen *fscreen,
 static int
 get_refresh_rate(void)
 {
-#ifndef _GAMING_XBOX
    DEVMODE devModes;
 
    if (EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &devModes)) {
@@ -84,9 +80,6 @@ get_refresh_rate(void)
       /* reasonable default */
       return 60;
    }
-#else
-   return 60;
-#endif /* _GAMING_XBOX */
 }
 
 static bool
@@ -99,7 +92,7 @@ init_screen(const struct stw_winsys *stw_winsys, HDC hdc)
    if (stw_winsys->get_adapter_luid)
       stw_winsys->get_adapter_luid(screen, hdc, &stw_dev->AdapterLuid);
 
-   stw_dev->fscreen->screen = screen;
+   stw_dev->smapi->screen = screen;
    stw_dev->screen = screen;
    stw_dev->zink = !memcmp(screen->get_name(screen), "zink", 4);
 
@@ -129,7 +122,7 @@ stw_get_config_xml(void)
    return driGetOptionsXml(gallium_driconf, ARRAY_SIZE(gallium_driconf));
 }
 
-bool
+boolean
 stw_init(const struct stw_winsys *stw_winsys)
 {
    static struct stw_device stw_dev_storage;
@@ -146,11 +139,11 @@ stw_init(const struct stw_winsys *stw_winsys)
 
    stw_dev->stw_winsys = stw_winsys;
 
-   stw_dev->fscreen = CALLOC_STRUCT(pipe_frontend_screen);
-   if (!stw_dev->fscreen)
+   stw_dev->smapi = CALLOC_STRUCT(st_manager);
+   if (!stw_dev->smapi)
       goto error1;
 
-   stw_dev->fscreen->get_param = stw_get_param;
+   stw_dev->smapi->get_param = stw_get_param;
 
    InitializeCriticalSection(&stw_dev->screen_mutex);
    InitializeCriticalSection(&stw_dev->ctx_mutex);
@@ -170,16 +163,16 @@ stw_init(const struct stw_winsys *stw_winsys)
 
    stw_dev->initialized = true;
 
-   return true;
+   return TRUE;
 
 error1:
-   FREE(stw_dev->fscreen);
+   FREE(stw_dev->smapi);
 
    stw_dev = NULL;
-   return false;
+   return FALSE;
 }
 
-bool
+boolean
 stw_init_screen(HDC hdc)
 {
    EnterCriticalSection(&stw_dev->screen_mutex);
@@ -204,7 +197,7 @@ stw_get_device(void)
    return stw_dev;
 }
 
-bool
+boolean
 stw_init_thread(void)
 {
    return stw_tls_init_thread();
@@ -255,8 +248,10 @@ stw_cleanup(void)
    DeleteCriticalSection(&stw_dev->ctx_mutex);
    DeleteCriticalSection(&stw_dev->screen_mutex);
 
-   st_screen_destroy(stw_dev->fscreen);
-   FREE(stw_dev->fscreen);
+   if (stw_dev->smapi->destroy)
+      stw_dev->smapi->destroy(stw_dev->smapi);
+
+   FREE(stw_dev->smapi);
 
    stw_dev->screen->destroy(stw_dev->screen);
 
@@ -295,5 +290,5 @@ DrvValidateVersion(ULONG ulVersion)
     * ignore it.
     */
    (void)ulVersion;
-   return true;
+   return TRUE;
 }

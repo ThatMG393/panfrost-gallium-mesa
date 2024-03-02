@@ -160,9 +160,6 @@ public:
    DLList() : head(0) { }
    ~DLList() { clear(); }
 
-   DLList(const DLList&) = delete;
-   DLList& operator=(const DLList&) = delete;
-
    inline void insertHead(void *data)
    {
       Item *item = new Item(data);
@@ -251,9 +248,6 @@ public:
    Stack() : size(0), limit(0), array(0) { }
    ~Stack() { if (array) FREE(array); }
 
-   Stack(const Stack&) = delete;
-   Stack& operator=(const Stack&) = delete;
-
    inline void push(int i)          { Item data; data.u.i = i; push(data); }
    inline void push(unsigned int u) { Item data; data.u.u = u; push(data); }
    inline void push(void *p)        { Item data; data.u.p = p; push(data); }
@@ -322,9 +316,6 @@ public:
 
    ~DynArray() { if (data) FREE(data); }
 
-   DynArray(const DynArray&) = delete;
-   DynArray& operator=(const DynArray&) = delete;
-
    inline Item& operator[](unsigned int i)
    {
       if (i >= size)
@@ -381,7 +372,7 @@ public:
       id = -1;
    }
 
-   inline unsigned int getSize() const { return size; }
+   inline int getSize() const { return size; }
 
    inline void *get(unsigned int id) { assert(id < size); return data[id].p; }
 
@@ -430,8 +421,6 @@ public:
    Interval() : head(0), tail(0) { }
    Interval(const Interval&);
    ~Interval();
-
-   Interval& operator=(const Interval&) = delete;
 
    bool extend(int, int);
    void insert(const Interval&);
@@ -494,8 +483,6 @@ public:
       if (data)
          FREE(data);
    }
-
-   BitSet(const BitSet&) = delete;
 
    // allocate will keep old data iff size is unchanged
    bool allocate(unsigned int nBits, bool zero);
@@ -565,6 +552,13 @@ public:
    }
 
    void andNot(const BitSet&);
+
+   // bits = (bits | setMask) & ~clrMask
+   inline void periodicMask32(uint32_t setMask, uint32_t clrMask)
+   {
+      for (unsigned int i = 0; i < (size + 31) / 32; ++i)
+         data[i] = (data[i] | setMask) & ~clrMask;
+   }
 
    unsigned int popCount() const;
 
@@ -638,9 +632,6 @@ public:
       if (allocArray)
          FREE(allocArray);
    }
-
-   MemoryPool(const MemoryPool&) = delete;
-   MemoryPool& operator=(const MemoryPool&) = delete;
 
    void *allocate()
    {
@@ -771,6 +762,29 @@ protected:
    {
       map[obj] = clone;
    }
+};
+
+template<typename S, typename T>
+struct bimap
+{
+   std::map<S, T> forth;
+   std::map<T, S> back;
+
+public:
+   bimap() : l(back), r(forth) { }
+   bimap(const bimap<S, T> &m)
+      : forth(m.forth), back(m.back), l(back), r(forth) { }
+
+   void insert(const S &s, const T &t)
+   {
+      forth.insert(std::make_pair(s, t));
+      back.insert(std::make_pair(t, s));
+   }
+
+   typedef typename std::map<T, S>::const_iterator l_iterator;
+   const std::map<T, S> &l;
+   typedef typename std::map<S, T>::const_iterator r_iterator;
+   const std::map<S, T> &r;
 };
 
 } // namespace nv50_ir

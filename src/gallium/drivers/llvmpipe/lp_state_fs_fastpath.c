@@ -44,7 +44,6 @@
 
 static void
 no_op(const struct lp_jit_context *context,
-      const struct lp_jit_resources *resources,
       uint32_t x,
       uint32_t y,
       uint32_t facing,
@@ -143,7 +142,6 @@ opaque_color(uint8_t **cbufs, unsigned *strides,
  */
 static void
 red(const struct lp_jit_context *context,
-    const struct lp_jit_resources *resources,
     uint32_t x,
     uint32_t y,
     uint32_t facing,
@@ -171,7 +169,6 @@ red(const struct lp_jit_context *context,
  */
 static void
 green(const struct lp_jit_context *context,
-      const struct lp_jit_resources *resources,
       uint32_t x,
       uint32_t y,
       uint32_t facing,

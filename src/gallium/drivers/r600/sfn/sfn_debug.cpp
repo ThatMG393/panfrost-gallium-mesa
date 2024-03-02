@@ -65,7 +65,6 @@ static const struct debug_named_value sfn_debug_options[] = {
    {"opt",      SfnLog::opt,         "Log optimization"                     },
    {"steps",    SfnLog::steps,       "Log shaders at transformation steps"  },
    {"noopt",    SfnLog::noopt,       "Don't run backend optimizations"      },
-   {"warn" ,    SfnLog::warn,        "Print warnings"                       },
    DEBUG_NAMED_VALUE_END
 };
 
@@ -125,13 +124,12 @@ SfnTrace::SfnTrace(SfnLog::LogFlag flag, const char *msg):
     m_flag(flag),
     m_msg(msg)
 {
-   sfn_log << m_flag << std::string( 2 * m_indention++, ' ') << "BEGIN: " << m_msg << "\n";
+   sfn_log << m_flag << std::string(" ", 2 * m_indention++) << "BEGIN: " << m_msg << "\n";
 }
 
 SfnTrace::~SfnTrace()
 {
-   assert(m_indention > 0);
-   sfn_log << m_flag << std::string( 2 * m_indention--, ' ') << "END:   " << m_msg << "\n";
+   sfn_log << m_flag << std::string(" ", 2 * m_indention--) << "END:   " << m_msg << "\n";
 }
 
 int SfnTrace::m_indention = 0;

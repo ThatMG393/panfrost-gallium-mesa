@@ -1,7 +1,26 @@
 /*
  * Copyright 2013-2017 Advanced Micro Devices, Inc.
+ * All Rights Reserved.
  *
- * SPDX-License-Identifier: MIT
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ *
  */
 
 #include "si_build_pm4.h"
@@ -90,7 +109,7 @@ void si_cp_release_mem(struct si_context *ctx, struct radeon_cmdbuf *cs, unsigne
 
          assert(16 * ctx->screen->info.max_render_backends <= scratch->b.b.width0);
          radeon_emit(PKT3(PKT3_EVENT_WRITE, 2, 0));
-         radeon_emit(EVENT_TYPE(V_028A90_ZPASS_DONE) | EVENT_INDEX(1));
+         radeon_emit(EVENT_TYPE(EVENT_TYPE_ZPASS_DONE) | EVENT_INDEX(1));
          radeon_emit(scratch->gpu_address);
          radeon_emit(scratch->gpu_address >> 32);
 
@@ -170,7 +189,7 @@ static void si_add_fence_dependency(struct si_context *sctx, struct pipe_fence_h
 {
    struct radeon_winsys *ws = sctx->ws;
 
-   ws->cs_add_fence_dependency(&sctx->gfx_cs, fence);
+   ws->cs_add_fence_dependency(&sctx->gfx_cs, fence, 0);
 }
 
 static void si_add_syncobj_signal(struct si_context *sctx, struct pipe_fence_handle *fence)
@@ -186,7 +205,7 @@ static void si_fence_reference(struct pipe_screen *screen, struct pipe_fence_han
    struct si_fence *ssrc = (struct si_fence *)src;
 
    if (pipe_reference(&(*sdst)->reference, &ssrc->reference)) {
-      ws->fence_reference(ws, &(*sdst)->gfx, NULL);
+      ws->fence_reference(&(*sdst)->gfx, NULL);
       tc_unflushed_batch_token_reference(&(*sdst)->tc_token, NULL);
       si_resource_reference(&(*sdst)->fine.buf, NULL);
       FREE(*sdst);
@@ -287,14 +306,14 @@ static bool si_fence_finish(struct pipe_screen *screen, struct pipe_context *ctx
       if (!timeout)
          return false;
 
-      if (timeout == OS_TIMEOUT_INFINITE) {
+      if (timeout == PIPE_TIMEOUT_INFINITE) {
          util_queue_fence_wait(&sfence->ready);
       } else {
          if (!util_queue_fence_wait_timeout(&sfence->ready, abs_timeout))
             return false;
       }
 
-      if (timeout && timeout != OS_TIMEOUT_INFINITE) {
+      if (timeout && timeout != PIPE_TIMEOUT_INFINITE) {
          int64_t time = os_time_get_nano();
          timeout = abs_timeout > time ? abs_timeout - time : 0;
       }
@@ -304,7 +323,7 @@ static bool si_fence_finish(struct pipe_screen *screen, struct pipe_context *ctx
       return true;
 
    if (sfence->fine.buf && si_fine_fence_signaled(rws, &sfence->fine)) {
-      rws->fence_reference(rws, &sfence->gfx, NULL);
+      rws->fence_reference(&sfence->gfx, NULL);
       si_resource_reference(&sfence->fine.buf, NULL);
       return true;
    }
@@ -342,7 +361,7 @@ static bool si_fence_finish(struct pipe_screen *screen, struct pipe_context *ctx
          return false;
 
       /* Recompute the timeout after all that. */
-      if (timeout && timeout != OS_TIMEOUT_INFINITE) {
+      if (timeout && timeout != PIPE_TIMEOUT_INFINITE) {
          int64_t time = os_time_get_nano();
          timeout = abs_timeout > time ? abs_timeout - time : 0;
       }
@@ -374,10 +393,16 @@ static void si_create_fence_fd(struct pipe_context *ctx, struct pipe_fence_handl
 
    switch (type) {
    case PIPE_FD_TYPE_NATIVE_SYNC:
+      if (!sscreen->info.has_fence_to_handle)
+         goto finish;
+
       sfence->gfx = ws->fence_import_sync_file(ws, fd);
       break;
 
    case PIPE_FD_TYPE_SYNCOBJ:
+      if (!sscreen->info.has_syncobj)
+         goto finish;
+
       sfence->gfx = ws->fence_import_syncobj(ws, fd);
       break;
 
@@ -385,6 +410,7 @@ static void si_create_fence_fd(struct pipe_context *ctx, struct pipe_fence_handl
       unreachable("bad fence fd type when importing");
    }
 
+finish:
    if (!sfence->gfx) {
       FREE(sfence);
       return;
@@ -399,6 +425,9 @@ static int si_fence_get_fd(struct pipe_screen *screen, struct pipe_fence_handle 
    struct radeon_winsys *ws = sscreen->ws;
    struct si_fence *sfence = (struct si_fence *)fence;
    int gfx_fd = -1;
+
+   if (!sscreen->info.has_fence_to_handle)
+      return -1;
 
    util_queue_fence_wait(&sfence->ready);
 
@@ -454,18 +483,15 @@ static void si_flush_all_queues(struct pipe_context *ctx,
 
    if (!radeon_emitted(&sctx->gfx_cs, sctx->initial_gfx_cs_size)) {
       if (fence)
-         ws->fence_reference(ws, &gfx_fence, sctx->last_gfx_fence);
+         ws->fence_reference(&gfx_fence, sctx->last_gfx_fence);
       if (!(flags & PIPE_FLUSH_DEFERRED))
          ws->cs_sync_flush(&sctx->gfx_cs);
 
       tc_driver_internal_flush_notify(sctx->tc);
 
-      if (unlikely(sctx->sqtt && (flags & PIPE_FLUSH_END_OF_FRAME))) {
-         si_handle_sqtt(sctx, &sctx->gfx_cs);
-      }
-      
-      if (u_trace_perfetto_active(&sctx->ds.trace_context)) {
-         u_trace_context_process(&sctx->ds.trace_context, flags & PIPE_FLUSH_END_OF_FRAME);
+      if (unlikely(sctx->thread_trace &&
+                   (flags & PIPE_FLUSH_END_OF_FRAME))) {
+         si_handle_thread_trace(sctx, &sctx->gfx_cs);
       }
    } else {
       /* Instead of flushing, create a deferred fence. Constraints:
@@ -492,7 +518,7 @@ static void si_flush_all_queues(struct pipe_context *ctx,
       } else {
          new_fence = si_alloc_fence();
          if (!new_fence) {
-            ws->fence_reference(ws, &gfx_fence, NULL);
+            ws->fence_reference(&gfx_fence, NULL);
             goto finish;
          }
 

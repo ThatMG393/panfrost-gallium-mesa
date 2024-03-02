@@ -29,10 +29,8 @@
 #include "gallium/drivers/r600/r600_shader.h"
 #include "nir.h"
 #include "nir_intrinsics.h"
-#include "nir_intrinsics_indices.h"
 #include "sfn_debug.h"
 #include "sfn_instr.h"
-#include "sfn_instr_alu.h"
 #include "sfn_instr_alugroup.h"
 #include "sfn_instr_controlflow.h"
 #include "sfn_instr_export.h"
@@ -45,7 +43,7 @@
 #include "sfn_shader_gs.h"
 #include "sfn_shader_tess.h"
 #include "sfn_shader_vs.h"
-#include "util/u_math.h"
+#include "tgsi/tgsi_from_mesa.h"
 
 #include <numeric>
 #include <sstream>
@@ -54,79 +52,101 @@ namespace r600 {
 
 using std::string;
 
-void
-ShaderIO::print(std::ostream& os) const
+std::pair<unsigned, unsigned>
+r600_get_varying_semantic(unsigned varying_location)
 {
-   os << m_type << " LOC:" << m_location;
-   if (m_varying_slot != NUM_TOTAL_VARYING_SLOTS)
-      os << " VARYING_SLOT:" << static_cast<int>(m_varying_slot);
-   if (m_no_varying)
-      os << " NO_VARYING";
-   do_print(os);
+   std::pair<unsigned, unsigned> result;
+   tgsi_get_gl_varying_semantic(static_cast<gl_varying_slot>(varying_location),
+                                true,
+                                &result.first,
+                                &result.second);
+
+   if (result.first == TGSI_SEMANTIC_GENERIC) {
+      result.second += 9;
+   } else if (result.first == TGSI_SEMANTIC_PCOORD) {
+      result.second = 8;
+   }
+   return result;
 }
 
-int
-ShaderIO::spi_sid() const
+void
+ShaderIO::set_sid(int sid)
 {
-   if (no_varying())
-      return 0;
-
-   switch (varying_slot()) {
-   case NUM_TOTAL_VARYING_SLOTS:
-   case VARYING_SLOT_POS:
-   case VARYING_SLOT_PSIZ:
-   case VARYING_SLOT_EDGE:
-   case VARYING_SLOT_FACE:
-   case VARYING_SLOT_CLIP_VERTEX:
-      return 0;
+   m_sid = sid;
+   switch (m_name) {
+   case TGSI_SEMANTIC_POSITION:
+   case TGSI_SEMANTIC_PSIZE:
+   case TGSI_SEMANTIC_EDGEFLAG:
+   case TGSI_SEMANTIC_FACE:
+   case TGSI_SEMANTIC_SAMPLEMASK:
+   case TGSI_SEMANTIC_CLIPVERTEX:
+      m_spi_sid = 0;
+      break;
+   case TGSI_SEMANTIC_GENERIC:
+   case TGSI_SEMANTIC_TEXCOORD:
+   case TGSI_SEMANTIC_PCOORD:
+      m_spi_sid = m_sid + 1;
+      break;
    default:
-      static_assert(static_cast<int>(NUM_TOTAL_VARYING_SLOTS) <= 0x100 - 1,
-                    "All varying slots plus 1 must be usable as 8-bit SPI semantic IDs");
-      return static_cast<int>(varying_slot()) + 1;
+      /* For non-generic params - pack name and sid into 8 bits */
+      m_spi_sid = (0x80 | (m_name << 3) | m_sid) + 1;
    }
 }
 
-ShaderIO::ShaderIO(const char *type, int loc, gl_varying_slot varying_slot):
-    m_type(type),
-    m_location(loc),
-    m_varying_slot(varying_slot)
+void
+ShaderIO::override_spi_sid(int spi)
 {
+   m_spi_sid = spi;
 }
 
-ShaderOutput::ShaderOutput(int location, int writemask, gl_varying_slot varying_slot):
-    ShaderIO("OUTPUT", location, varying_slot),
-    m_writemask(writemask)
+void
+ShaderIO::print(std::ostream& os) const
+{
+   os << m_type << " LOC:" << m_location << " NAME:" << m_name;
+   do_print(os);
+
+   if (m_sid > 0) {
+      os << " SID:" << m_sid << " SPI_SID:" << m_spi_sid;
+   }
+}
+
+ShaderIO::ShaderIO(const char *type, int loc, int name):
+    m_type(type),
+    m_location(loc),
+    m_name(name)
 {
 }
 
 ShaderOutput::ShaderOutput():
-    ShaderOutput(-1, 0)
+    ShaderIO("OUTPUT", -1, -1)
+{
+}
+
+ShaderOutput::ShaderOutput(int location, int name, int writemask):
+    ShaderIO("OUTPUT", location, name),
+    m_writemask(writemask)
 {
 }
 
 void
 ShaderOutput::do_print(std::ostream& os) const
 {
-   if (m_frag_result != static_cast<gl_frag_result>(FRAG_RESULT_MAX))
-      os << " FRAG_RESULT:" << static_cast<int>(m_frag_result);
    os << " MASK:" << m_writemask;
 }
 
-ShaderInput::ShaderInput(int location, gl_varying_slot varying_slot):
-    ShaderIO("INPUT", location, varying_slot)
+ShaderInput::ShaderInput(int location, int name):
+    ShaderIO("INPUT", location, name)
 {
 }
 
 ShaderInput::ShaderInput():
-    ShaderInput(-1)
+    ShaderInput(-1, -1)
 {
 }
 
 void
 ShaderInput::do_print(std::ostream& os) const
 {
-   if (m_system_value != SYSTEM_VALUE_MAX)
-      os << " SYSVALUE: " << static_cast<int>(m_system_value);
    if (m_interpolator)
       os << " INTERP:" << m_interpolator;
    if (m_interpolate_loc)
@@ -151,15 +171,12 @@ ShaderInput::set_uses_interpolate_at_centroid()
    m_uses_interpolate_at_centroid = true;
 }
 
-int64_t Shader::s_next_shader_id = 1;
-
 Shader::Shader(const char *type_id, unsigned atomic_base):
     m_current_block(nullptr),
     m_type_id(type_id),
     m_chip_class(ISA_CC_R600),
     m_next_block(0),
-    m_atomic_base(atomic_base),
-    m_shader_id(s_next_shader_id++)
+    m_atomic_base(atomic_base)
 {
    m_instr_factory = new InstrFactory();
    m_chain_instr.this_shader = this;
@@ -182,8 +199,6 @@ Shader::add_info_from_string(std::istream& is)
 
    if (type == "CHIPCLASS")
       return read_chipclass(is);
-   if (type == "FAMILY")
-      return read_family(is);
    if (type == "OUTPUT")
       return read_output(is);
    if (type == "INPUT")
@@ -217,8 +232,7 @@ Shader::emit_instruction_from_string(const std::string& s)
       return;
    }
 
-   auto ir = m_instr_factory->from_string(s, m_current_block->nesting_depth(),
-                                          m_chip_class == ISA_CC_CAYMAN);
+   auto ir = m_instr_factory->from_string(s, m_current_block->nesting_depth());
    if (ir) {
       emit_instruction(ir);
       if (ir->end_block())
@@ -230,25 +244,23 @@ Shader::emit_instruction_from_string(const std::string& s)
 bool
 Shader::read_output(std::istream& is)
 {
-   ShaderOutput output;
+   string value;
+   is >> value;
+   int pos = int_from_string_with_prefix(value, "LOC:");
+   is >> value;
+   int name = int_from_string_with_prefix(value, "NAME:");
+   is >> value;
+   int mask = int_from_string_with_prefix(value, "MASK:");
+   ShaderOutput output(pos, name, mask);
 
-   std::string token;
-   for (is >> token; !token.empty(); token.clear(), is >> token) {
-      int value;
-      if (int_from_string_with_prefix_optional(token, "LOC:", value))
-         output.set_location(value);
-      else if (int_from_string_with_prefix_optional(token, "VARYING_SLOT:", value))
-         output.set_varying_slot(static_cast<gl_varying_slot>(value));
-      else if (token == "NO_VARYING")
-         output.set_no_varying(true);
-      else if (int_from_string_with_prefix_optional(token, "FRAG_RESULT:", value))
-         output.set_frag_result(static_cast<gl_frag_result>(value));
-      else if (int_from_string_with_prefix_optional(token, "MASK:", value))
-         output.set_writemask(value);
-      else {
-         std::cerr << "Unknown parse value '" << token << "'";
-         assert(!"Unknown parse value in read_output");
-      }
+   value.clear();
+   is >> value;
+   if (!value.empty()) {
+      int sid = int_from_string_with_prefix(value, "SID:");
+      output.set_sid(sid);
+      is >> value;
+      ASSERTED int spi_sid = int_from_string_with_prefix(value, "SPI_SID:");
+      assert(spi_sid == output.spi_sid());
    }
 
    add_output(output);
@@ -258,33 +270,40 @@ Shader::read_output(std::istream& is)
 bool
 Shader::read_input(std::istream& is)
 {
-   ShaderInput input;
+   string value;
+   is >> value;
+   int pos = int_from_string_with_prefix(value, "LOC:");
+   is >> value;
+   int name = int_from_string_with_prefix(value, "NAME:");
+
+   value.clear();
+
+   ShaderInput input(pos, name);
 
    int interp = 0;
    int interp_loc = 0;
    bool use_centroid = false;
 
-   std::string token;
-   for (is >> token; !token.empty(); token.clear(), is >> token) {
-      int value;
-      if (int_from_string_with_prefix_optional(token, "LOC:", value))
-         input.set_location(value);
-      else if (int_from_string_with_prefix_optional(token, "VARYING_SLOT:", value))
-         input.set_varying_slot(static_cast<gl_varying_slot>(value));
-      else if (token == "NO_VARYING")
-         input.set_no_varying(true);
-      else if (int_from_string_with_prefix_optional(token, "SYSVALUE:", value))
-         input.set_system_value(static_cast<gl_system_value>(value));
-      else if (int_from_string_with_prefix_optional(token, "INTERP:", interp))
-         ;
-      else if (int_from_string_with_prefix_optional(token, "ILOC:", interp_loc))
-         ;
-      else if (token == "USE_CENTROID")
+   is >> value;
+   while (!value.empty()) {
+      if (value.substr(0, 4) == "SID:") {
+         int sid = int_from_string_with_prefix(value, "SID:");
+         input.set_sid(sid);
+      } else if (value.substr(0, 8) == "SPI_SID:") {
+         ASSERTED int spi_sid = int_from_string_with_prefix(value, "SPI_SID:");
+         assert(spi_sid == input.spi_sid());
+      } else if (value.substr(0, 7) == "INTERP:") {
+         interp = int_from_string_with_prefix(value, "INTERP:");
+      } else if (value.substr(0, 5) == "ILOC:") {
+         interp_loc = int_from_string_with_prefix(value, "ILOC:");
+      } else if (value == "USE_CENTROID") {
          use_centroid = true;
-      else {
-         std::cerr << "Unknown parse value '" << token << "'";
-         assert(!"Unknown parse value in read_input");
+      } else {
+         std::cerr << "Unknown parse value '" << value << "'";
+         assert(!value.c_str());
       }
+      value.clear();
+      is >> value;
    }
 
    input.set_interpolator(interp, interp_loc, use_centroid);
@@ -309,9 +328,7 @@ Shader::allocate_registers_from_string(std::istream& is, Pin pin)
       if (reg_str.empty())
          break;
 
-      if (strchr(reg_str.c_str(), '@') ||
-          reg_str == "AR" ||
-          reg_str.substr(0,3) == "IDX") {
+      if (strchr(reg_str.c_str(), '@')) {
          value_factory().dest_from_string(reg_str);
       } else {
          RegisterVec4::Swizzle swz = {0, 1, 2, 3};
@@ -365,47 +382,6 @@ Shader::read_chipclass(std::istream& is)
    return true;
 }
 
-bool
-Shader::read_family(std::istream& is)
-{
-   string name;
-   is >> name;
-#define CHECK_FAMILY(F) if (name == #F) m_chip_family = CHIP_ ## F
-
-   CHECK_FAMILY(R600);
-   else CHECK_FAMILY(R600);
-   else CHECK_FAMILY(RV610);
-   else CHECK_FAMILY(RV630);
-   else CHECK_FAMILY(RV670);
-   else CHECK_FAMILY(RV620);
-   else CHECK_FAMILY(RV635);
-   else CHECK_FAMILY(RS780);
-   else CHECK_FAMILY(RS880);
-   /* GFX3 (R7xx) */
-   else CHECK_FAMILY(RV770);
-   else CHECK_FAMILY(RV730);
-   else CHECK_FAMILY(RV710);
-   else CHECK_FAMILY(RV740);
-   /* GFX4 (Evergreen) */
-   else CHECK_FAMILY(CEDAR);
-   else CHECK_FAMILY(REDWOOD);
-   else CHECK_FAMILY(JUNIPER);
-   else CHECK_FAMILY(CYPRESS);
-   else CHECK_FAMILY(HEMLOCK);
-   else CHECK_FAMILY(PALM);
-   else CHECK_FAMILY(SUMO);
-   else CHECK_FAMILY(SUMO2);
-   else CHECK_FAMILY(BARTS);
-   else CHECK_FAMILY(TURKS);
-   else CHECK_FAMILY(CAICOS);
-   /* GFX5 (Northern Islands) */
-   else CHECK_FAMILY(CAYMAN);
-   else CHECK_FAMILY(ARUBA);
-   else
-      return false;
-   return true;
-}
-
 void
 Shader::allocate_reserved_registers()
 {
@@ -453,9 +429,8 @@ Shader *
 Shader::translate_from_nir(nir_shader *nir,
                            const pipe_stream_output_info *so_info,
                            struct r600_shader *gs_shader,
-                           const r600_shader_key& key,
-                           r600_chip_class chip_class,
-                           radeon_family family)
+                           r600_shader_key& key,
+                           r600_chip_class chip_class)
 {
    Shader *shader = nullptr;
 
@@ -489,8 +464,6 @@ Shader::translate_from_nir(nir_shader *nir,
    shader->set_info(nir);
 
    shader->set_chip_class(chip_class);
-   shader->set_chip_family(family);
-
    if (!shader->process(nir))
       return nullptr;
 
@@ -528,8 +501,7 @@ Shader::process(nir_shader *nir)
 
    allocate_reserved_registers();
 
-   value_factory().allocate_registers(m_register_allocations);
-   m_required_registers = value_factory().array_registers();
+   allocate_local_registers(&func->impl->registers);
 
    sfn_log << SfnLog::trans << "Process shader \n";
    foreach_list_typed(nir_cf_node, node, node, &func->impl->body)
@@ -541,6 +513,13 @@ Shader::process(nir_shader *nir)
    finalize();
 
    return true;
+}
+
+void
+Shader::allocate_local_registers(const exec_list *registers)
+{
+   if (value_factory().allocate_registers(registers))
+      m_indirect_files |= 1 << TGSI_FILE_TEMPORARY;
 }
 
 bool
@@ -569,10 +548,10 @@ Shader::scan_shader(const nir_function *func)
       }
    }
 
-   int export_param = 0;
+   int param_id = 0;
    for (auto& [index, out] : m_outputs) {
-      if (out.spi_sid())
-         out.set_export_param(export_param++);
+      if (out.is_param())
+         out.set_pos(param_id++);
    }
 
    return true;
@@ -581,11 +560,11 @@ Shader::scan_shader(const nir_function *func)
 bool
 Shader::scan_uniforms(nir_variable *uniform)
 {
-   if (glsl_contains_atomic(uniform->type)) {
-      int natomics = glsl_atomic_size(uniform->type) / 4; /* ATOMIC_COUNTER_SIZE */
+   if (uniform->type->contains_atomic()) {
+      int natomics = uniform->type->atomic_size() / ATOMIC_COUNTER_SIZE;
       m_nhwatomic += natomics;
 
-      if (glsl_type_is_array(uniform->type))
+      if (uniform->type->is_array())
          m_indirect_files |= 1 << TGSI_FILE_HW_ATOMIC;
 
       m_flags.set(sh_uses_atomics);
@@ -610,10 +589,10 @@ Shader::scan_uniforms(nir_variable *uniform)
       m_atomics.push_back(atom);
    }
 
-   auto type = glsl_without_array(uniform->type);
-   if (glsl_type_is_image(type) || uniform->data.mode == nir_var_mem_ssbo) {
+   auto type = uniform->type->is_array() ? uniform->type->without_array() : uniform->type;
+   if (type->is_image() || uniform->data.mode == nir_var_mem_ssbo) {
       m_flags.set(sh_uses_images);
-      if (glsl_type_is_array(uniform->type) && !(uniform->data.mode == nir_var_mem_ssbo))
+      if (uniform->type->is_array() && !(uniform->data.mode == nir_var_mem_ssbo))
          m_indirect_files |= 1 << TGSI_FILE_IMAGE;
    }
 
@@ -633,11 +612,27 @@ Shader::scan_instruction(nir_instr *instr)
 
    // handle unhandled instructions
    switch (intr->intrinsic) {
-   case nir_intrinsic_ssbo_atomic:
-   case nir_intrinsic_ssbo_atomic_swap:
+   case nir_intrinsic_ssbo_atomic_add:
+   case nir_intrinsic_ssbo_atomic_comp_swap:
+   case nir_intrinsic_ssbo_atomic_or:
+   case nir_intrinsic_ssbo_atomic_xor:
+   case nir_intrinsic_ssbo_atomic_imax:
+   case nir_intrinsic_ssbo_atomic_imin:
+   case nir_intrinsic_ssbo_atomic_umax:
+   case nir_intrinsic_ssbo_atomic_umin:
+   case nir_intrinsic_ssbo_atomic_and:
+   case nir_intrinsic_ssbo_atomic_exchange:
    case nir_intrinsic_image_load:
-   case nir_intrinsic_image_atomic:
-   case nir_intrinsic_image_atomic_swap:
+   case nir_intrinsic_image_atomic_add:
+   case nir_intrinsic_image_atomic_and:
+   case nir_intrinsic_image_atomic_or:
+   case nir_intrinsic_image_atomic_xor:
+   case nir_intrinsic_image_atomic_exchange:
+   case nir_intrinsic_image_atomic_comp_swap:
+   case nir_intrinsic_image_atomic_umin:
+   case nir_intrinsic_image_atomic_umax:
+   case nir_intrinsic_image_atomic_imin:
+   case nir_intrinsic_image_atomic_imax:
       m_flags.set(sh_needs_sbo_ret_address);
       FALLTHROUGH;
    case nir_intrinsic_image_store:
@@ -645,15 +640,11 @@ Shader::scan_instruction(nir_instr *instr)
       m_flags.set(sh_writes_memory);
       m_flags.set(sh_uses_images);
       break;
-   case nir_intrinsic_barrier:
-      m_chain_instr.prepare_mem_barrier |=
-            (nir_intrinsic_memory_modes(intr) &
-             (nir_var_mem_ssbo | nir_var_mem_global | nir_var_image) &&
-             nir_intrinsic_memory_scope(intr) != SCOPE_NONE);
-      break;
-   case nir_intrinsic_decl_reg:
-      m_register_allocations.push_back(intr);
-      break;
+   case nir_intrinsic_memory_barrier_image:
+   case nir_intrinsic_memory_barrier_buffer:
+   case nir_intrinsic_memory_barrier:
+   case nir_intrinsic_group_memory_barrier:
+      m_chain_instr.prepare_mem_barrier = true;
    default:;
    }
    return true;
@@ -697,37 +688,12 @@ child_block_empty(const exec_list& list)
    return result;
 }
 
-static bool value_has_non_const_source(VirtualValue *value)
-{
-   auto reg = value->as_register();
-   if (reg) {
-      // Non-ssa registers are probably the result of some control flow
-      // that makes the values non-uniform across the work group
-      if (!reg->has_flag(Register::ssa))
-         return true;
-
-      for (const auto& p : reg->parents()) {
-         auto alu = p->as_alu();
-         if (alu) {
-            for (auto& s : p->as_alu()->sources()) {
-               return value_has_non_const_source(s);
-            }
-         } else {
-            return true;
-         }
-      }
-   }
-   return false;
-}
-
 bool
 Shader::process_if(nir_if *if_stmt)
 {
    SFN_TRACE_FUNC(SfnLog::flow, "IF");
 
    auto value = value_factory().src(if_stmt->condition, 0);
-
-   bool non_const_cond = value_has_non_const_source(value);
 
    EAluOp op = child_block_empty(if_stmt->then_list) ? op2_prede_int :
                                                        op2_pred_setne_int;
@@ -743,8 +709,6 @@ Shader::process_if(nir_if *if_stmt)
 
    IfInstr *ir = new IfInstr(pred);
    emit_instruction(ir);
-   if (non_const_cond)
-      ++m_control_flow_depth;
    start_new_block(1);
 
    if (!child_block_empty(if_stmt->then_list)) {
@@ -774,9 +738,6 @@ Shader::process_if(nir_if *if_stmt)
 
    if (!emit_control_flow(ControlFlowInstr::cf_endif))
       return false;
-
-   if (non_const_cond)
-      --m_control_flow_depth;
 
    return true;
 }
@@ -809,7 +770,6 @@ Shader::emit_control_flow(ControlFlowInstr::CFType type)
 bool
 Shader::process_loop(nir_loop *node)
 {
-   assert(!nir_loop_has_continue_construct(node));
    SFN_TRACE_FUNC(SfnLog::flow, "LOOP");
    if (!emit_control_flow(ControlFlowInstr::cf_loop_begin))
       return false;
@@ -875,65 +835,71 @@ Shader::process_intrinsic(nir_intrinsic_instr *intr)
       return emit_load_scratch(intr);
    case nir_intrinsic_store_local_shared_r600:
       return emit_local_store(intr);
-   case nir_intrinsic_load_global:
-   case nir_intrinsic_load_global_constant:
-      return emit_load_global(intr);
    case nir_intrinsic_load_local_shared_r600:
       return emit_local_load(intr);
    case nir_intrinsic_load_tcs_in_param_base_r600:
       return emit_load_tcs_param_base(intr, 0);
    case nir_intrinsic_load_tcs_out_param_base_r600:
       return emit_load_tcs_param_base(intr, 16);
-   case nir_intrinsic_barrier:
+      // We only emit the group barrier, barriers across work groups
+      // are not yet implemented
+   case nir_intrinsic_control_barrier:
+   case nir_intrinsic_memory_barrier_tcs_patch:
+   case nir_intrinsic_memory_barrier_shared:
       return emit_barrier(intr);
-   case nir_intrinsic_shared_atomic:
-   case nir_intrinsic_shared_atomic_swap:
+   case nir_intrinsic_memory_barrier_atomic_counter:
+      return true;
+   case nir_intrinsic_group_memory_barrier:
+   case nir_intrinsic_memory_barrier_image:
+   case nir_intrinsic_memory_barrier_buffer:
+   case nir_intrinsic_memory_barrier:
+      return emit_wait_ack();
+
+   case nir_intrinsic_shared_atomic_add:
+   case nir_intrinsic_shared_atomic_and:
+   case nir_intrinsic_shared_atomic_or:
+   case nir_intrinsic_shared_atomic_imax:
+   case nir_intrinsic_shared_atomic_umax:
+   case nir_intrinsic_shared_atomic_imin:
+   case nir_intrinsic_shared_atomic_umin:
+   case nir_intrinsic_shared_atomic_xor:
+   case nir_intrinsic_shared_atomic_exchange:
+   case nir_intrinsic_shared_atomic_comp_swap:
       return emit_atomic_local_shared(intr);
    case nir_intrinsic_shader_clock:
       return emit_shader_clock(intr);
-   case nir_intrinsic_load_reg:
-      return emit_load_reg(intr);
-   case nir_intrinsic_load_reg_indirect:
-      return emit_load_reg_indirect(intr);
-   case nir_intrinsic_store_reg:
-      return emit_store_reg(intr);
-   case nir_intrinsic_store_reg_indirect:
-      return emit_store_reg_indirect(intr);
-   case nir_intrinsic_decl_reg:
-      // Registers and arrays are allocated at
-      // conversion startup time
-      return true;
+
    default:
       return false;
    }
 }
 
 static ESDOp
-lds_op_from_intrinsic(nir_atomic_op op, bool ret)
+lds_op_from_intrinsic(nir_intrinsic_op op, bool ret)
 {
    switch (op) {
-   case nir_atomic_op_iadd:
+   case nir_intrinsic_shared_atomic_add:
       return ret ? LDS_ADD_RET : LDS_ADD;
-   case nir_atomic_op_iand:
+   case nir_intrinsic_shared_atomic_and:
       return ret ? LDS_AND_RET : LDS_AND;
-   case nir_atomic_op_ior:
+   case nir_intrinsic_shared_atomic_or:
       return ret ? LDS_OR_RET : LDS_OR;
-   case nir_atomic_op_imax:
+   case nir_intrinsic_shared_atomic_imax:
       return ret ? LDS_MAX_INT_RET : LDS_MAX_INT;
-   case nir_atomic_op_umax:
+   case nir_intrinsic_shared_atomic_umax:
       return ret ? LDS_MAX_UINT_RET : LDS_MAX_UINT;
-   case nir_atomic_op_imin:
+   case nir_intrinsic_shared_atomic_imin:
       return ret ? LDS_MIN_INT_RET : LDS_MIN_INT;
-   case nir_atomic_op_umin:
+   case nir_intrinsic_shared_atomic_umin:
       return ret ? LDS_MIN_UINT_RET : LDS_MIN_UINT;
-   case nir_atomic_op_ixor:
+   case nir_intrinsic_shared_atomic_xor:
       return ret ? LDS_XOR_RET : LDS_XOR;
-   case nir_atomic_op_xchg:
+   case nir_intrinsic_shared_atomic_exchange:
       return LDS_XCHG_RET;
-   case nir_atomic_op_cmpxchg:
+   case nir_intrinsic_shared_atomic_comp_swap:
       return LDS_CMP_XCHG_RET;
    default:
-      unreachable("Unsupported shared atomic_op opcode");
+      unreachable("Unsupported shared atomic opcode");
    }
 }
 
@@ -950,155 +916,23 @@ Shader::emit_load_to_register(PVirtualValue src)
    return dest;
 }
 
-// add visitor to resolve array and register
-class RegisterAccessHandler : public RegisterVisitor {
-
-public:
-   RegisterAccessHandler(Shader& shader, nir_intrinsic_instr *intr);
-
-   void visit(LocalArrayValue& value) override {(void)value; assert(0);}
-   void visit(UniformValue& value) override {(void)value; assert(0);}
-   void visit(LiteralConstant& value) override {(void)value; assert(0);}
-   void visit(InlineConstant& value) override {(void)value; assert(0);}
-
-   Shader& sh;
-   nir_intrinsic_instr *ir;
-   PVirtualValue addr{nullptr};
-   bool success{true};
-};
-
-class RegisterReadHandler : public RegisterAccessHandler {
-
-public:
-   using RegisterAccessHandler::RegisterAccessHandler;
-   using RegisterAccessHandler::visit;
-
-   void visit(LocalArray& value) override;
-   void visit(Register& value) override;
-};
-
-bool Shader::emit_load_reg(nir_intrinsic_instr *intr)
-{
-   RegisterReadHandler visitor(*this, intr);
-   auto handle = value_factory().src(intr->src[0], 0);
-   handle->accept(visitor);
-   return visitor.success;
-}
-
-bool Shader::emit_load_reg_indirect(nir_intrinsic_instr *intr)
-{
-   RegisterReadHandler visitor(*this, intr);
-   visitor.addr =  value_factory().src(intr->src[1], 0);
-   auto handle = value_factory().src(intr->src[0], 0);
-   handle->accept(visitor);
-   return visitor.success;
-}
-
-class RegisterWriteHandler : public RegisterAccessHandler {
-
-public:
-   using RegisterAccessHandler::RegisterAccessHandler;
-   using RegisterAccessHandler::visit;
-
-   void visit(LocalArray& value) override;
-   void visit(Register& value) override;
-};
-
-
-bool Shader::emit_store_reg(nir_intrinsic_instr *intr)
-{
-   RegisterWriteHandler visitor(*this, intr);
-   auto handle = value_factory().src(intr->src[1], 0);
-   handle->accept(visitor);
-   return visitor.success;
-}
-
-bool Shader::emit_store_reg_indirect(nir_intrinsic_instr *intr)
-{
-   RegisterWriteHandler visitor(*this, intr);
-   visitor.addr =  value_factory().src(intr->src[2], 0);
-
-   auto handle = value_factory().src(intr->src[1], 0);
-   handle->accept(visitor);
-   return visitor.success;
-}
-
-RegisterAccessHandler::RegisterAccessHandler(Shader& shader, nir_intrinsic_instr *intr):
-   sh(shader),
-   ir(intr)
-{}
-
-void RegisterReadHandler::visit(LocalArray& array)
-{
-   int slots =  ir->def.bit_size / 32;
-   auto pin = ir->def.num_components > 1 ? pin_none : pin_free;
-   for (int i = 0; i < ir->def.num_components; ++i) {
-      for (int s = 0; s < slots; ++s) {
-         int chan = i * slots + s;
-         auto dest = sh.value_factory().dest(ir->def, chan, pin);
-         auto src = array.element(nir_intrinsic_base(ir), addr, chan);
-         sh.emit_instruction(new AluInstr(op1_mov, dest, src, AluInstr::write));
-      }
-   }
-}
-
-void RegisterReadHandler::visit(Register& reg)
-{
-   auto dest = sh.value_factory().dest(ir->def, 0, pin_free);
-   sh.emit_instruction(new AluInstr(op1_mov, dest, &reg, AluInstr::write));
-}
-
-void RegisterWriteHandler::visit(LocalArray& array)
-{
-   int writemask = nir_intrinsic_write_mask(ir);
-   int slots =  ir->src->ssa->bit_size / 32;
-
-   for (int i = 0; i < ir->num_components; ++i) {
-      if (!(writemask & (1 << i)))
-         continue;
-      for (int s = 0; s < slots; ++s) {
-         int chan = i * slots + s;
-
-         auto dest = array.element(nir_intrinsic_base(ir), addr, chan);
-         auto src = sh.value_factory().src(ir->src[0], chan);
-         sh.emit_instruction(new AluInstr(op1_mov, dest, src, AluInstr::write));
-      }
-   }
-}
-
-void RegisterWriteHandler::visit(Register& dest)
-{
-   int writemask = nir_intrinsic_write_mask(ir);
-   assert(writemask == 1);
-   auto src = sh.value_factory().src(ir->src[0], 0);
-   sh.emit_instruction(new AluInstr(op1_mov, &dest, src, AluInstr::write));
-}
-
 bool
 Shader::emit_atomic_local_shared(nir_intrinsic_instr *instr)
 {
-   bool uses_retval = !list_is_empty(&instr->def.uses);
+   bool uses_retval = !instr->dest.is_ssa || !list_is_empty(&instr->dest.ssa.uses);
 
    auto& vf = value_factory();
 
-   auto dest_value = uses_retval ? vf.dest(instr->def, 0, pin_free) : nullptr;
+   auto dest_value = uses_retval ? vf.dest(instr->dest, 0, pin_free) : nullptr;
 
-   auto op = lds_op_from_intrinsic(nir_intrinsic_atomic_op(instr), uses_retval);
-
-   /* For these two instructions we don't have opcodes that don't read back
-    * the result, so we have to add a dummy-readback to remove the the return
-    * value from read queue. */
-   if (!uses_retval &&
-       (op == LDS_XCHG_RET || op == LDS_CMP_XCHG_RET)) {
-      dest_value = vf.dest(instr->def, 0, pin_free);
-   }
+   auto op = lds_op_from_intrinsic(instr->intrinsic, uses_retval);
 
    auto address = vf.src(instr->src[0], 0);
 
    AluInstr::SrcValues src;
    src.push_back(vf.src(instr->src[1], 0));
 
-   if (unlikely(instr->intrinsic == nir_intrinsic_shared_atomic_swap))
+   if (unlikely(instr->intrinsic == nir_intrinsic_shared_atomic_comp_swap))
       src.push_back(vf.src(instr->src[2], 0));
    emit_instruction(new LDSAtomicInstr(op, dest_value, address, src));
    return true;
@@ -1111,8 +945,7 @@ Shader::evaluate_resource_offset(nir_intrinsic_instr *instr, int src_id)
    auto& vf = value_factory();
 
    PRegister uav_id{nullptr};
-   int offset = nir_intrinsic_has_range_base(instr) ?
-                   nir_intrinsic_range_base(instr) : 0;
+   int offset = 0;
 
    auto uav_id_const = nir_src_as_const_value(instr->src[src_id]);
    if (uav_id_const) {
@@ -1194,7 +1027,7 @@ bool
 Shader::emit_load_scratch(nir_intrinsic_instr *intr)
 {
    auto addr = value_factory().src(intr->src[0], 0);
-   auto dest = value_factory().dest_vec4(intr->def, pin_group);
+   auto dest = value_factory().dest_vec4(intr->dest, pin_group);
 
    if (chip_class() >= ISA_CC_R700) {
       RegisterVec4::Swizzle dest_swz = {7, 7, 7, 7};
@@ -1240,25 +1073,6 @@ Shader::emit_load_scratch(nir_intrinsic_instr *intr)
    return true;
 }
 
-bool Shader::emit_load_global(nir_intrinsic_instr *intr)
-{
-   auto dest = value_factory().dest_vec4(intr->def, pin_group);
-
-   auto src_value = value_factory().src(intr->src[0], 0);
-   auto src = src_value->as_register();
-   if (!src) {
-      src = value_factory().temp_register();
-      emit_instruction(new AluInstr(op1_mov, src, src_value, AluInstr::last_write));
-   }
-   auto load = new LoadFromBuffer(dest, {0,7,7,7}, src, 0, 1, NULL, fmt_32);
-   load->set_mfc(4);
-   load->set_num_format(vtx_nf_int);
-   load->reset_fetch_flag(FetchInstr::format_comp_signed);
-
-   emit_instruction(load);
-   return true;
-}
-
 bool
 Shader::emit_local_store(nir_intrinsic_instr *instr)
 {
@@ -1289,7 +1103,7 @@ bool
 Shader::emit_local_load(nir_intrinsic_instr *instr)
 {
    auto address = value_factory().src_vec(instr->src[0], instr->num_components);
-   auto dest_value = value_factory().dest_vec(instr->def, instr->num_components);
+   auto dest_value = value_factory().dest_vec(instr->dest, instr->num_components);
    emit_instruction(new LDSReadInstr(dest_value, address));
    return true;
 }
@@ -1315,57 +1129,6 @@ Shader::emit_wait_ack()
    return true;
 }
 
-static uint32_t get_array_hash(const VirtualValue& value)
-{
-   assert (value.pin() == pin_array);
-   const LocalArrayValue& av = static_cast<const LocalArrayValue&>(value);
-   return av.chan() | (av.array().base_sel() << 2);
-}
-
-void Shader::InstructionChain::visit(AluInstr *instr)
-{
-   if (instr->is_kill()) {
-      last_kill_instr = instr;
-
-      // these instructions have side effects, they should
-      // not be re-order with kill
-      if (last_gds_instr)
-         instr->add_required_instr(last_gds_instr);
-
-      if (last_ssbo_instr)
-         instr->add_required_instr(last_ssbo_instr);
-   }
-
-   /* Make sure array reads and writes depends on the last indirect access
-    * so that we don't overwrite array elements too early */
-
-   if (auto d = instr->dest()) {
-      if (d->pin() == pin_array) {
-         if (d->addr()) {
-            last_alu_with_indirect_reg[get_array_hash(*d)] = instr;
-            return;
-         }
-         auto pos = last_alu_with_indirect_reg.find(get_array_hash(*d));
-         if (pos != last_alu_with_indirect_reg.end()) {
-            instr->add_required_instr(pos->second);
-         }
-      }
-   }
-
-   for (auto& s : instr->sources()) {
-      if (s->pin() == pin_array) {
-         if (s->get_addr()) {
-            last_alu_with_indirect_reg[get_array_hash(*s)] = instr;
-            return;
-         }
-         auto pos = last_alu_with_indirect_reg.find(get_array_hash(*s));
-         if (pos != last_alu_with_indirect_reg.end()) {
-            instr->add_required_instr(pos->second);
-         }
-      }
-   }
-}
-
 void
 Shader::InstructionChain::visit(ScratchIOInstr *instr)
 {
@@ -1380,9 +1143,6 @@ Shader::InstructionChain::visit(GDSInstr *instr)
    for (auto& loop : this_shader->m_loops) {
       loop->set_instr_flag(flag);
    }
-   if (last_kill_instr)
-      instr->add_required_instr(last_kill_instr);
-
 }
 
 void
@@ -1399,9 +1159,6 @@ Shader::InstructionChain::visit(RatInstr *instr)
 
    if (this_shader->m_current_block->inc_rat_emitted() > 15)
       this_shader->start_new_block(0);
-
-   if (last_kill_instr)
-      instr->add_required_instr(last_kill_instr);
 }
 
 void
@@ -1427,7 +1184,7 @@ Shader::emit_load_tcs_param_base(nir_intrinsic_instr *instr, int offset)
    emit_instruction(
       new AluInstr(op1_mov, src, value_factory().zero(), AluInstr::last_write));
 
-   auto dest = value_factory().dest_vec4(instr->def, pin_group);
+   auto dest = value_factory().dest_vec4(instr->dest, pin_group);
    auto fetch = new LoadFromBuffer(dest,
                                    {0, 1, 2, 3},
                                    src,
@@ -1448,11 +1205,11 @@ Shader::emit_shader_clock(nir_intrinsic_instr *instr)
    auto& vf = value_factory();
    auto group = new AluGroup();
    group->add_instruction(new AluInstr(op1_mov,
-                                       vf.dest(instr->def, 0, pin_chan),
+                                       vf.dest(instr->dest, 0, pin_chan),
                                        vf.inline_const(ALU_SRC_TIME_LO, 0),
                                        AluInstr::write));
    group->add_instruction(new AluInstr(op1_mov,
-                                       vf.dest(instr->def, 1, pin_chan),
+                                       vf.dest(instr->dest, 1, pin_chan),
                                        vf.inline_const(ALU_SRC_TIME_HI, 0),
                                        AluInstr::last_write));
    emit_instruction(group);
@@ -1460,9 +1217,8 @@ Shader::emit_shader_clock(nir_intrinsic_instr *instr)
 }
 
 bool
-Shader::emit_group_barrier(nir_intrinsic_instr *intr)
+Shader::emit_barrier(nir_intrinsic_instr *intr)
 {
-   assert(m_control_flow_depth == 0);
    (void)intr;
    /* Put barrier into it's own block, so that optimizers and the
     * scheduler don't move code */
@@ -1471,31 +1227,6 @@ Shader::emit_group_barrier(nir_intrinsic_instr *intr)
    op->set_alu_flag(alu_last_instr);
    emit_instruction(op);
    start_new_block(0);
-   return true;
-}
-
-bool Shader::emit_barrier(nir_intrinsic_instr *intr)
-{
-
-   if ((nir_intrinsic_execution_scope(intr) == SCOPE_WORKGROUP)) {
-      if (!emit_group_barrier(intr))
-         return false;
-   }
-
-   /* We don't check nir_var_mem_shared because we don't emit a real barrier -
-    * for this we need to implement GWS (Global Wave Sync).
-    * Here we just emit a wait_ack - this is no real barrier,
-    * it's just a wait for RAT writes to be finished (if they
-    * are emitted with the _ACK opcode and the `mark` flag set - it
-    * is very likely that WAIT_ACK is also only relevant for this
-    * shader instance). */
-   auto full_barrier_mem_modes = nir_var_mem_ssbo |  nir_var_image | nir_var_mem_global;
-
-   if ((nir_intrinsic_memory_scope(intr) != SCOPE_NONE) &&
-       (nir_intrinsic_memory_modes(intr) & full_barrier_mem_modes)) {
-      return emit_wait_ack();
-   }
-
    return true;
 }
 
@@ -1508,14 +1239,14 @@ Shader::load_ubo(nir_intrinsic_instr *instr)
 
    if (!buf_offset) {
       /* TODO: if bufid is constant then this can also be solved by using the
-       * CF index on the ALU block, and this would probably make sense when
+       * CF indes on the ALU block, and this would probably make sense when
        * there are more then one loads with the same buffer ID. */
 
       auto addr = value_factory().src(instr->src[1], 0)->as_register();
       RegisterVec4::Swizzle dest_swz{7, 7, 7, 7};
-      auto dest = value_factory().dest_vec4(instr->def, pin_group);
+      auto dest = value_factory().dest_vec4(instr->dest, pin_group);
 
-      for (unsigned i = 0; i < instr->def.num_components; ++i) {
+      for (unsigned i = 0; i < nir_dest_num_components(instr->dest); ++i) {
          dest_swz[i] = i + nir_intrinsic_component(instr);
       }
 
@@ -1537,18 +1268,18 @@ Shader::load_ubo(nir_intrinsic_instr *instr)
       int buf_cmp = nir_intrinsic_component(instr);
 
       AluInstr *ir = nullptr;
-      auto pin = instr->def.num_components == 1
+      auto pin = instr->dest.is_ssa && nir_dest_num_components(instr->dest) == 1
                     ? pin_free
                     : pin_none;
-      for (unsigned i = 0; i < instr->def.num_components; ++i) {
+      for (unsigned i = 0; i < nir_dest_num_components(instr->dest); ++i) {
 
-         sfn_log << SfnLog::io << "UBO[" << bufid << "] " << instr->def.index
+         sfn_log << SfnLog::io << "UBO[" << bufid << "] " << instr->dest.ssa.index
                  << " const[" << i << "]: " << instr->const_index[i] << "\n";
 
          auto uniform =
             value_factory().uniform(512 + buf_offset->u32, i + buf_cmp, bufid->u32);
          ir = new AluInstr(op1_mov,
-                           value_factory().dest(instr->def, i, pin),
+                           value_factory().dest(instr->dest, i, pin),
                            uniform,
                            {alu_write});
          emit_instruction(ir);
@@ -1561,11 +1292,11 @@ Shader::load_ubo(nir_intrinsic_instr *instr)
       AluInstr *ir = nullptr;
       auto kc_id = value_factory().src(instr->src[0], 0);
 
-      for (unsigned i = 0; i < instr->def.num_components; ++i) {
+      for (unsigned i = 0; i < nir_dest_num_components(instr->dest); ++i) {
          int cmp = buf_cmp + i;
          auto u =
             new UniformValue(512 + buf_offset->u32, cmp, kc_id, nir_intrinsic_base(instr));
-         auto dest = value_factory().dest(instr->def, i, pin_none);
+         auto dest = value_factory().dest(instr->dest, i, pin_none);
          ir = new AluInstr(op1_mov, dest, u, AluInstr::write);
          emit_instruction(ir);
       }
@@ -1585,9 +1316,9 @@ Shader::start_new_block(int depth)
 }
 
 bool
-Shader::emit_simple_mov(nir_def& def, int chan, PVirtualValue src, Pin pin)
+Shader::emit_simple_mov(nir_dest& dest, int chan, PVirtualValue src, Pin pin)
 {
-   auto dst = value_factory().dest(def, chan, pin);
+   auto dst = value_factory().dest(dest, chan, pin);
    emit_instruction(new AluInstr(op1_mov, dst, src, AluInstr::last_write));
    return true;
 }
@@ -1618,7 +1349,6 @@ void
 Shader::print_header(std::ostream& os) const
 {
    assert(m_chip_class <= ISA_CC_CAYMAN);
-   os << "Shader: " << m_shader_id << "\n";
    os << m_type_id << "\n";
    os << "CHIPCLASS " << chip_class_names[m_chip_class] << "\n";
    print_properties(os);
@@ -1650,61 +1380,46 @@ void
 Shader::get_shader_info(r600_shader *sh_info)
 {
    sh_info->ninput = m_inputs.size();
-   sh_info->nlds = 0;
+   int lds_pos = 0;
    int input_array_array_loc = 0;
    for (auto& [index, info] : m_inputs) {
       r600_shader_io& io = sh_info->input[input_array_array_loc++];
 
-      io.varying_slot = info.varying_slot();
-      io.system_value = info.system_value();
+      io.sid = info.sid();
       io.gpr = info.gpr();
       io.spi_sid = info.spi_sid();
       io.ij_index = info.ij_index();
+      io.name = info.name();
       io.interpolate = info.interpolator();
       io.interpolate_location = info.interpolate_loc();
-      if (info.need_lds_pos()) {
-         io.lds_pos = info.lds_pos();
-         sh_info->nlds = MAX2(unsigned(info.lds_pos() + 1), sh_info->nlds);
-      } else {
+      if (info.need_lds_pos())
+         io.lds_pos = lds_pos++;
+      else
          io.lds_pos = 0;
-      }
 
       io.ring_offset = info.ring_offset();
       io.uses_interpolate_at_centroid = info.uses_interpolate_at_centroid();
 
-      sfn_log << SfnLog::io << "Emit input [" << index << "]";
-      if (io.varying_slot != NUM_TOTAL_VARYING_SLOTS)
-         sfn_log << " varying_slot:" << static_cast<int>(io.varying_slot);
-      if (io.system_value != SYSTEM_VALUE_MAX)
-         sfn_log << " system_value:" << static_cast<int>(io.system_value);
-      sfn_log << " spi_sid:" << io.spi_sid << "\n";
+      sfn_log << SfnLog::io << "Emit Input [" << index << "] sid:" << io.sid
+              << " spi_sid:" << io.spi_sid << "\n";
       assert(io.spi_sid >= 0);
    }
 
+   sh_info->nlds = lds_pos;
    sh_info->noutput = m_outputs.size();
-   /* VS is required to export at least one parameter. */
-   sh_info->highest_export_param = 0;
    sh_info->num_loops = m_nloops;
    int output_array_array_loc = 0;
 
    for (auto& [index, info] : m_outputs) {
       r600_shader_io& io = sh_info->output[output_array_array_loc++];
-      io.varying_slot = info.varying_slot();
-      io.frag_result = info.frag_result();
+      io.sid = info.sid();
       io.gpr = info.gpr();
       io.spi_sid = info.spi_sid();
+      io.name = info.name();
       io.write_mask = info.writemask();
-      io.export_param = info.export_param();
-      if (info.export_param() >= 0)
-         sh_info->highest_export_param = MAX2(unsigned(info.export_param()),
-                                              sh_info->highest_export_param);
 
-      sfn_log << SfnLog::io << "Emit output[" << index << "]";
-      if (io.varying_slot != NUM_TOTAL_VARYING_SLOTS)
-         sfn_log << " varying_slot:" << static_cast<int>(io.varying_slot);
-      if (io.frag_result != static_cast<gl_frag_result>(FRAG_RESULT_MAX))
-         sfn_log << " frag_result:" << static_cast<int>(io.frag_result);
-      sfn_log << " spi_sid:" << io.spi_sid << " write_mask:" << io.write_mask << "\n";
+      sfn_log << SfnLog::io << "Emit output[" << index << "] sid:" << io.sid
+              << " spi_sid:" << io.spi_sid << "\n";
       assert(io.spi_sid >= 0);
    }
 
@@ -1727,7 +1442,6 @@ Shader::get_shader_info(r600_shader *sh_info)
    sh_info->needs_scratch_space = m_flags.test(sh_needs_scratch_space);
    sh_info->uses_images = m_flags.test(sh_uses_images);
    sh_info->uses_atomics = m_flags.test(sh_uses_atomics);
-   sh_info->disable_sb = m_flags.test(sh_disble_sb);
    sh_info->has_txq_cube_array_z_comp = m_flags.test(sh_txs_cube_array_comp);
    sh_info->indirect_files = m_indirect_files;
    do_get_shader_info(sh_info);

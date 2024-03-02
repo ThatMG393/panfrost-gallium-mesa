@@ -30,8 +30,6 @@
 #include "util/u_atomic.h"
 #include "pipe/p_state.h"
 
-#include "state_tracker/st_context.h"
-
 #include "stw_st.h"
 #include "stw_device.h"
 #include "stw_framebuffer.h"
@@ -44,7 +42,7 @@
 #endif
 
 struct stw_st_framebuffer {
-   struct pipe_frontend_drawable base;
+   struct st_framebuffer_iface base;
 
    struct stw_framebuffer *fb;
    struct st_visual stvis;
@@ -147,12 +145,12 @@ stw_st_fill_private_loader_data(struct stw_st_framebuffer *stwfb, struct kopper_
  * Remove outdated textures and create the requested ones.
  */
 static void
-stw_st_framebuffer_validate_locked(struct st_context *st,
-                                   struct pipe_frontend_drawable *drawable,
+stw_st_framebuffer_validate_locked(struct st_context_iface *stctx,
+                                   struct st_framebuffer_iface *stfb,
                                    unsigned width, unsigned height,
                                    unsigned mask)
 {
-   struct stw_st_framebuffer *stwfb = stw_st_framebuffer(drawable);
+   struct stw_st_framebuffer *stwfb = stw_st_framebuffer(stfb);
    struct pipe_resource templ;
    unsigned i;
 
@@ -169,9 +167,8 @@ stw_st_framebuffer_validate_locked(struct st_context *st,
     * drawing. A fake front texture is needed to handle that scenario.
     * For MSAA, we just need to make sure that the back buffer also
     * exists, so we can blt to it during flush_frontbuffer. */
-   if ((mask & ST_ATTACHMENT_FRONT_LEFT_MASK) &&
-       stwfb->fb->winsys_framebuffer &&
-       (stwfb->stvis.buffer_mask & ST_ATTACHMENT_BACK_LEFT_MASK)) {
+   if (mask & ST_ATTACHMENT_FRONT_LEFT_MASK &&
+       stwfb->fb->winsys_framebuffer) {
       if (stwfb->stvis.samples <= 1)
          stwfb->needs_fake_front = true;
       else
@@ -189,7 +186,7 @@ stw_st_framebuffer_validate_locked(struct st_context *st,
       if (stwfb->fb->winsys_framebuffer) {
          templ.nr_samples = templ.nr_storage_samples = 1;
          templ.format = stwfb->stvis.color_format;
-         stwfb->fb->winsys_framebuffer->resize(stwfb->fb->winsys_framebuffer, st->pipe, &templ);
+         stwfb->fb->winsys_framebuffer->resize(stwfb->fb->winsys_framebuffer, stctx->pipe, &templ);
       }
    }
 
@@ -228,12 +225,6 @@ stw_st_framebuffer_validate_locked(struct st_context *st,
       case ST_ATTACHMENT_DEPTH_STENCIL:
          format = stwfb->stvis.depth_stencil_format;
          bind = PIPE_BIND_DEPTH_STENCIL;
-
-#ifdef GALLIUM_ZINK
-         if (stw_dev->zink)
-            bind |= PIPE_BIND_DISPLAY_TARGET;
-#endif
-
          break;
       default:
          format = PIPE_FORMAT_NONE;
@@ -307,13 +298,13 @@ stw_st_framebuffer_validate_locked(struct st_context *st,
             stw_dev->screen->resource_create(stw_dev->screen, &templ);
 
          /* TODO Only blit if there is something currently drawn on the back buffer */
-         stw_pipe_blit(st->pipe,
+         stw_pipe_blit(stctx->pipe,
                        stwfb->back_texture,
                        stwfb->textures[ST_ATTACHMENT_BACK_LEFT]);
       }
 
       /* Copying front texture content to fake front texture (back texture) */
-      stw_pipe_blit(st->pipe,
+      stw_pipe_blit(stctx->pipe,
                     stwfb->textures[ST_ATTACHMENT_BACK_LEFT],
                     stwfb->textures[ST_ATTACHMENT_FRONT_LEFT]);
    }
@@ -324,14 +315,13 @@ stw_st_framebuffer_validate_locked(struct st_context *st,
 }
 
 static bool
-stw_st_framebuffer_validate(struct st_context *st,
-                            struct pipe_frontend_drawable *drawable,
+stw_st_framebuffer_validate(struct st_context_iface *stctx,
+                            struct st_framebuffer_iface *stfb,
                             const enum st_attachment_type *statts,
                             unsigned count,
-                            struct pipe_resource **out,
-                            struct pipe_resource **resolve)
+                            struct pipe_resource **out)
 {
-   struct stw_st_framebuffer *stwfb = stw_st_framebuffer(drawable);
+   struct stw_st_framebuffer *stwfb = stw_st_framebuffer(stfb);
    unsigned statt_mask, i;
 
    statt_mask = 0x0;
@@ -341,9 +331,9 @@ stw_st_framebuffer_validate(struct st_context *st,
    stw_framebuffer_lock(stwfb->fb);
 
    if (stwfb->fb->must_resize || stwfb->needs_fake_front || (statt_mask & ~stwfb->texture_mask)) {
-      stw_st_framebuffer_validate_locked(st, &stwfb->base,
+      stw_st_framebuffer_validate_locked(stctx, &stwfb->base,
             stwfb->fb->width, stwfb->fb->height, statt_mask);
-      stwfb->fb->must_resize = false;
+      stwfb->fb->must_resize = FALSE;
    }
 
    struct pipe_resource **textures =
@@ -364,20 +354,13 @@ stw_st_framebuffer_validate(struct st_context *st,
       pipe_resource_reference(&out[i], texture);
    }
 
-   if (resolve && stwfb->stvis.samples > 1) {
-      if (statt_mask & BITFIELD_BIT(ST_ATTACHMENT_FRONT_LEFT))
-         pipe_resource_reference(resolve, stwfb->textures[ST_ATTACHMENT_FRONT_LEFT]);
-      else if (statt_mask & BITFIELD_BIT(ST_ATTACHMENT_BACK_LEFT))
-         pipe_resource_reference(resolve, stwfb->textures[ST_ATTACHMENT_BACK_LEFT]);
-   }
-
    stw_framebuffer_unlock(stwfb->fb);
 
    return true;
 }
 
 struct notify_before_flush_cb_args {
-   struct st_context *st;
+   struct st_context_iface *stctx;
    struct stw_st_framebuffer *stwfb;
    unsigned flags;
 };
@@ -386,7 +369,7 @@ static void
 notify_before_flush_cb(void* _args)
 {
    struct notify_before_flush_cb_args *args = (struct notify_before_flush_cb_args *) _args;
-   struct st_context *st = args->st;
+   struct st_context_iface *st = args->stctx;
    struct pipe_context *pipe = st->pipe;
 
    if (args->stwfb->stvis.samples > 1) {
@@ -408,16 +391,16 @@ notify_before_flush_cb(void* _args)
 }
 
 void
-stw_st_flush(struct st_context *st,
-             struct pipe_frontend_drawable *drawable,
+stw_st_flush(struct st_context_iface *stctx,
+             struct st_framebuffer_iface *stfb,
              unsigned flags)
 {
-   struct stw_st_framebuffer *stwfb = stw_st_framebuffer(drawable);
+   struct stw_st_framebuffer *stwfb = stw_st_framebuffer(stfb);
    struct notify_before_flush_cb_args args;
    struct pipe_fence_handle **pfence = NULL;
    struct pipe_fence_handle *fence = NULL;
 
-   args.st = st;
+   args.stctx = stctx;
    args.stwfb = stwfb;
    args.flags = flags;
 
@@ -426,10 +409,10 @@ stw_st_flush(struct st_context *st,
 
    if (flags & ST_FLUSH_WAIT)
       pfence = &fence;
-   st_context_flush(st, flags, pfence, notify_before_flush_cb, &args);
+   stctx->flush(stctx, flags, pfence, notify_before_flush_cb, &args);
 
    /* TODO: remove this if the framebuffer state doesn't change. */
-   st_context_invalidate_state(st, ST_INVALIDATE_FB_STATE);
+   stctx->invalidate_state(stctx, ST_INVALIDATE_FB_STATE);
 }
 
 /**
@@ -437,11 +420,11 @@ stw_st_flush(struct st_context *st,
  */
 static bool
 stw_st_framebuffer_present_locked(HDC hdc,
-                                  struct st_context *st,
-                                  struct pipe_frontend_drawable *drawable,
+                                  struct st_context_iface *stctx,
+                                  struct st_framebuffer_iface *stfb,
                                   enum st_attachment_type statt)
 {
-   struct stw_st_framebuffer *stwfb = stw_st_framebuffer(drawable);
+   struct stw_st_framebuffer *stwfb = stw_st_framebuffer(stfb);
    struct pipe_resource *resource;
 
    assert(stw_own_mutex(&stwfb->fb->mutex));
@@ -460,12 +443,12 @@ stw_st_framebuffer_present_locked(HDC hdc,
 }
 
 static bool
-stw_st_framebuffer_flush_front(struct st_context *st,
-                               struct pipe_frontend_drawable *drawable,
+stw_st_framebuffer_flush_front(struct st_context_iface *stctx,
+                               struct st_framebuffer_iface *stfb,
                                enum st_attachment_type statt)
 {
-   struct stw_st_framebuffer *stwfb = stw_st_framebuffer(drawable);
-   struct pipe_context *pipe = st->pipe;
+   struct stw_st_framebuffer *stwfb = stw_st_framebuffer(stfb);
+   struct pipe_context *pipe = stctx->pipe;
    bool ret;
    HDC hDC;
    bool need_swap_textures = false;
@@ -489,9 +472,6 @@ stw_st_framebuffer_flush_front(struct st_context *st,
       /* fake front texture is now invalid */
       p_atomic_inc(&stwfb->base.stamp);
       need_swap_textures = true;
-   } else if (stwfb->fb->winsys_framebuffer &&
-              stwfb->fb->winsys_framebuffer->flush_frontbuffer) {
-      stwfb->fb->winsys_framebuffer->flush_frontbuffer(stwfb->fb->winsys_framebuffer, pipe);
    }
 
    if (need_swap_textures) {
@@ -510,7 +490,7 @@ stw_st_framebuffer_flush_front(struct st_context *st,
 
    hDC = GetDC(stwfb->fb->hWnd);
 
-   ret = stw_st_framebuffer_present_locked(hDC, st, &stwfb->base, statt);
+   ret = stw_st_framebuffer_present_locked(hDC, stctx, &stwfb->base, statt);
 
    ReleaseDC(stwfb->fb->hWnd, hDC);
 
@@ -520,8 +500,8 @@ stw_st_framebuffer_flush_front(struct st_context *st,
 /**
  * Create a framebuffer interface.
  */
-struct pipe_frontend_drawable *
-stw_st_create_framebuffer(struct stw_framebuffer *fb, struct pipe_frontend_screen *fscreen)
+struct st_framebuffer_iface *
+stw_st_create_framebuffer(struct stw_framebuffer *fb, struct st_manager *smapi)
 {
    struct stw_st_framebuffer *stwfb;
 
@@ -532,7 +512,7 @@ stw_st_create_framebuffer(struct stw_framebuffer *fb, struct pipe_frontend_scree
    stwfb->fb = fb;
    stwfb->stvis = fb->pfi->stvis;
    stwfb->base.ID = p_atomic_inc_return(&stwfb_ID);
-   stwfb->base.fscreen = fscreen;
+   stwfb->base.state_manager = smapi;
 
    stwfb->base.visual = &stwfb->stvis;
    p_atomic_set(&stwfb->base.stamp, 1);
@@ -546,9 +526,9 @@ stw_st_create_framebuffer(struct stw_framebuffer *fb, struct pipe_frontend_scree
  * Destroy a framebuffer interface.
  */
 void
-stw_st_destroy_framebuffer_locked(struct pipe_frontend_drawable *drawable)
+stw_st_destroy_framebuffer_locked(struct st_framebuffer_iface *stfb)
 {
-   struct stw_st_framebuffer *stwfb = stw_st_framebuffer(drawable);
+   struct stw_st_framebuffer *stwfb = stw_st_framebuffer(stfb);
    int i;
 
    for (i = 0; i < ST_ATTACHMENT_COUNT; i++) {
@@ -569,10 +549,10 @@ stw_st_destroy_framebuffer_locked(struct pipe_frontend_drawable *drawable)
  * Swap the buffers of the given framebuffer.
  */
 bool
-stw_st_swap_framebuffer_locked(HDC hdc, struct st_context *st,
-                               struct pipe_frontend_drawable *drawable)
+stw_st_swap_framebuffer_locked(HDC hdc, struct st_context_iface *stctx,
+                               struct st_framebuffer_iface *stfb)
 {
-   struct stw_st_framebuffer *stwfb = stw_st_framebuffer(drawable);
+   struct stw_st_framebuffer *stwfb = stw_st_framebuffer(stfb);
    unsigned front = ST_ATTACHMENT_FRONT_LEFT, back = ST_ATTACHMENT_BACK_LEFT;
    struct pipe_resource *ptex;
    unsigned mask;
@@ -605,7 +585,7 @@ stw_st_swap_framebuffer_locked(HDC hdc, struct st_context *st,
    stwfb->texture_mask = mask;
 
    front = ST_ATTACHMENT_FRONT_LEFT;
-   return stw_st_framebuffer_present_locked(hdc, st, &stwfb->base, front);
+   return stw_st_framebuffer_present_locked(hdc, stctx, &stwfb->base, front);
 }
 
 
@@ -613,9 +593,9 @@ stw_st_swap_framebuffer_locked(HDC hdc, struct st_context *st,
  * Return the pipe_resource that correspond to given buffer.
  */
 struct pipe_resource *
-stw_get_framebuffer_resource(struct pipe_frontend_drawable *drawable,
+stw_get_framebuffer_resource(struct st_framebuffer_iface *stfb,
                              enum st_attachment_type att)
 {
-   struct stw_st_framebuffer *stwfb = stw_st_framebuffer(drawable);
+   struct stw_st_framebuffer *stwfb = stw_st_framebuffer(stfb);
    return stwfb->textures[att];
 }

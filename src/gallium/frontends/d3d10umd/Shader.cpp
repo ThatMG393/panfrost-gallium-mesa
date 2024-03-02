@@ -174,7 +174,7 @@ SetConstantBuffers(enum pipe_shader_type shader_type,    // IN
       pipe->set_constant_buffer(pipe,
                                 shader_type,
                                 StartBuffer + i,
-                                false,
+                                FALSE,
                                 &cb);
    }
 }
@@ -240,7 +240,7 @@ SetShaderResources(enum pipe_shader_type shader_type,                  // IN
          sampler_views[Offset + i] = sampler_view;
       } else {
          if (sampler_view) {
-            LOG_UNSUPPORTED(true);
+            LOG_UNSUPPORTED(TRUE);
             break;
          }
       }
@@ -545,7 +545,7 @@ CreateVertexShader(D3D10DDI_HDEVICE hDevice,                                  //
    Shader *pShader = CastShader(hShader);
 
    pShader->type = PIPE_SHADER_VERTEX;
-   pShader->output_resolved = true;
+   pShader->output_resolved = TRUE;
 
    memset(&pShader->state, 0, sizeof pShader->state);
    pShader->state.tokens = Shader_tgsi_translate(pCode, pShader->output_mapping);
@@ -681,7 +681,7 @@ CreateGeometryShader(D3D10DDI_HDEVICE hDevice,                                //
    Shader *pShader = CastShader(hShader);
 
    pShader->type = PIPE_SHADER_GEOMETRY;
-   pShader->output_resolved = true;
+   pShader->output_resolved = TRUE;
 
    memset(&pShader->state, 0, sizeof pShader->state);
    pShader->state.tokens = Shader_tgsi_translate(pShaderCode, pShader->output_mapping);
@@ -842,7 +842,7 @@ CreateGeometryShaderWithStreamOutput(
    Shader *pShader = CastShader(hShader);
    int total_components[PIPE_MAX_SO_BUFFERS] = {0};
    unsigned num_holes = 0;
-   bool all_slot_zero = true;
+   boolean all_slot_zero = TRUE;
 
    pShader->type = PIPE_SHADER_GEOMETRY;
 
@@ -889,7 +889,7 @@ CreateGeometryShaderWithStreamOutput(
          pShader->state.stream_output.output[idx].dst_offset =
             total_components[pOutputStreamDecl->OutputSlot];
          if (pOutputStreamDecl->OutputSlot != 0)
-            all_slot_zero = false;
+            all_slot_zero = FALSE;
       }
       total_components[pOutputStreamDecl->OutputSlot] += num_components;
    }
@@ -997,7 +997,7 @@ CreatePixelShader(D3D10DDI_HDEVICE hDevice,                                // IN
    Shader *pShader = CastShader(hShader);
 
    pShader->type = PIPE_SHADER_FRAGMENT;
-   pShader->output_resolved = true;
+   pShader->output_resolved = TRUE;
 
    memset(&pShader->state, 0, sizeof pShader->state);
    pShader->state.tokens = Shader_tgsi_translate(pShaderCode,
@@ -1203,7 +1203,7 @@ CreateShaderResourceView(
    struct pipe_sampler_view desc;
    memset(&desc, 0, sizeof desc);
    resource = CastPipeResource(pCreateSRView->hDrvResource);
-   format = FormatTranslate(pCreateSRView->Format, false);
+   format = FormatTranslate(pCreateSRView->Format, FALSE);
 
    u_sampler_view_default_template(&desc,
                                    resource,
@@ -1283,7 +1283,7 @@ CreateShaderResourceView1(
    struct pipe_sampler_view desc;
    memset(&desc, 0, sizeof desc);
    resource = CastPipeResource(pCreateSRView->hDrvResource);
-   format = FormatTranslate(pCreateSRView->Format, false);
+   format = FormatTranslate(pCreateSRView->Format, FALSE);
 
    u_sampler_view_default_template(&desc,
                                    resource,

@@ -34,7 +34,7 @@
 #define PFD_SUPPORT_COMPOSITION 0x00008000
 #endif
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "util/format/u_formats.h"
 #include "frontend/api.h"
 
@@ -49,8 +49,8 @@ struct stw_pixelformat_info
    struct st_visual stvis;
 
    /** WGL_ARB_render_texture */
-   bool bindToTextureRGB;
-   bool bindToTextureRGBA;
+   boolean bindToTextureRGB;
+   boolean bindToTextureRGBA;
 
    int iPixelFormat;
 };

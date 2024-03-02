@@ -30,7 +30,7 @@
 
 #include <windows.h> /* for HDC */
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "frontend/api.h"
 
 struct pipe_screen;
@@ -51,7 +51,7 @@ struct stw_winsys_framebuffer
    (*destroy)(struct stw_winsys_framebuffer *fb,
               struct pipe_context *context);
 
-   bool
+   boolean
    (*present)(struct stw_winsys_framebuffer *fb,
               int interval);
 
@@ -63,10 +63,6 @@ struct stw_winsys_framebuffer
    struct pipe_resource *
    (*get_resource)(struct stw_winsys_framebuffer *fb,
                    enum st_attachment_type statt);
-
-   void
-   (*flush_frontbuffer)(struct stw_winsys_framebuffer *fb,
-                        struct pipe_context *context);
 };
 
 struct stw_winsys
@@ -89,7 +85,7 @@ struct stw_winsys
     *
     * @sa GLCBPRESENTBUFFERSDATA::AdapterLuid;
     */
-   bool
+   boolean
    (*get_adapter_luid)( struct pipe_screen *screen,
                         HDC hDC,
                         LUID *pAdapterLuid );
@@ -146,10 +142,10 @@ struct stw_winsys
    (*get_name)(void);
 };
 
-bool
+boolean
 stw_init(const struct stw_winsys *stw_winsys);
 
-bool
+boolean
 stw_init_thread(void);
 
 void

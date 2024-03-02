@@ -35,8 +35,6 @@
 #include "draw_private.h"
 #include "draw_vertex.h"
 
-#include "tgsi/tgsi_scan.h"
-
 
 struct draw_context;
 struct pipe_shader_state;
@@ -131,7 +129,8 @@ struct draw_vertex_shader {
    void (*run_linear)(struct draw_vertex_shader *shader,
                       const float (*input)[4],
                       float (*output)[4],
-                      const struct draw_buffer_info *constants,
+                      const void *constants[PIPE_MAX_CONSTANT_BUFFERS],
+                      const unsigned const_size[PIPE_MAX_CONSTANT_BUFFERS],
                       unsigned count,
                       unsigned input_stride,
                       unsigned output_stride,
@@ -154,7 +153,7 @@ struct draw_vertex_shader *
 draw_create_vs_exec(struct draw_context *draw,
                     const struct pipe_shader_state *templ);
 
-#if DRAW_LLVM_AVAILABLE
+#ifdef DRAW_LLVM_AVAILABLE
 struct draw_vertex_shader *
 draw_create_vs_llvm(struct draw_context *draw,
                     const struct pipe_shader_state *state);

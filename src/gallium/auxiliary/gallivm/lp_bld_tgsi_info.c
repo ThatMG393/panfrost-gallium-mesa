@@ -90,7 +90,7 @@ analyse_src(struct analysis_context *ctx,
 /**
  * Whether this register channel refers to a specific immediate value.
  */
-static bool
+static boolean
 is_immediate(const struct lp_tgsi_channel_info *chan_info, float value)
 {
    return chan_info->file == TGSI_FILE_IMMEDIATE &&
@@ -113,7 +113,7 @@ analyse_tex(struct analysis_context *ctx,
 
    if (info->num_texs < ARRAY_SIZE(info->tex)) {
       struct lp_tgsi_texture_info *tex_info = &info->tex[info->num_texs];
-      bool indirect = false;
+      boolean indirect = FALSE;
       unsigned readmask = 0;
 
       tex_info->target = inst->Texture.Texture;
@@ -143,12 +143,12 @@ analyse_tex(struct analysis_context *ctx,
          readmask = TGSI_WRITEMASK_XYZW;
          /* modifier would be in another not analyzed reg so just say indirect */
          if (modifier != LP_BLD_TEX_MODIFIER_NONE) {
-            indirect = true;
+            indirect = TRUE;
          }
          break;
       case TGSI_TEXTURE_SHADOWCUBE_ARRAY:
          readmask = TGSI_WRITEMASK_XYZW;
-         indirect = true;
+         indirect = TRUE;
          break;
       default:
          assert(0);
@@ -157,7 +157,7 @@ analyse_tex(struct analysis_context *ctx,
 
       if (modifier == LP_BLD_TEX_MODIFIER_EXPLICIT_DERIV) {
          /* We don't track explicit derivatives, although we could */
-         indirect = true;
+         indirect = TRUE;
          tex_info->sampler_unit = inst->Src[3].Register.Index;
          tex_info->texture_unit = inst->Src[3].Register.Index;
       }  else {
@@ -175,7 +175,7 @@ analyse_tex(struct analysis_context *ctx,
          if (readmask & (1 << chan)) {
             analyse_src(ctx, chan_info, &inst->Src[0].Register, chan);
             if (chan_info->file != TGSI_FILE_INPUT) {
-               indirect = true;
+               indirect = TRUE;
             }
          } else {
             memset(chan_info, 0, sizeof *chan_info);
@@ -183,12 +183,12 @@ analyse_tex(struct analysis_context *ctx,
       }
 
       if (indirect) {
-         info->indirect_textures = true;
+         info->indirect_textures = TRUE;
       }
 
       ++info->num_texs;
    } else {
-      info->indirect_textures = true;
+      info->indirect_textures = TRUE;
    }
 }
 
@@ -202,7 +202,7 @@ static void
 analyse_sample(struct analysis_context *ctx,
                const struct tgsi_full_instruction *inst,
                enum lp_build_tex_modifier modifier,
-               bool shadow)
+               boolean shadow)
 {
    struct lp_tgsi_info *info = ctx->info;
    unsigned chan;
@@ -210,8 +210,8 @@ analyse_sample(struct analysis_context *ctx,
    if (info->num_texs < ARRAY_SIZE(info->tex)) {
       struct lp_tgsi_texture_info *tex_info = &info->tex[info->num_texs];
       unsigned target = ctx->sample_target[inst->Src[1].Register.Index];
-      bool indirect = false;
-      bool shadow = false;
+      boolean indirect = FALSE;
+      boolean shadow = FALSE;
       unsigned readmask;
 
       switch (target) {
@@ -245,14 +245,14 @@ analyse_sample(struct analysis_context *ctx,
       tex_info->sampler_unit = inst->Src[2].Register.Index;
 
       if (tex_info->texture_unit != tex_info->sampler_unit) {
-         info->sampler_texture_units_different = true;
+         info->sampler_texture_units_different = TRUE;
       }
 
       if (modifier == LP_BLD_TEX_MODIFIER_EXPLICIT_DERIV ||
           modifier == LP_BLD_TEX_MODIFIER_EXPLICIT_LOD ||
           modifier == LP_BLD_TEX_MODIFIER_LOD_BIAS || shadow) {
          /* We don't track insts with additional regs, although we could */
-         indirect = true;
+         indirect = TRUE;
       }
 
       for (chan = 0; chan < 4; ++chan) {
@@ -260,7 +260,7 @@ analyse_sample(struct analysis_context *ctx,
          if (readmask & (1 << chan)) {
             analyse_src(ctx, chan_info, &inst->Src[0].Register, chan);
             if (chan_info->file != TGSI_FILE_INPUT) {
-               indirect = true;
+               indirect = TRUE;
             }
          } else {
             memset(chan_info, 0, sizeof *chan_info);
@@ -268,12 +268,12 @@ analyse_sample(struct analysis_context *ctx,
       }
 
       if (indirect) {
-         info->indirect_textures = true;
+         info->indirect_textures = TRUE;
       }
 
       ++info->num_texs;
    } else {
-      info->indirect_textures = true;
+      info->indirect_textures = TRUE;
    }
 }
 
@@ -349,22 +349,22 @@ analyse_instruction(struct analysis_context *ctx,
          analyse_tex(ctx, inst, LP_BLD_TEX_MODIFIER_EXPLICIT_LOD);
          break;
       case TGSI_OPCODE_SAMPLE:
-         analyse_sample(ctx, inst, LP_BLD_TEX_MODIFIER_NONE, false);
+         analyse_sample(ctx, inst, LP_BLD_TEX_MODIFIER_NONE, FALSE);
          break;
       case TGSI_OPCODE_SAMPLE_C:
-         analyse_sample(ctx, inst, LP_BLD_TEX_MODIFIER_NONE, true);
+         analyse_sample(ctx, inst, LP_BLD_TEX_MODIFIER_NONE, TRUE);
          break;
       case TGSI_OPCODE_SAMPLE_C_LZ:
-         analyse_sample(ctx, inst, LP_BLD_TEX_MODIFIER_LOD_ZERO, true);
+         analyse_sample(ctx, inst, LP_BLD_TEX_MODIFIER_LOD_ZERO, TRUE);
          break;
       case TGSI_OPCODE_SAMPLE_D:
-         analyse_sample(ctx, inst, LP_BLD_TEX_MODIFIER_EXPLICIT_DERIV, false);
+         analyse_sample(ctx, inst, LP_BLD_TEX_MODIFIER_EXPLICIT_DERIV, FALSE);
          break;
       case TGSI_OPCODE_SAMPLE_B:
-         analyse_sample(ctx, inst, LP_BLD_TEX_MODIFIER_LOD_BIAS, false);
+         analyse_sample(ctx, inst, LP_BLD_TEX_MODIFIER_LOD_BIAS, FALSE);
          break;
       case TGSI_OPCODE_SAMPLE_L:
-         analyse_sample(ctx, inst, LP_BLD_TEX_MODIFIER_EXPLICIT_LOD, false);
+         analyse_sample(ctx, inst, LP_BLD_TEX_MODIFIER_EXPLICIT_LOD, FALSE);
          break;
       default:
          break;
@@ -590,7 +590,7 @@ lp_build_tgsi_info(const struct tgsi_token *tokens,
                   ctx->imm[ctx->num_imms][chan] = value;
 
                   if (value < 0.0f || value > 1.0f) {
-                     info->unclamped_immediates = true;
+                     info->unclamped_immediates = TRUE;
                   }
                }
                ++ctx->num_imms;

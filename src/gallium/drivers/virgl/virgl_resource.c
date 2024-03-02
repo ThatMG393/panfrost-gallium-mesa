@@ -154,8 +154,7 @@ static bool virgl_res_needs_readback(struct virgl_context *vctx,
 
 static enum virgl_transfer_map_type
 virgl_resource_transfer_prepare(struct virgl_context *vctx,
-                                struct virgl_transfer *xfer,
-                                bool is_blob)
+                                struct virgl_transfer *xfer)
 {
    struct virgl_screen *vs = virgl_screen(vctx->base.screen);
    struct virgl_winsys *vws = vs->vws;
@@ -202,7 +201,7 @@ virgl_resource_transfer_prepare(struct virgl_context *vctx,
    /* When the resource is busy but its content can be discarded, we can
     * replace its HW resource or use a staging buffer to avoid waiting.
     */
-   if (wait && !is_blob &&
+   if (wait &&
        (xfer->base.usage & (PIPE_MAP_DISCARD_RANGE |
                             PIPE_MAP_DISCARD_WHOLE_RESOURCE)) &&
        likely(!(virgl_debug & VIRGL_DEBUG_XFER))) {
@@ -282,11 +281,9 @@ virgl_resource_transfer_prepare(struct virgl_context *vctx,
        * trackers.  It should be waited for in all cases, including when
        * PIPE_MAP_UNSYNCHRONIZED is set.
        */
-      if (!is_blob) {
-         vws->resource_wait(vws, res->hw_res);
-         vws->transfer_get(vws, res->hw_res, &xfer->base.box, xfer->base.stride,
-                           xfer->l_stride, xfer->offset, xfer->base.level);
-      }
+      vws->resource_wait(vws, res->hw_res);
+      vws->transfer_get(vws, res->hw_res, &xfer->base.box, xfer->base.stride,
+                        xfer->l_stride, xfer->offset, xfer->base.level);
       /* transfer_get puts the resource into a maybe_busy state, so we will have
        * to wait another time if we want to use that resource. */
       wait = true;
@@ -309,12 +306,12 @@ virgl_resource_transfer_prepare(struct virgl_context *vctx,
 static unsigned
 virgl_transfer_map_size(struct virgl_transfer *vtransfer,
                         unsigned *out_stride,
-                        uintptr_t *out_layer_stride)
+                        unsigned *out_layer_stride)
 {
    struct pipe_resource *pres = vtransfer->base.resource;
    struct pipe_box *box = &vtransfer->base.box;
    unsigned stride;
-   uintptr_t layer_stride;
+   unsigned layer_stride;
    unsigned size;
 
    assert(out_stride);
@@ -349,8 +346,8 @@ virgl_staging_map(struct virgl_context *vctx,
    unsigned size;
    unsigned align_offset;
    unsigned stride;
-   uintptr_t layer_stride;
-   uint8_t *map_addr;
+   unsigned layer_stride;
+   void *map_addr;
    bool alloc_succeeded;
 
    assert(vctx->supports_staging);
@@ -512,12 +509,10 @@ virgl_resource_transfer_map(struct pipe_context *ctx,
    if (resource->flags & PIPE_RESOURCE_FLAG_MAP_COHERENT)
       usage |= PIPE_MAP_COHERENT;
 
-   bool is_blob = usage & (PIPE_MAP_COHERENT | PIPE_MAP_PERSISTENT);
-
    trans = virgl_resource_create_transfer(vctx, resource,
                                           &vres->metadata, level, usage, box);
 
-   map_type = virgl_resource_transfer_prepare(vctx, trans, is_blob);
+   map_type = virgl_resource_transfer_prepare(vctx, trans);
    switch (map_type) {
    case VIRGL_TRANSFER_MAP_REALLOC:
       if (!virgl_resource_realloc(vctx, vres)) {
@@ -529,7 +524,7 @@ virgl_resource_transfer_map(struct pipe_context *ctx,
    case VIRGL_TRANSFER_MAP_HW_RES:
       trans->hw_res_map = vws->resource_map(vws, vres->hw_res);
       if (trans->hw_res_map)
-         map_addr = (uint8_t *)trans->hw_res_map + trans->offset;
+         map_addr = trans->hw_res_map + trans->offset;
       else
          map_addr = NULL;
       break;
@@ -717,28 +712,21 @@ static struct pipe_resource *virgl_resource_from_handle(struct pipe_screen *scre
    uint32_t storage_size;
 
    struct virgl_screen *vs = virgl_screen(screen);
-   if (templ && templ->target == PIPE_BUFFER)
+   if (templ->target == PIPE_BUFFER)
       return NULL;
 
    struct virgl_resource *res = CALLOC_STRUCT(virgl_resource);
-   if (templ)
-      res->b = *templ;
+   res->b = *templ;
    res->b.screen = &vs->base;
    pipe_reference_init(&res->b.reference, 1);
 
    plane = winsys_stride = plane_offset = modifier = 0;
    res->hw_res = vs->vws->resource_create_from_handle(vs->vws, whandle,
-                                                      &res->b,
                                                       &plane,
                                                       &winsys_stride,
                                                       &plane_offset,
                                                       &modifier,
                                                       &res->blob_mem);
-
-   if (!res->hw_res) {
-      FREE(res);
-      return NULL;
-   }
 
    /* do not use winsys returns for guest storage info of classic resource */
    if (!res->blob_mem) {
@@ -749,6 +737,10 @@ static struct pipe_resource *virgl_resource_from_handle(struct pipe_screen *scre
 
    virgl_resource_layout(&res->b, &res->metadata, plane, winsys_stride,
                          plane_offset, modifier);
+   if (!res->hw_res) {
+      FREE(res);
+      return NULL;
+   }
 
    /*
    *  If the overall resource is larger than a single page in size, we can
@@ -765,8 +757,7 @@ static struct pipe_resource *virgl_resource_from_handle(struct pipe_screen *scre
 
    /* assign blob resource a type in case it was created untyped */
    if (res->blob_mem && plane == 0 &&
-       (vs->caps.caps.v2.host_feature_check_version >= 18 ||
-	(vs->caps.caps.v2.capability_bits_v2 & VIRGL_CAP_V2_UNTYPED_RESOURCE))) {
+       (vs->caps.caps.v2.capability_bits_v2 & VIRGL_CAP_V2_UNTYPED_RESOURCE)) {
       uint32_t plane_strides[VIRGL_MAX_PLANE_COUNT];
       uint32_t plane_offsets[VIRGL_MAX_PLANE_COUNT];
       uint32_t plane_count = 0;
@@ -812,28 +803,6 @@ static struct pipe_resource *virgl_resource_from_handle(struct pipe_screen *scre
    return &res->b;
 }
 
-static bool
-virgl_resource_get_param(struct pipe_screen *screen,
-                         struct pipe_context *context,
-                         struct pipe_resource *resource,
-                         unsigned plane,
-                         unsigned layer,
-                         unsigned level,
-                         enum pipe_resource_param param,
-                         unsigned handle_usage,
-                         uint64_t *value)
-{
-   struct virgl_resource *res = virgl_resource(resource);
-
-   switch(param) {
-   case PIPE_RESOURCE_PARAM_MODIFIER:
-      *value = res->metadata.modifier;
-      return true;
-   default:
-      return false;
-   }
-}
-
 void virgl_init_screen_resource_functions(struct pipe_screen *screen)
 {
     screen->resource_create_front = virgl_resource_create_front;
@@ -841,7 +810,6 @@ void virgl_init_screen_resource_functions(struct pipe_screen *screen)
     screen->resource_from_handle = virgl_resource_from_handle;
     screen->resource_get_handle = virgl_resource_get_handle;
     screen->resource_destroy = virgl_resource_destroy;
-    screen->resource_get_param = virgl_resource_get_param;
 }
 
 static void virgl_buffer_subdata(struct pipe_context *pipe,

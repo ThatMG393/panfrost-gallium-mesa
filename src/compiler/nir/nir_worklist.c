@@ -19,6 +19,10 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
  * IN THE SOFTWARE.
+ *
+ * Authors:
+ *    Jason Ekstrand (jason@jlekstrand.net)
+ *
  */
 
 #include "nir_worklist.h"
@@ -35,7 +39,10 @@ static bool
 nir_instr_worklist_add_srcs_cb(nir_src *src, void *state)
 {
    nir_instr_worklist *wl = state;
-   nir_instr_worklist_push_tail(wl, src->ssa->parent_instr);
+
+   if (src->is_ssa)
+      nir_instr_worklist_push_tail(wl, src->ssa->parent_instr);
+
    return true;
 }
 

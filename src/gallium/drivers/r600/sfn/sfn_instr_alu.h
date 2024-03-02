@@ -49,13 +49,6 @@ public:
       op2_opt_abs_src0 = 1 << 2
    };
 
-   enum SourceMod {
-      mod_none = 0,
-      mod_abs = 1,
-      mod_neg = 2
-   };
-
-
    static constexpr const AluBankSwizzle bs[6] = {
       alu_vec_012, alu_vec_021, alu_vec_120, alu_vec_102, alu_vec_201, alu_vec_210};
 
@@ -112,9 +105,6 @@ public:
    bool replace_source(PRegister old_src, PVirtualValue new_src) override;
    bool replace_dest(PRegister new_dest, AluInstr *move_instr) override;
 
-   bool can_replace_source(PRegister old_src, PVirtualValue new_src);
-   bool do_replace_source(PRegister old_src, PVirtualValue new_src);
-
    void set_op(EAluOp op) { m_opcode = op; }
 
    PRegister dest() const { return m_dest; }
@@ -122,7 +112,6 @@ public:
 
    int dest_chan() const { return m_dest ? m_dest->chan() : m_fallback_chan; }
 
-   const VirtualValue *psrc(unsigned i) const { return i < m_src.size() ? m_src[i] : nullptr; }
    PVirtualValue psrc(unsigned i) { return i < m_src.size() ? m_src[i] : nullptr; }
    VirtualValue& src(unsigned i)
    {
@@ -157,12 +146,11 @@ public:
 
    bool has_lds_access() const;
    bool has_lds_queue_read() const;
-   bool is_kill() const;
 
    static const std::map<ECFAluOpCode, std::string> cf_map;
    static const std::map<AluBankSwizzle, std::string> bank_swizzle_map;
    static Instr::Pointer
-   from_string(std::istream& is, ValueFactory& value_factory, AluGroup *, bool is_cayman);
+   from_string(std::istream& is, ValueFactory& value_factory, AluGroup *);
    static bool from_nir(nir_alu_instr *alu, Shader& shader);
 
    int alu_slots() const { return m_alu_slots; }
@@ -176,8 +164,7 @@ public:
    static const std::set<AluModifiers> last;
    static const std::set<AluModifiers> last_write;
 
-   std::tuple<PRegister, bool, PRegister> indirect_addr() const;
-   void update_indirect_addr(PRegister old_reg, PRegister reg) override;
+   std::tuple<PRegister, bool, bool> indirect_addr() const;
 
    void add_extra_dependency(PVirtualValue reg);
 
@@ -189,28 +176,11 @@ public:
    void inc_priority() { ++m_priority; }
 
    void set_parent_group(AluGroup *group) { m_parent_group = group; }
-   AluGroup *parent_group() { return m_parent_group;}
 
    AluInstr *as_alu() override { return this; }
 
    uint8_t allowed_src_chan_mask() const override;
-   uint8_t allowed_dest_chan_mask() const {return m_allowed_dest_mask;}
-
-   void inc_ar_uses() { ++m_num_ar_uses;}
-   auto num_ar_uses() const {return m_num_ar_uses;}
-
-   bool replace_src(int i, PVirtualValue new_src, uint32_t to_set,
-                    SourceMod to_clear);
-
-   void set_source_mod(int src, SourceMod mod) {
-      m_source_modifiers |= mod << (2 * src);
-   }
-   auto has_source_mod(int src, SourceMod mod) const {
-      return (m_source_modifiers & (mod << (2 * src))) != 0;
-   }
-   void reset_source_mod(int src, SourceMod mod) {
-      m_source_modifiers &= ~(mod << (2 * src));
-   }
+   uint8_t allowed_dest_chan_mask() const;
 
 private:
    friend class AluGroup;
@@ -242,13 +212,10 @@ private:
    int m_alu_slots{1};
    int m_fallback_chan{0};
    unsigned m_idx_offset{0};
-   int m_required_slots{0};
+   unsigned m_required_slots{0};
    int m_priority{0};
    std::set<PRegister, std::less<PRegister>, Allocator<PRegister>> m_extra_dependencies;
    AluGroup *m_parent_group{nullptr};
-   unsigned m_allowed_dest_mask{0xf};
-   unsigned m_num_ar_uses{0};
-   uint32_t m_source_modifiers{0};
 };
 
 class AluInstrVisitor : public InstrVisitor {

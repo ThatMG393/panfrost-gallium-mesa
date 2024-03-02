@@ -49,12 +49,6 @@
 #include "u_endian.h" /* for UTIL_ARCH_BIG_ENDIAN */
 #include "util/detect_cc.h"
 #include "util/detect_arch.h"
-#include "util/macros.h"
-
-#ifdef __HAIKU__
-#include <sys/param.h>
-#undef ALIGN
-#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -161,12 +155,27 @@ util_ifloor(float f)
 
 /**
  * Round float to nearest int.
- * the range of f should be [INT_MIN, INT_MAX]
  */
 static inline int
 util_iround(float f)
 {
-   return (int)lrintf(f);
+#if DETECT_CC_GCC && DETECT_ARCH_X86
+   int r;
+   __asm__ ("fistpl %0" : "=m" (r) : "t" (f) : "st");
+   return r;
+#elif DETECT_CC_MSVC && DETECT_ARCH_X86
+   int r;
+   _asm {
+      fld f
+      fistp r
+   }
+   return r;
+#else
+   if (f >= 0.0f)
+      return (int) (f + 0.5f);
+   else
+      return (int) (f - 0.5f);
+#endif
 }
 
 
@@ -619,6 +628,26 @@ util_memcpy_cpu_to_le32(void * restrict dest, const void * restrict src, size_t 
 }
 
 /**
+ * Clamp X to [MIN, MAX].
+ * This is a macro to allow float, int, uint, etc. types.
+ * We arbitrarily turn NaN into MIN.
+ */
+#define CLAMP( X, MIN, MAX )  ( (X)>(MIN) ? ((X)>(MAX) ? (MAX) : (X)) : (MIN) )
+
+/* Syntax sugar occuring frequently in graphics code */
+#define SATURATE( X ) CLAMP(X, 0.0f, 1.0f)
+
+#define MIN2( A, B )   ( (A)<(B) ? (A) : (B) )
+#define MAX2( A, B )   ( (A)>(B) ? (A) : (B) )
+
+#define MIN3( A, B, C ) ((A) < (B) ? MIN2(A, C) : MIN2(B, C))
+#define MAX3( A, B, C ) ((A) > (B) ? MAX2(A, C) : MAX2(B, C))
+
+#define MIN4( A, B, C, D ) ((A) < (B) ? MIN3(A, C, D) : MIN3(B, C, D))
+#define MAX4( A, B, C, D ) ((A) > (B) ? MAX3(A, C, D) : MAX3(B, C, D))
+
+
+/**
  * Align a value up to an alignment value
  *
  * If \c value is not already aligned to the requested alignment value, it
@@ -633,11 +662,11 @@ util_memcpy_cpu_to_le32(void * restrict dest, const void * restrict src, size_t 
 #if defined(ALIGN)
 #undef ALIGN
 #endif
-static inline uint32_t
-ALIGN(uint32_t value, uint32_t alignment)
+static inline uintptr_t
+ALIGN(uintptr_t value, int32_t alignment)
 {
    assert(util_is_power_of_two_nonzero(alignment));
-   return ALIGN_POT(value, alignment);
+   return (((value) + (alignment) - 1) & ~((alignment) - 1));
 }
 
 /**
@@ -662,37 +691,25 @@ ALIGN_NPOT(uintptr_t value, int32_t alignment)
  * \sa ALIGN()
  */
 static inline uint64_t
-ROUND_DOWN_TO(uint64_t value, uint32_t alignment)
+ROUND_DOWN_TO(uint64_t value, int32_t alignment)
 {
    assert(util_is_power_of_two_nonzero(alignment));
-   return ((value) & ~(uint64_t)(alignment - 1));
+   return ((value) & ~(alignment - 1));
 }
 
 /**
  * Align a value, only works pot alignemnts.
  */
-static inline uint32_t
-align(uint32_t value, uint32_t alignment)
+static inline int
+align(int value, int alignment)
 {
-   assert(util_is_power_of_two_nonzero(alignment));
-   return ALIGN_POT(value, alignment);
+   return (value + alignment - 1) & ~(alignment - 1);
 }
 
 static inline uint64_t
-align64(uint64_t value, uint64_t alignment)
+align64(uint64_t value, unsigned alignment)
 {
-   assert(util_is_power_of_two_nonzero64(alignment));
-   return ALIGN_POT(value, alignment);
-}
-
-/**
- * Align a value(uintptr_t, intptr_t, ptrdiff_t), only works pot alignemnts.
- */
-static inline uintptr_t
-align_uintptr(uintptr_t value, uintptr_t alignment)
-{
-   assert(util_is_power_of_two_nonzero_uintptr(alignment));
-   return ALIGN_POT(value, alignment);
+   return (value + alignment - 1) & ~((uint64_t)alignment - 1);
 }
 
 /**
@@ -770,9 +787,9 @@ static inline bool
 util_is_vbo_upload_ratio_too_large(unsigned draw_vertex_count,
                                    unsigned upload_vertex_count)
 {
-   if (upload_vertex_count > 256)
+   if (draw_vertex_count > 1024)
       return upload_vertex_count > draw_vertex_count * 4;
-   else if (upload_vertex_count > 64)
+   else if (draw_vertex_count > 32)
       return upload_vertex_count > draw_vertex_count * 8;
    else
       return upload_vertex_count > draw_vertex_count * 16;
@@ -790,7 +807,7 @@ bool util_invert_mat4x4(float *out, const float *m);
 static inline float
 util_quantize_lod_bias(float lod)
 {
-   lod = CLAMP(lod, -32, 31);
+   lod = CLAMP(lod, -16, 16);
    return roundf(lod * 256) / 256;
 }
 

@@ -24,9 +24,7 @@
 #include "anv_private.h"
 #include "test_common.h"
 
-void state_pool_padding_test(void);
-
-void state_pool_padding_test(void)
+int main(void)
 {
    struct anv_physical_device physical_device = {
       .use_softpin = true,

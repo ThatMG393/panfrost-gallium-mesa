@@ -21,7 +21,6 @@
  * USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 #include <stdio.h>
-#include "util/macros.h"
 #include "util/u_surface.h"
 #include "util/u_memory.h"
 #include "util/format/u_format.h"
@@ -42,7 +41,7 @@ static void *virgl_vtest_resource_map(struct virgl_winsys *vws,
 static void virgl_vtest_resource_unmap(struct virgl_winsys *vws,
                                        struct virgl_hw_res *res);
 
-static inline bool can_cache_resource_with_bind(uint32_t bind)
+static inline boolean can_cache_resource_with_bind(uint32_t bind)
 {
    return bind == VIRGL_BIND_CONSTANT_BUFFER ||
           bind == VIRGL_BIND_INDEX_BUFFER ||
@@ -188,8 +187,8 @@ static void virgl_hw_res_destroy(struct virgl_vtest_winsys *vtws,
    FREE(res);
 }
 
-static bool virgl_vtest_resource_is_busy(struct virgl_winsys *vws,
-                                         struct virgl_hw_res *res)
+static boolean virgl_vtest_resource_is_busy(struct virgl_winsys *vws,
+                                            struct virgl_hw_res *res)
 {
    struct virgl_vtest_winsys *vtws = virgl_vtest_winsys(vws);
 
@@ -198,9 +197,9 @@ static bool virgl_vtest_resource_is_busy(struct virgl_winsys *vws,
    ret = virgl_vtest_busy_wait(vtws, res->res_handle, 0);
 
    if (ret < 0)
-      return false;
+      return FALSE;
 
-   return ret == 1 ? true : false;
+   return ret == 1 ? TRUE : FALSE;
 }
 
 static void virgl_vtest_resource_reference(struct virgl_winsys *vws,
@@ -415,8 +414,8 @@ alloc:
    return res;
 }
 
-static bool virgl_vtest_lookup_res(struct virgl_vtest_cmd_buf *cbuf,
-                                   struct virgl_hw_res *res)
+static boolean virgl_vtest_lookup_res(struct virgl_vtest_cmd_buf *cbuf,
+                                      struct virgl_hw_res *res)
 {
    unsigned hash = res->res_handle & (sizeof(cbuf->is_handle_added)-1);
    int i;
@@ -470,7 +469,7 @@ static void virgl_vtest_add_res(struct virgl_vtest_winsys *vtws,
 
    cbuf->res_bo[cbuf->cres] = NULL;
    virgl_vtest_resource_reference(&vtws->base, &cbuf->res_bo[cbuf->cres], res);
-   cbuf->is_handle_added[hash] = true;
+   cbuf->is_handle_added[hash] = TRUE;
 
    cbuf->reloc_indices_hashlist[hash] = cbuf->cres;
    p_atomic_inc(&res->num_cs_references);
@@ -556,11 +555,11 @@ static int virgl_vtest_winsys_submit_cmd(struct virgl_winsys *vws,
 
 static void virgl_vtest_emit_res(struct virgl_winsys *vws,
                                  struct virgl_cmd_buf *_cbuf,
-                                 struct virgl_hw_res *res, bool write_buf)
+                                 struct virgl_hw_res *res, boolean write_buf)
 {
    struct virgl_vtest_winsys *vtws = virgl_vtest_winsys(vws);
    struct virgl_vtest_cmd_buf *cbuf = virgl_vtest_cmd_buf(_cbuf);
-   bool already_in_list = virgl_vtest_lookup_res(cbuf, res);
+   boolean already_in_list = virgl_vtest_lookup_res(cbuf, res);
 
    if (write_buf)
       cbuf->base.buf[cbuf->base.cdw++] = res->res_handle;
@@ -568,14 +567,14 @@ static void virgl_vtest_emit_res(struct virgl_winsys *vws,
       virgl_vtest_add_res(vtws, cbuf, res);
 }
 
-static bool virgl_vtest_res_is_ref(struct virgl_winsys *vws,
-                                   struct virgl_cmd_buf *_cbuf,
-                                   struct virgl_hw_res *res)
+static boolean virgl_vtest_res_is_ref(struct virgl_winsys *vws,
+                                      struct virgl_cmd_buf *_cbuf,
+                                      struct virgl_hw_res *res)
 {
    if (!p_atomic_read(&res->num_cs_references))
-      return false;
+      return FALSE;
 
-   return true;
+   return TRUE;
 }
 
 static int virgl_vtest_get_caps(struct virgl_winsys *vws,
@@ -607,18 +606,18 @@ static bool virgl_fence_wait(struct virgl_winsys *vws,
    if (timeout == 0)
       return !virgl_vtest_resource_is_busy(vws, res);
 
-   if (timeout != OS_TIMEOUT_INFINITE) {
+   if (timeout != PIPE_TIMEOUT_INFINITE) {
       int64_t start_time = os_time_get();
       timeout /= 1000;
       while (virgl_vtest_resource_is_busy(vws, res)) {
          if (os_time_get() - start_time >= timeout)
-            return false;
+            return FALSE;
          os_time_sleep(10);
       }
-      return true;
+      return TRUE;
    }
    virgl_vtest_resource_wait(vws, res);
-   return true;
+   return TRUE;
 }
 
 static void virgl_fence_reference(struct virgl_winsys *vws,
@@ -631,7 +630,6 @@ static void virgl_fence_reference(struct virgl_winsys *vws,
 }
 
 static void virgl_vtest_flush_frontbuffer(struct virgl_winsys *vws,
-                                          UNUSED struct virgl_cmd_buf *cmdbuf,
                                           struct virgl_hw_res *res,
                                           unsigned level, unsigned layer,
                                           void *winsys_drawable_handle,
@@ -661,7 +659,7 @@ static void virgl_vtest_flush_frontbuffer(struct virgl_winsys *vws,
                                      level, true);
 
    vtws->sws->displaytarget_display(vtws->sws, res->dt, winsys_drawable_handle,
-                                    !!sub_box, sub_box);
+                                    sub_box);
 }
 
 static void

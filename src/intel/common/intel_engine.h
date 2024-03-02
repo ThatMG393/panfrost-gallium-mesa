@@ -25,13 +25,20 @@
 
 #include <stdint.h>
 
-#include "intel/dev/intel_device_info.h"
-#include "intel/dev/intel_kmd.h"
+#include "drm-uapi/i915_drm.h"
+
+enum intel_engine_class {
+   INTEL_ENGINE_CLASS_RENDER = 0,
+   INTEL_ENGINE_CLASS_COPY,
+   INTEL_ENGINE_CLASS_VIDEO,
+   INTEL_ENGINE_CLASS_VIDEO_ENHANCE,
+   INTEL_ENGINE_CLASS_COMPUTE,
+   INTEL_ENGINE_CLASS_INVALID
+};
 
 struct intel_engine_class_instance {
    enum intel_engine_class engine_class;
    uint16_t engine_instance;
-   uint16_t gt_id;
 };
 
 struct intel_query_engine_info {
@@ -39,17 +46,10 @@ struct intel_query_engine_info {
    struct intel_engine_class_instance engines[];
 };
 
-struct intel_query_engine_info *
-intel_engine_get_info(int fd, enum intel_kmd_type type);
+enum intel_engine_class i915_engine_class_to_intel(enum drm_i915_gem_engine_class i915);
+enum drm_i915_gem_engine_class intel_engine_class_to_i915(enum intel_engine_class intel);
+
+struct intel_query_engine_info *intel_engine_get_info(int fd);
 int intel_engines_count(const struct intel_query_engine_info *info,
                         enum intel_engine_class engine_class);
 const char *intel_engines_class_to_string(enum intel_engine_class engine_class);
-
-/* Taking into consideration KMD, platform and debug options check for
- * restrictions and return the number of engines of giving engine class
- * can actually be used.
- */
-int
-intel_engines_supported_count(int fd, const struct intel_device_info *info,
-                              const struct intel_query_engine_info *engine_info,
-                              enum intel_engine_class engine_class);

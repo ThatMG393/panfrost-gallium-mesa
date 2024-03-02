@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 export WINEPREFIX="$1"
 export WINEDEBUG="-all"
@@ -13,7 +13,7 @@ Windows Registry Editor Version 5.00
 EOF
 
 # Set the wine prefix and disable the crash dialog
-wine regedit crashdialog.reg
+wine64 regedit crashdialog.reg
 rm crashdialog.reg
 
 # An immediate wine command may fail with: "${WINEPREFIX}: Not a

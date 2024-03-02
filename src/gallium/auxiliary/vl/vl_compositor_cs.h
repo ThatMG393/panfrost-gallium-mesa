@@ -33,6 +33,13 @@
 #include "vl_compositor.h"
 
 /**
+ * create compute shader
+ */
+void *
+vl_compositor_cs_create_shader(struct vl_compositor *c,
+                               const char           *compute_shader_text);
+
+/**
  * render the layers to the frontbuffer with compute shader
  */
 void

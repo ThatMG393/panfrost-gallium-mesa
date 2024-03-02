@@ -29,6 +29,7 @@
 #include "util/u_inlines.h"
 #include "util/u_math.h"
 #include "util/u_memory.h"
+#include "tgsi/tgsi_parse.h"
 
 #include "svga_context.h"
 #include "svga_cmd.h"
@@ -80,7 +81,7 @@ svga_create_uav_image(struct svga_context *svga,
 
       /* mark this buffer as being used in uav */
       struct svga_buffer *sbuf = svga_buffer(res);
-      sbuf->uav = true;
+      sbuf->uav = TRUE;
    }
    else if (resourceDim == SVGA3D_RESOURCE_TEXTURE1D ||
             resourceDim == SVGA3D_RESOURCE_TEXTURE2D) {

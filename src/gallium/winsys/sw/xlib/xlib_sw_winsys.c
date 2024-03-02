@@ -138,7 +138,6 @@ alloc_shm(struct xlib_displaytarget *buf, unsigned size)
       return NULL;
    }
 
-   shmctl(shminfo->shmid, IPC_RMID, 0);
    shminfo->readOnly = False;
    return shminfo->shmaddr;
 }
@@ -297,7 +296,6 @@ xlib_displaytarget_destroy(struct sw_winsys *ws,
 static void
 xlib_sw_display(struct xlib_drawable *xlib_drawable,
                 struct sw_displaytarget *dt,
-                unsigned nboxes,
                 struct pipe_box *box)
 {
    static bool no_swap = false;
@@ -315,8 +313,7 @@ xlib_sw_display(struct xlib_drawable *xlib_drawable,
    if (no_swap)
       return;
 
-   if (!nboxes) {
-      nboxes = 1;
+   if (!box) {
       _box.width = xlib_dt->width;
       _box.height = xlib_dt->height;
       box = &_box;
@@ -351,35 +348,33 @@ xlib_sw_display(struct xlib_drawable *xlib_drawable,
       XSetFunction(display, xlib_dt->gc, GXcopy);
    }
 
-   for (unsigned i = 0; i < nboxes; i++) {
-      if (xlib_dt->shm) {
-         ximage = xlib_dt->tempImage;
-         ximage->data = xlib_dt->data;
+   if (xlib_dt->shm) {
+      ximage = xlib_dt->tempImage;
+      ximage->data = xlib_dt->data;
 
-         /* _debug_printf("XSHM\n"); */
-         XShmPutImage(xlib_dt->display, xlib_drawable->drawable, xlib_dt->gc,
-                     ximage, box[i].x, box[i].y, box[i].x, box[i].y,
-                     box[i].width, box[i].height, False);
-      }
-      else {
-         /* display image in Window */
-         ximage = xlib_dt->tempImage;
-         ximage->data = xlib_dt->data;
+      /* _debug_printf("XSHM\n"); */
+      XShmPutImage(xlib_dt->display, xlib_drawable->drawable, xlib_dt->gc,
+                   ximage, box->x, box->y, box->x, box->y,
+                   box->width, box->height, False);
+   }
+   else {
+      /* display image in Window */
+      ximage = xlib_dt->tempImage;
+      ximage->data = xlib_dt->data;
 
-         /* check that the XImage has been previously initialized */
-         assert(ximage->format);
-         assert(ximage->bitmap_unit);
+      /* check that the XImage has been previously initialized */
+      assert(ximage->format);
+      assert(ximage->bitmap_unit);
 
-         /* update XImage's fields */
-         ximage->width = xlib_dt->width;
-         ximage->height = xlib_dt->height;
-         ximage->bytes_per_line = xlib_dt->stride;
+      /* update XImage's fields */
+      ximage->width = xlib_dt->width;
+      ximage->height = xlib_dt->height;
+      ximage->bytes_per_line = xlib_dt->stride;
 
-         /* _debug_printf("XPUT\n"); */
-         XPutImage(xlib_dt->display, xlib_drawable->drawable, xlib_dt->gc,
-                  ximage, box[i].x, box[i].y, box[i].x, box[i].y,
-                  box[i].width, box[i].height);
-      }
+      /* _debug_printf("XPUT\n"); */
+      XPutImage(xlib_dt->display, xlib_drawable->drawable, xlib_dt->gc,
+                ximage, box->x, box->y, box->x, box->y,
+                box->width, box->height);
    }
 
    XFlush(xlib_dt->display);
@@ -394,11 +389,10 @@ static void
 xlib_displaytarget_display(struct sw_winsys *ws,
                            struct sw_displaytarget *dt,
                            void *context_private,
-                           unsigned nboxes,
                            struct pipe_box *box)
 {
    struct xlib_drawable *xlib_drawable = (struct xlib_drawable *)context_private;
-   xlib_sw_display(xlib_drawable, dt, nboxes, box);
+   xlib_sw_display(xlib_drawable, dt, box);
 }
 
 

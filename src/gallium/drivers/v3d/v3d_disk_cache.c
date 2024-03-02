@@ -27,6 +27,7 @@
 
 #include "v3d_context.h"
 
+#include "compiler/nir/nir_serialize.h"
 #include "util/blob.h"
 #include "util/u_upload_mgr.h"
 
@@ -77,22 +78,25 @@ void v3d_disk_cache_init(struct v3d_screen *screen)
 static void
 v3d_disk_cache_compute_key(struct disk_cache *cache,
                            const struct v3d_key *key,
-                           cache_key cache_key,
-                           const struct v3d_uncompiled_shader *uncompiled)
+                           cache_key cache_key)
 {
         assert(cache);
 
+        struct v3d_uncompiled_shader *uncompiled = key->shader_state;
         assert(uncompiled->base.type == PIPE_SHADER_IR_NIR);
         nir_shader *nir = uncompiled->base.ir.nir;
+
+        struct blob blob;
+        blob_init(&blob);
 
         uint32_t ckey_size = v3d_key_size(nir->info.stage);
         struct v3d_key *ckey = malloc(ckey_size);
         memcpy(ckey, key, ckey_size);
+        ckey->shader_state = NULL;
 
-        struct blob blob;
-        blob_init(&blob);
         blob_write_bytes(&blob, ckey, ckey_size);
-        blob_write_bytes(&blob, uncompiled->sha1, 20);
+
+        nir_serialize(&blob, nir, true);
 
         disk_cache_compute_key(cache, blob.data, blob.size, cache_key);
 
@@ -102,8 +106,7 @@ v3d_disk_cache_compute_key(struct disk_cache *cache,
 
 struct v3d_compiled_shader *
 v3d_disk_cache_retrieve(struct v3d_context *v3d,
-                        const struct v3d_key *key,
-                        const struct v3d_uncompiled_shader *uncompiled)
+                        const struct v3d_key *key)
 {
         struct v3d_screen *screen = v3d->screen;
         struct disk_cache *cache = screen->disk_cache;
@@ -111,11 +114,12 @@ v3d_disk_cache_retrieve(struct v3d_context *v3d,
         if (!cache)
                 return NULL;
 
+        struct v3d_uncompiled_shader *uncompiled = key->shader_state;
         assert(uncompiled->base.type == PIPE_SHADER_IR_NIR);
         nir_shader *nir = uncompiled->base.ir.nir;
 
         cache_key cache_key;
-        v3d_disk_cache_compute_key(cache, key, cache_key, uncompiled);
+        v3d_disk_cache_compute_key(cache, key, cache_key);
 
         size_t buffer_size;
         void *buffer = disk_cache_get(cache, cache_key, &buffer_size);
@@ -184,7 +188,6 @@ v3d_disk_cache_retrieve(struct v3d_context *v3d,
 void
 v3d_disk_cache_store(struct v3d_context *v3d,
                      const struct v3d_key *key,
-                     const struct v3d_uncompiled_shader *uncompiled,
                      const struct v3d_compiled_shader *shader,
                      uint64_t *qpu_insts,
                      uint32_t qpu_size)
@@ -195,11 +198,12 @@ v3d_disk_cache_store(struct v3d_context *v3d,
         if (!cache)
                 return;
 
+        struct v3d_uncompiled_shader *uncompiled = key->shader_state;
         assert(uncompiled->base.type == PIPE_SHADER_IR_NIR);
         nir_shader *nir = uncompiled->base.ir.nir;
 
         cache_key cache_key;
-        v3d_disk_cache_compute_key(cache, key, cache_key, uncompiled);
+        v3d_disk_cache_compute_key(cache, key, cache_key);
 
         if (V3D_DBG(CACHE)) {
                 char sha1[41];

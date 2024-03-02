@@ -221,18 +221,18 @@ nv30_push_vbo(struct nv30_context *nv30, const struct pipe_draw_info *info,
                                          vb->buffer_offset, NOUVEAU_BO_RD);
 
       if (apply_bias)
-         data += draw->index_bias * nv30->vertex->strides[i];
+         data += draw->index_bias * vb->stride;
 
-      ctx.translate->set_buffer(ctx.translate, i, data, nv30->vertex->strides[i], ~0);
+      ctx.translate->set_buffer(ctx.translate, i, data, vb->stride, ~0);
    }
 
    if (info->index_size) {
       if (!info->has_user_indices)
          ctx.idxbuf = nouveau_resource_map_offset(&nv30->base,
-            nv04_resource(info->index.resource), 0,
+            nv04_resource(info->index.resource), draw->start * info->index_size,
             NOUVEAU_BO_RD);
       else
-         ctx.idxbuf = (char*)info->index.user;
+         ctx.idxbuf = (char*)info->index.user + draw->start * info->index_size;
       if (!ctx.idxbuf) {
          nv30_state_release(nv30);
          return;

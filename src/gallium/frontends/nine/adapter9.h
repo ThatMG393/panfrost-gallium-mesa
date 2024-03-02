@@ -46,7 +46,6 @@ struct d3dadapter9_context
     BOOL shader_inline_constants;
     int memfd_virtualsizelimit;
     int override_vram_size;
-    BOOL force_emulation;
 
     void (*destroy)( struct d3dadapter9_context *ctx );
 };

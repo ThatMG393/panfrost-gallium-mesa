@@ -50,7 +50,7 @@ static const char *v3d_counter_names[] = {
         "TLB-quads-written-to-color-buffer",
         "PTB-primitives-discarded-outside-viewport",
         "PTB-primitives-need-clipping",
-        "PTB-primitives-discarded-reversed",
+        "PTB-primitives-discared-reversed",
         "QPU-total-idle-clk-cycles",
         "QPU-total-clk-cycles-vertex-coord-shading",
         "QPU-total-clk-cycles-fragment-shading",
@@ -262,7 +262,7 @@ vc4_get_query_result(struct pipe_context *pctx, struct pipe_query *pquery,
         }
 
         if (!vc4_wait_seqno(ctx->screen, query->hwperfmon->last_seqno,
-                            wait ? OS_TIMEOUT_INFINITE : 0, "perfmon"))
+                            wait ? PIPE_TIMEOUT_INFINITE : 0, "perfmon"))
                 return false;
 
         req.id = query->hwperfmon->id;

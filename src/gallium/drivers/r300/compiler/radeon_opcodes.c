@@ -61,6 +61,13 @@ const struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 		.HasDstReg = 1
 	},
 	{
+		.Opcode = RC_OPCODE_CEIL,
+		.Name = "CEIL",
+		.NumSrcRegs = 1,
+		.HasDstReg = 1,
+		.IsComponentwise = 1
+	},
+	{
 		.Opcode = RC_OPCODE_CMP,
 		.Name = "CMP",
 		.NumSrcRegs = 3,
@@ -133,6 +140,13 @@ const struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 		.HasDstReg = 1
 	},
 	{
+		.Opcode = RC_OPCODE_FLR,
+		.Name = "FLR",
+		.NumSrcRegs = 1,
+		.HasDstReg = 1,
+		.IsComponentwise = 1
+	},
+	{
 		.Opcode = RC_OPCODE_FRC,
 		.Name = "FRC",
 		.NumSrcRegs = 1,
@@ -162,6 +176,13 @@ const struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 		.Name = "LOG",
 		.NumSrcRegs = 1,
 		.HasDstReg = 1
+	},
+	{
+		.Opcode = RC_OPCODE_LRP,
+		.Name = "LRP",
+		.NumSrcRegs = 3,
+		.HasDstReg = 1,
+		.IsComponentwise = 1
 	},
 	{
 		.Opcode = RC_OPCODE_MAD,
@@ -241,11 +262,25 @@ const struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 		.IsComponentwise = 1
 	},
 	{
+		.Opcode = RC_OPCODE_SGT,
+		.Name = "SGT",
+		.NumSrcRegs = 2,
+		.HasDstReg = 1,
+		.IsComponentwise = 1
+	},
+	{
 		.Opcode = RC_OPCODE_SIN,
 		.Name = "SIN",
 		.NumSrcRegs = 1,
 		.HasDstReg = 1,
 		.IsStandardScalar = 1
+	},
+	{
+		.Opcode = RC_OPCODE_SLE,
+		.Name = "SLE",
+		.NumSrcRegs = 2,
+		.HasDstReg = 1,
+		.IsComponentwise = 1
 	},
 	{
 		.Opcode = RC_OPCODE_SLT,
@@ -258,6 +293,27 @@ const struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 		.Opcode = RC_OPCODE_SNE,
 		.Name = "SNE",
 		.NumSrcRegs = 2,
+		.HasDstReg = 1,
+		.IsComponentwise = 1
+	},
+	{
+		.Opcode = RC_OPCODE_SSG,
+		.Name = "SSG",
+		.NumSrcRegs = 1,
+		.HasDstReg = 1,
+		.IsComponentwise = 1
+	},
+	{
+		.Opcode = RC_OPCODE_SUB,
+		.Name = "SUB",
+		.NumSrcRegs = 2,
+		.HasDstReg = 1,
+		.IsComponentwise = 1
+	},
+	{
+		.Opcode = RC_OPCODE_TRUNC,
+		.Name = "TRUNC",
+		.NumSrcRegs = 1,
 		.HasDstReg = 1,
 		.IsComponentwise = 1
 	},

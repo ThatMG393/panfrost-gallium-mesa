@@ -54,8 +54,6 @@
 #include "sp_tex_sample.h"
 #include "sp_image.h"
 
-#include "nir.h"
-
 static void
 softpipe_destroy( struct pipe_context *pipe )
 {
@@ -83,10 +81,11 @@ softpipe_destroy( struct pipe_context *pipe )
 
    for (i = 0; i < PIPE_MAX_COLOR_BUFS; i++) {
       sp_destroy_tile_cache(softpipe->cbuf_cache[i]);
+      pipe_surface_reference(&softpipe->framebuffer.cbufs[i], NULL);
    }
 
    sp_destroy_tile_cache(softpipe->zsbuf_cache);
-   util_unreference_framebuffer_state(&softpipe->framebuffer);
+   pipe_surface_reference(&softpipe->framebuffer.zsbuf, NULL);
 
    for (sh = 0; sh < ARRAY_SIZE(softpipe->tex_cache); sh++) {
       for (i = 0; i < ARRAY_SIZE(softpipe->tex_cache[0]); i++) {
@@ -322,12 +321,12 @@ softpipe_create_context(struct pipe_screen *screen,
 
    /* plug in AA line/point stages */
    draw_install_aaline_stage(softpipe->draw, &softpipe->pipe);
-   draw_install_aapoint_stage(softpipe->draw, &softpipe->pipe, nir_type_bool32);
+   draw_install_aapoint_stage(softpipe->draw, &softpipe->pipe);
 
    /* Do polygon stipple w/ texture map + frag prog. */
    draw_install_pstipple_stage(softpipe->draw, &softpipe->pipe);
 
-   draw_wide_point_sprites(softpipe->draw, true);
+   draw_wide_point_sprites(softpipe->draw, TRUE);
 
    sp_init_surface_functions(softpipe);
 

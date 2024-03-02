@@ -74,7 +74,7 @@ struct lp_build_blend_aos_context
    LLVMValueRef dst;
    LLVMValueRef const_;
    LLVMValueRef const_alpha;
-   bool has_dst_alpha;
+   boolean has_dst_alpha;
 
    LLVMValueRef inv_src;
    LLVMValueRef inv_src_alpha;
@@ -93,7 +93,7 @@ struct lp_build_blend_aos_context
 static LLVMValueRef
 lp_build_blend_factor_unswizzled(struct lp_build_blend_aos_context *bld,
                                  unsigned factor,
-                                 bool alpha)
+                                 boolean alpha)
 {
    LLVMValueRef src_alpha = bld->src_alpha ? bld->src_alpha : bld->src;
    LLVMValueRef src1_alpha = bld->src1_alpha ? bld->src1_alpha : bld->src1;
@@ -271,14 +271,14 @@ lp_build_blend_factor(struct lp_build_blend_aos_context *bld,
    enum lp_build_blend_swizzle rgb_swizzle;
 
    if (alpha_swizzle == PIPE_SWIZZLE_X && num_channels == 1) {
-      return lp_build_blend_factor_unswizzled(bld, alpha_factor, true);
+      return lp_build_blend_factor_unswizzled(bld, alpha_factor, TRUE);
    }
 
-   rgb_factor_ = lp_build_blend_factor_unswizzled(bld, rgb_factor, false);
+   rgb_factor_ = lp_build_blend_factor_unswizzled(bld, rgb_factor, FALSE);
 
    if (alpha_swizzle != PIPE_SWIZZLE_NONE) {
       rgb_swizzle   = lp_build_blend_factor_swizzle(rgb_factor);
-      alpha_factor_ = lp_build_blend_factor_unswizzled(bld, alpha_factor, true);
+      alpha_factor_ = lp_build_blend_factor_unswizzled(bld, alpha_factor, TRUE);
       return lp_build_blend_swizzle(bld, rgb_factor_, alpha_factor_,
                                     rgb_swizzle, alpha_swizzle, num_channels);
    } else {
@@ -339,7 +339,7 @@ lp_build_blend_aos(struct gallivm_state *gallivm,
    bld.src_alpha = src_alpha;
    bld.src1_alpha = src1_alpha;
    bld.const_alpha = const_alpha;
-   bld.has_dst_alpha = false;
+   bld.has_dst_alpha = FALSE;
 
    /* Find the alpha channel if not provided separately */
    unsigned alpha_swizzle = PIPE_SWIZZLE_NONE;
@@ -369,11 +369,11 @@ lp_build_blend_aos(struct gallivm_state *gallivm,
    } else if (!state->blend_enable) {
       result = src;
    } else {
-      bool rgb_alpha_same =
+      boolean rgb_alpha_same =
          (state->rgb_src_factor == state->rgb_dst_factor &&
           state->alpha_src_factor == state->alpha_dst_factor) ||
          nr_channels == 1;
-      bool alpha_only = nr_channels == 1 && alpha_swizzle == PIPE_SWIZZLE_X;
+      boolean alpha_only = nr_channels == 1 && alpha_swizzle == PIPE_SWIZZLE_X;
       LLVMValueRef src_factor, dst_factor;
 
       src_factor = lp_build_blend_factor(&bld, state->rgb_src_factor,

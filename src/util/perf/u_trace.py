@@ -34,7 +34,7 @@ class Tracepoint(object):
     """
     def __init__(self, name, args=[], toggle_name=None,
                  tp_struct=None, tp_print=None, tp_perfetto=None,
-                 tp_markers=None, end_of_pipe=False, need_cs_param=True):
+                 tp_markers=None, end_of_pipe=False):
         """Parameters:
 
         - name: the tracepoint name, a tracepoint function with the given
@@ -48,30 +48,21 @@ class Tracepoint(object):
         - tp_markers: (optional) driver provided printf-style callback which can
           generate CS markers, this requires 'need_cs_param' as the first param
           is the CS that the label should be emitted into
-        - need_cs_param: whether tracepoint functions need an additional cs
-          parameter.
         """
         assert isinstance(name, str)
         assert isinstance(args, list)
         assert name not in TRACEPOINTS
-
 
         self.name = name
         self.args = args
         if tp_struct is None:
            tp_struct = args
         self.tp_struct = tp_struct
-        self.has_variable_arg = False
-        for arg in self.tp_struct:
-            if arg.length_arg != None:
-                self.has_variable_arg = True
-                break
         self.tp_print = tp_print
         self.tp_perfetto = tp_perfetto
         self.tp_markers = tp_markers
         self.end_of_pipe = end_of_pipe
         self.toggle_name = toggle_name
-        self.need_cs_param = need_cs_param
 
         TRACEPOINTS[name] = self
         if toggle_name is not None and toggle_name not in TRACEPOINTS_TOGGLES:
@@ -106,7 +97,7 @@ class TracepointArgStruct():
 class TracepointArg(object):
     """Class that represents either an argument being passed or a field in a struct
     """
-    def __init__(self, type, var, c_format, name=None, to_prim_type=None, length_arg=None, copy_func=None):
+    def __init__(self, type, var, c_format, name=None, to_prim_type=None):
         """Parameters:
 
         - type: argument's C type.
@@ -116,7 +107,6 @@ class TracepointArg(object):
           be displayed in output or perfetto, otherwise var will be used.
         - to_prim_type: (optional) C function to convert from arg's type to a type
           compatible with c_format.
-        - length_arg: whether this argument is a variable length array
         """
         assert isinstance(type, str)
         assert isinstance(var, str)
@@ -129,8 +119,6 @@ class TracepointArg(object):
            name = var
         self.name = name
         self.to_prim_type = to_prim_type
-        self.length_arg = length_arg
-        self.copy_func = copy_func
 
 
 HEADERS = []
@@ -227,7 +215,7 @@ void ${trace_toggle_name}_config_variable(void);
  */
 struct trace_${trace_name} {
 %    for arg in trace.tp_struct:
-   ${arg.type} ${arg.name}${"[0]" if arg.length_arg else ""};
+   ${arg.type} ${arg.name};
 %    endfor
 %    if len(trace.args) == 0:
 #ifdef __cplusplus
@@ -246,7 +234,6 @@ struct trace_${trace_name} {
 void ${trace.tp_perfetto}(
    ${ctx_param},
    uint64_t ts_ns,
-   uint16_t tp_idx,
    const void *flush_data,
    const struct trace_${trace_name} *payload);
 #endif
@@ -254,7 +241,7 @@ void ${trace.tp_perfetto}(
 void __trace_${trace_name}(
        struct u_trace *ut
      , enum u_trace_type enabled_traces
-%    if trace.need_cs_param:
+%    if need_cs_param:
      , void *cs
 %    endif
 %    for arg in trace.args:
@@ -263,7 +250,7 @@ void __trace_${trace_name}(
 );
 static ALWAYS_INLINE void trace_${trace_name}(
      struct u_trace *ut
-%    if trace.need_cs_param:
+%    if need_cs_param:
    , void *cs
 %    endif
 %    for arg in trace.args:
@@ -277,7 +264,7 @@ static ALWAYS_INLINE void trace_${trace_name}(
    __trace_${trace_name}(
         ut
       , enabled_traces
-%    if trace.need_cs_param:
+%    if need_cs_param:
       , cs
 %    endif
 %    for arg in trace.args:
@@ -361,7 +348,7 @@ ${trace_toggle_name}_config_variable(void)
 }
 % endif
 
-% for index, (trace_name, trace) in enumerate(TRACEPOINTS.items()):
+% for trace_name, trace in TRACEPOINTS.items():
 /*
  * ${trace_name}
  */
@@ -424,10 +411,10 @@ static void __print_json_${trace_name}(FILE *out, const void *arg) {
  % endif
  % if trace.tp_markers is not None:
 
-__attribute__((format(printf, 3, 4))) void ${trace.tp_markers}(struct u_trace_context *utctx, void *, const char *, ...);
+__attribute__((format(printf, 2, 3))) void ${trace.tp_markers}(void *, const char *, ...);
 
-static void __emit_label_${trace_name}(struct u_trace_context *utctx, void *cs, struct trace_${trace_name} *entry) {
-   ${trace.tp_markers}(utctx, cs, "${trace_name}("
+static void __emit_label_${trace_name}(void *cs, struct trace_${trace_name} *entry) {
+   ${trace.tp_markers}(cs, "${trace_name}("
    % for idx,arg in enumerate(trace.tp_struct):
       "${"," if idx != 0 else ""}${arg.name}=${arg.c_format}"
    % endfor
@@ -447,19 +434,18 @@ static const struct u_tracepoint __tp_${trace_name} = {
     ALIGN_POT(sizeof(struct trace_${trace_name}), 8),   /* keep size 64b aligned */
     "${trace_name}",
     ${"true" if trace.end_of_pipe else "false"},
-    ${index},
     __print_${trace_name},
     __print_json_${trace_name},
  % if trace.tp_perfetto is not None:
 #ifdef HAVE_PERFETTO
-    (void (*)(void *pctx, uint64_t, uint16_t, const void *, const void *))${trace.tp_perfetto},
+    (void (*)(void *pctx, uint64_t, const void *, const void *))${trace.tp_perfetto},
 #endif
  % endif
 };
 void __trace_${trace_name}(
      struct u_trace *ut
    , enum u_trace_type enabled_traces
- % if trace.need_cs_param:
+ % if need_cs_param:
    , void *cs
  % endif
  % for arg in trace.args:
@@ -469,52 +455,44 @@ void __trace_${trace_name}(
    struct trace_${trace_name} entry;
    UNUSED struct trace_${trace_name} *__entry =
       enabled_traces & U_TRACE_TYPE_REQUIRE_QUEUING ?
- % if trace.has_variable_arg:
-      (struct trace_${trace_name} *)u_trace_appendv(ut, ${"cs," if trace.need_cs_param else "NULL,"} &__tp_${trace_name},
-                                                    0
-  % for arg in trace.tp_struct:
-   % if arg.length_arg is not None:
-                                                    + ${arg.length_arg}
-   % endif
-  % endfor
-                                                    ) :
- % else:
-      (struct trace_${trace_name} *)u_trace_append(ut, ${"cs," if trace.need_cs_param else "NULL,"} &__tp_${trace_name}) :
- % endif
+      (struct trace_${trace_name} *)u_trace_append(ut, ${cs_param_value + ","} &__tp_${trace_name}) :
       &entry;
  % for arg in trace.tp_struct:
-  % if arg.length_arg is None:
    __entry->${arg.name} = ${arg.var};
-  % else:
-   ${arg.copy_func}(__entry->${arg.name}, ${arg.var}, ${arg.length_arg});
-  % endif
  % endfor
  % if trace.tp_markers is not None:
    if (enabled_traces & U_TRACE_TYPE_MARKERS)
-      __emit_label_${trace_name}(ut->utctx, cs, __entry);
+      __emit_label_${trace_name}(cs, __entry);
  % endif
 }
 
 % endfor
 """
 
-def utrace_generate(cpath, hpath, ctx_param, trace_toggle_name=None,
-                    trace_toggle_defaults=[]):
+def utrace_generate(cpath, hpath, ctx_param, need_cs_param=True,
+                    trace_toggle_name=None, trace_toggle_defaults=[]):
     """Parameters:
 
     - cpath: c file to generate.
     - hpath: h file to generate.
     - ctx_param: type of the first parameter to the perfetto vfuncs.
+    - need_cs_param: whether tracepoint functions need an additional cs
+      parameter.
     - trace_toggle_name: (optional) name of the environment variable
       enabling/disabling tracepoints.
     - trace_toggle_defaults: (optional) list of tracepoints enabled by default.
     """
+    cs_param_value = 'NULL'
+    if need_cs_param:
+        cs_param_value = 'cs'
     if cpath is not None:
         hdr = os.path.basename(cpath).rsplit('.', 1)[0] + '.h'
-        with open(cpath, 'w', encoding='utf-8') as f:
+        with open(cpath, 'w') as f:
             f.write(Template(src_template).render(
                 hdr=hdr,
                 ctx_param=ctx_param,
+                need_cs_param=need_cs_param,
+                cs_param_value=cs_param_value,
                 trace_toggle_name=trace_toggle_name,
                 trace_toggle_defaults=trace_toggle_defaults,
                 HEADERS=[h for h in HEADERS if h.scope & HeaderScope.SOURCE],
@@ -523,10 +501,11 @@ def utrace_generate(cpath, hpath, ctx_param, trace_toggle_name=None,
 
     if hpath is not None:
         hdr = os.path.basename(hpath)
-        with open(hpath, 'w', encoding='utf-8') as f:
+        with open(hpath, 'w') as f:
             f.write(Template(hdr_template).render(
                 hdrname=hdr.rstrip('.h').upper(),
                 ctx_param=ctx_param,
+                need_cs_param=need_cs_param,
                 trace_toggle_name=trace_toggle_name,
                 HEADERS=[h for h in HEADERS if h.scope & HeaderScope.HEADER],
                 FORWARD_DECLS=FORWARD_DECLS,
@@ -568,12 +547,6 @@ perfetto_utils_hdr_template = """\
 #include "${header.hdr}"
 % endfor
 
-UNUSED static const char *${basename}_names[] = {
-% for trace_name, trace in TRACEPOINTS.items():
-   "${trace_name}",
-% endfor
-};
-
 % for trace_name, trace in TRACEPOINTS.items():
 static void UNUSED
 trace_payload_as_extra_${trace_name}(perfetto::protos::pbzero::GpuRenderStageEvent *event,
@@ -604,12 +577,11 @@ trace_payload_as_extra_${trace_name}(perfetto::protos::pbzero::GpuRenderStageEve
 #endif /* ${guard_name} */
 """
 
-def utrace_generate_perfetto_utils(hpath,basename="tracepoint"):
+def utrace_generate_perfetto_utils(hpath):
     if hpath is not None:
         hdr = os.path.basename(hpath)
-        with open(hpath, 'w', encoding='utf-8') as f:
-            f.write(Template(perfetto_utils_hdr_template).render(
-                basename=basename,
+        with open(hpath, 'wb') as f:
+            f.write(Template(perfetto_utils_hdr_template, output_encoding='utf-8').render(
                 hdrname=hdr.rstrip('.h').upper(),
                 HEADERS=[h for h in HEADERS if h.scope & HeaderScope.PERFETTO],
                 TRACEPOINTS=TRACEPOINTS))

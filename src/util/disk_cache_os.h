@@ -34,7 +34,6 @@
 
 #include "util/fossilize_db.h"
 #include "util/mesa_cache_db.h"
-#include "util/mesa_cache_db_multipart.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,13 +48,6 @@ extern "C" {
 /* The number of keys that can be stored in the index. */
 #define CACHE_INDEX_MAX_KEYS (1 << CACHE_INDEX_KEY_BITS)
 
-enum disk_cache_type {
-   DISK_CACHE_NONE,
-   DISK_CACHE_MULTI_FILE,
-   DISK_CACHE_SINGLE_FILE,
-   DISK_CACHE_DATABASE,
-};
-
 struct disk_cache {
    /* The path to the cache directory. */
    char *path;
@@ -66,9 +58,9 @@ struct disk_cache {
 
    struct foz_db foz_db;
 
-   struct mesa_cache_db_multipart cache_db;
+   struct mesa_cache_db cache_db;
 
-   enum disk_cache_type type;
+   bool use_cache_db;
 
    /* Seed for rand, which is used to pick a random directory */
    uint64_t seed_xorshift128plus[2];
@@ -78,7 +70,7 @@ struct disk_cache {
    size_t index_mmap_size;
 
    /* Pointer to total size of all objects in cache (within index_mmap) */
-   p_atomic_uint64_t *size;
+   uint64_t *size;
 
    /* Pointer to stored keys, (within index_mmap). */
    uint8_t *stored_keys;
@@ -101,9 +93,6 @@ struct disk_cache {
       unsigned hits;
       unsigned misses;
    } stats;
-
-   /* Internal RO FOZ cache for combined use of RO and RW caches. */
-   struct disk_cache *foz_ro_cache;
 };
 
 struct cache_entry_file_data {
@@ -129,8 +118,7 @@ struct disk_cache_put_job {
 
 char *
 disk_cache_generate_cache_dir(void *mem_ctx, const char *gpu_name,
-                              const char *driver_id,
-                              enum disk_cache_type cache_type);
+                              const char *driver_id);
 
 void
 disk_cache_evict_lru_item(struct disk_cache *cache);
@@ -160,9 +148,6 @@ disk_cache_enabled(void);
 
 bool
 disk_cache_load_cache_index_foz(void *mem_ctx, struct disk_cache *cache);
-
-void
-disk_cache_touch_cache_user_marker(char *path);
 
 bool
 disk_cache_mmap_cache_index(void *mem_ctx, struct disk_cache *cache,

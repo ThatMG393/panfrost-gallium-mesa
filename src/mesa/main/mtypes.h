@@ -74,6 +74,7 @@ extern "C" {
  * \name Some forward type declarations
  */
 /*@{*/
+struct _mesa_HashTable;
 struct gl_attrib_node;
 struct gl_list_extensions;
 struct gl_meta_state;
@@ -318,14 +319,20 @@ struct gl_colorbuffer_attrib
    GLboolean sRGBEnabled;  /**< Framebuffer sRGB blending/updating requested */
 };
 
+
 /**
  * Vertex format to describe a vertex element.
  */
 struct gl_vertex_format
 {
-   union gl_vertex_format_user User;
+   GLenum16 Type;        /**< datatype: GL_FLOAT, GL_INT, etc */
+   GLenum16 Format;      /**< default: GL_RGBA, but may be GL_BGRA */
    enum pipe_format _PipeFormat:16; /**< pipe_format for Gallium */
-   GLushort _ElementSize; /**< Size of each element in bytes */
+   GLubyte Size:5;       /**< components per element (1,2,3,4) */
+   GLubyte Normalized:1; /**< GL_ARB_vertex_program */
+   GLubyte Integer:1;    /**< Integer-valued? */
+   GLubyte Doubles:1;    /**< double values are not converted to floats */
+   GLubyte _ElementSize; /**< Size of each element in bytes */
 };
 
 
@@ -765,12 +772,15 @@ struct gl_texture_image
    mesa_format TexFormat;         /**< The actual texture memory format */
 
    GLuint Border;		/**< 0 or 1 */
-   GLuint Width;
-   GLuint Height;
-   GLuint Depth;
+   GLuint Width;		/**< = 2^WidthLog2 + 2*Border */
+   GLuint Height;		/**< = 2^HeightLog2 + 2*Border */
+   GLuint Depth;		/**< = 2^DepthLog2 + 2*Border */
    GLuint Width2;		/**< = Width - 2*Border */
    GLuint Height2;		/**< = Height - 2*Border */
    GLuint Depth2;		/**< = Depth - 2*Border */
+   GLuint WidthLog2;		/**< = log2(Width2) */
+   GLuint HeightLog2;		/**< = log2(Height2) */
+   GLuint DepthLog2;		/**< = log2(Depth2) */
    GLuint MaxNumLevels;		/**< = maximum possible number of mipmap
                                        levels, computed from the dimensions */
 
@@ -941,8 +951,6 @@ struct gl_texture_object
    /** GL_OES_EGL_image_external */
    GLboolean External;
    GLubyte RequiredTextureImageUnits;
-
-   GLboolean NullTexture; /**< this texture is incomplete and should be passed to the driver as NULL */
 
    /** GL_EXT_memory_object */
    GLenum16 TextureTiling;
@@ -1319,8 +1327,6 @@ struct gl_texture_attrib
    /** GL_ARB_seamless_cubemap */
    GLboolean CubeMapSeamless;
 
-   GLshort NumSamplersWithClamp;
-
    struct gl_texture_unit Unit[MAX_COMBINED_TEXTURE_IMAGE_UNITS];
    struct gl_fixedfunc_texture_unit FixedFuncUnit[MAX_TEXTURE_COORD_UNITS];
 };
@@ -1463,7 +1469,6 @@ struct gl_buffer_object
    bool DeletePending:1;  /**< true if buffer object is removed from the hash */
    bool Immutable:1;    /**< GL_ARB_buffer_storage */
    bool HandleAllocated:1; /**< GL_ARB_bindless_texture */
-   bool GLThreadInternal:1; /**< Created by glthread. */
    GLenum16 Usage;      /**< GL_STREAM_DRAW_ARB, GL_STREAM_READ_ARB, etc. */
    GLchar *Label;       /**< GL_KHR_debug */
    GLsizeiptrARB Size;  /**< Size of buffer storage in bytes */
@@ -1631,11 +1636,25 @@ struct gl_vertex_array_object
    GLboolean EverBound;
 
    /**
+    * Whether the VAO is changed by the application so often that some of
+    * the derived fields are not updated at all to decrease overhead.
+    * Also, interleaved arrays are not detected, because it's too expensive
+    * to do that before every draw call.
+    */
+   bool IsDynamic;
+
+   /**
     * Marked to true if the object is shared between contexts and immutable.
     * Then reference counting is done using atomics and thread safe.
     * Is used for dlist VAOs.
     */
    bool SharedAndImmutable;
+
+   /**
+    * Number of updates that were done by the application. This is used to
+    * decide whether the VAO is static or dynamic.
+    */
+   unsigned NumUpdates;
 
    /** Vertex attribute arrays */
    struct gl_array_attributes VertexAttrib[VERT_ATTRIB_MAX];
@@ -1653,12 +1672,6 @@ struct gl_vertex_array_object
    GLbitfield Enabled;
 
    /**
-    * Mask of vertex attributes that have:
-    *    VertexAttrib[i].BufferBindingIndex != i.
-    */
-   GLbitfield NonIdentityBufferAttribMapping;
-
-   /**
     * Mask indicating which VertexAttrib and BufferBinding structures have
     * been changed since the VAO creation. No bit is ever cleared to 0 by
     * state updates. Setting to the default state doesn't update this.
@@ -1667,11 +1680,27 @@ struct gl_vertex_array_object
     */
    GLbitfield NonDefaultStateMask;
 
+   /**
+    * Mask of VERT_BIT_* enabled arrays past position/generic0 mapping
+    *
+    * The value is valid past calling _mesa_update_vao_derived_arrays.
+    * Note that _mesa_update_vao_derived_arrays is called when binding
+    * the VAO to Array._DrawVAO.
+    */
+   GLbitfield _EffEnabledVBO;
+
+   /** Same as _EffEnabledVBO, but for instance divisors. */
+   GLbitfield _EffEnabledNonZeroDivisor;
+
    /** Denotes the way the position/generic0 attribute is mapped */
    gl_attribute_map_mode _AttributeMapMode;
 
    /** "Enabled" with the position/generic0 attribute aliasing resolved */
    GLbitfield _EnabledWithMapMode;
+
+   /** Which states have been changed according to the gallium definitions. */
+   bool NewVertexBuffers;
+   bool NewVertexElements;
 
    /** The index buffer (also known as the element array buffer in OpenGL). */
    struct gl_buffer_object *IndexBufferObj;
@@ -1696,7 +1725,7 @@ struct gl_array_attrib
    struct gl_vertex_array_object DefaultVAOState;
 
    /** Array objects (GL_ARB_vertex_array_object) */
-   struct _mesa_HashTable Objects;
+   struct _mesa_HashTable *Objects;
 
    GLint ActiveTexture;		/**< Client Active Texture */
    GLuint LockFirst;            /**< GL_EXT_compiled_vertex_array */
@@ -1726,18 +1755,15 @@ struct gl_array_attrib
     * mode or display list draws.
     */
    struct gl_vertex_array_object *_DrawVAO;
-
    /**
-    * Whether per-vertex edge flags are enabled and should be processed by
-    * the vertex shader.
+    * The VERT_BIT_* bits effectively enabled from the current _DrawVAO.
+    * This is always a subset of _mesa_get_vao_vp_inputs(_DrawVAO)
+    * but may omit those arrays that shall not be referenced by the current
+    * gl_vertex_program_state::_VPMode. For example the generic attributes are
+    * maked out form the _DrawVAO's enabled arrays when a fixed function
+    * array draw is executed.
     */
-   bool _PerVertexEdgeFlagsEnabled;
-
-   /**
-    * Whether all edge flags are false, causing all points and lines generated
-    * by polygon mode to be not drawn. (i.e. culled)
-    */
-   bool _PolygonModeAlwaysCulls;
+   GLbitfield _DrawVAOEnabledAttribs;
 
    /**
     * If gallium vertex buffers are dirty, this flag indicates whether gallium
@@ -1748,6 +1774,12 @@ struct gl_array_attrib
     * The driver should clear this when it's done.
     */
    bool NewVertexElements;
+
+   /**
+    * Initially or if the VAO referenced by _DrawVAO is deleted the _DrawVAO
+    * pointer is set to the _EmptyVAO which is just an empty VAO all the time.
+    */
+   struct gl_vertex_array_object *_EmptyVAO;
 
    /** Legal array datatypes and the API for which they have been computed */
    GLbitfield LegalTypesMask;
@@ -1929,7 +1961,7 @@ struct gl_transform_feedback_state
    struct gl_buffer_object *CurrentBuffer;
 
    /** The table of all transform feedback objects */
-   struct _mesa_HashTable Objects;
+   struct _mesa_HashTable *Objects;
 
    /** The current xform-fb object (GL_TRANSFORM_FEEDBACK_BINDING) */
    struct gl_transform_feedback_object *CurrentObject;
@@ -2061,7 +2093,7 @@ struct gl_perf_monitor_state
    GLuint NumGroups;
 
    /** The table of all performance monitors. */
-   struct _mesa_HashTable Monitors;
+   struct _mesa_HashTable *Monitors;
 };
 
 
@@ -2070,7 +2102,7 @@ struct gl_perf_monitor_state
  */
 struct gl_perf_query_state
 {
-   struct _mesa_HashTable Objects; /**< The table of all performance query objects */
+   struct _mesa_HashTable *Objects; /**< The table of all performance query objects */
 };
 
 
@@ -2316,7 +2348,7 @@ struct gl_pipeline_shader_state
    struct gl_pipeline_object *Default;
 
    /** Pipeline objects */
-   struct _mesa_HashTable Objects;
+   struct _mesa_HashTable *Objects;
 };
 
 /**
@@ -2347,7 +2379,7 @@ struct gl_query_object
  */
 struct gl_query_state
 {
-   struct _mesa_HashTable QueryObjects;
+   struct _mesa_HashTable *QueryObjects;
    struct gl_query_object *CurrentOcclusionObject; /* GL_ARB_occlusion_query */
    struct gl_query_object *CurrentTimerObject;     /* GL_EXT_timer_query */
 
@@ -2399,14 +2431,14 @@ struct gl_shared_state
    GLint RefCount;			   /**< Reference count */
    bool DisplayListsAffectGLThread;
 
-   struct _mesa_HashTable DisplayList;	   /**< Display lists hash table */
-   struct _mesa_HashTable TexObjects;	   /**< Texture objects hash table */
+   struct _mesa_HashTable *DisplayList;	   /**< Display lists hash table */
+   struct _mesa_HashTable *TexObjects;	   /**< Texture objects hash table */
 
    /** Default texture objects (shared by all texture units) */
    struct gl_texture_object *DefaultTex[NUM_TEXTURE_TARGETS];
 
    /** Fallback texture used when a bound texture is incomplete */
-   struct gl_texture_object *FallbackTex[NUM_TEXTURE_TARGETS][2]; /**< [color, depth] */
+   struct gl_texture_object *FallbackTex[NUM_TEXTURE_TARGETS];
 
    /**
     * \name Thread safety and statechange notification for texture
@@ -2423,16 +2455,16 @@ struct gl_shared_state
     * \name Vertex/geometry/fragment programs
     */
    /*@{*/
-   struct _mesa_HashTable Programs; /**< All vertex/fragment programs */
+   struct _mesa_HashTable *Programs; /**< All vertex/fragment programs */
    struct gl_program *DefaultVertexProgram;
    struct gl_program *DefaultFragmentProgram;
    /*@}*/
 
    /* GL_ATI_fragment_shader */
-   struct _mesa_HashTable ATIShaders;
+   struct _mesa_HashTable *ATIShaders;
    struct ati_fragment_shader *DefaultFragmentShader;
 
-   struct _mesa_HashTable BufferObjects;
+   struct _mesa_HashTable *BufferObjects;
 
    /* Buffer objects released by a different context than the one that
     * created them. Since the creating context holds one global buffer
@@ -2448,17 +2480,17 @@ struct gl_shared_state
    struct set *ZombieBufferObjects;
 
    /** Table of both gl_shader and gl_shader_program objects */
-   struct _mesa_HashTable ShaderObjects;
+   struct _mesa_HashTable *ShaderObjects;
 
    /* GL_EXT_framebuffer_object */
-   struct _mesa_HashTable RenderBuffers;
-   struct _mesa_HashTable FrameBuffers;
+   struct _mesa_HashTable *RenderBuffers;
+   struct _mesa_HashTable *FrameBuffers;
 
    /* GL_ARB_sync */
    struct set *SyncObjects;
 
    /** GL_ARB_sampler_objects */
-   struct _mesa_HashTable SamplerObjects;
+   struct _mesa_HashTable *SamplerObjects;
 
    /* GL_ARB_bindless_texture */
    struct hash_table_u64 *TextureHandles;
@@ -2472,11 +2504,31 @@ struct gl_shared_state
     */
    simple_mtx_t ShaderIncludeMutex;
 
+   /**
+    * Some context in this share group was affected by a GPU reset
+    *
+    * On the next call to \c glGetGraphicsResetStatus, contexts that have not
+    * been affected by a GPU reset must also return
+    * \c GL_INNOCENT_CONTEXT_RESET_ARB.
+    *
+    * Once this field becomes true, it is never reset to false.
+    */
+   bool ShareGroupReset;
+
    /** EXT_external_objects */
-   struct _mesa_HashTable MemoryObjects;
+   struct _mesa_HashTable *MemoryObjects;
 
    /** EXT_semaphore */
-   struct _mesa_HashTable SemaphoreObjects;
+   struct _mesa_HashTable *SemaphoreObjects;
+
+   /**
+    * Some context in this share group was affected by a disjoint
+    * operation. This operation can be anything that has effects on
+    * values of timer queries in such manner that they become invalid for
+    * performance metrics. As example gpu reset, counter overflow or gpu
+    * frequency changes.
+    */
+   bool DisjointOperation;
 
    /**
     * Whether at least one image has been imported or exported, excluding
@@ -2492,22 +2544,6 @@ struct gl_shared_state
       struct util_idalloc free_idx;
       unsigned size;
    } small_dlist_store;
-
-   /* Global GLThread state. */
-   struct {
-      /* The last context that locked global mutexes. */
-      struct gl_context *LastExecutingCtx;
-
-      /* The last time LastExecutingCtx started executing after a different
-       * context (the time of multiple active contexts).
-       */
-      int64_t LastContextSwitchTime;
-
-      /* The time for which no context can lock global mutexes since
-       * LastContextSwitchTime.
-       */
-      int64_t NoLockDuration;
-   } GLThread;
 };
 
 
@@ -2519,6 +2555,7 @@ struct gl_shared_state
  */
 struct gl_renderbuffer
 {
+   GLuint ClassID;        /**< Useful for drivers */
    GLuint Name;
    GLchar *Label;         /**< GL_KHR_debug */
    GLint RefCount;
@@ -2563,15 +2600,15 @@ struct gl_renderbuffer
    /**
     * Used only when hardware accumulation buffers are not supported.
     */
-   bool software;
+   boolean software;
    void *data;
 
    bool use_readpix_cache;
 
    /* Inputs from Driver.RenderTexture, don't use directly. */
-   bool is_rtt; /**< whether Driver.RenderTexture was called */
+   boolean is_rtt; /**< whether Driver.RenderTexture was called */
    unsigned rtt_face, rtt_slice;
-   bool rtt_layered; /**< whether glFramebufferTexture was called */
+   boolean rtt_layered; /**< whether glFramebufferTexture was called */
    unsigned rtt_nr_samples; /**< from FramebufferTexture2DMultisampleEXT */
 };
 
@@ -2690,7 +2727,6 @@ struct gl_framebuffer
 
    GLbitfield _IntegerBuffers;  /**< Which color buffers are integer valued */
    GLbitfield _BlendForceAlphaToOne;  /**< Which color buffers need blend factor adjustment */
-   GLbitfield _IsRGB;  /**< Which color buffers have an RGB base format? */
    GLbitfield _FP32Buffers; /**< Which color buffers are FP32 */
 
    /* ARB_color_buffer_float */
@@ -2708,7 +2744,6 @@ struct gl_framebuffer
 
    /** Array of all renderbuffer attachments, indexed by BUFFER_* tokens. */
    struct gl_renderbuffer_attachment Attachment[BUFFER_COUNT];
-   struct pipe_resource *resolve; /**< color resolve attachment */
 
    /* In unextended OpenGL these vars are part of the GL_COLOR_BUFFER
     * attribute group and GL_PIXEL attribute group, respectively.
@@ -2734,12 +2769,12 @@ struct gl_framebuffer
    /** Delete this framebuffer */
    void (*Delete)(struct gl_framebuffer *fb);
 
-   struct pipe_frontend_drawable *drawable;
+   struct st_framebuffer_iface *iface;
    enum st_attachment_type statts[ST_ATTACHMENT_COUNT];
    unsigned num_statts;
    int32_t stamp;
-   int32_t drawable_stamp;
-   uint32_t drawable_ID;
+   int32_t iface_stamp;
+   uint32_t iface_ID;
 
    /* list of framebuffer objects */
    struct list_head head;
@@ -2815,6 +2850,37 @@ struct gl_matrix_stack
 #define _NEW_FF_FRAG_PROGRAM   (1u << 31)
 #define _NEW_ALL ~0
 /*@}*/
+
+
+/**
+ * Composite state flags, deprecated and inefficient, do not use.
+ */
+/*@{*/
+#define _NEW_LIGHT     (_NEW_LIGHT_CONSTANTS |  /* state parameters */ \
+                        _NEW_LIGHT_STATE |      /* rasterizer state */ \
+                        _NEW_MATERIAL |         /* light materials */ \
+                        _NEW_FF_VERT_PROGRAM | \
+                        _NEW_FF_FRAG_PROGRAM)
+
+#define _NEW_TEXTURE   (_NEW_TEXTURE_OBJECT | _NEW_TEXTURE_STATE | \
+                        _NEW_FF_VERT_PROGRAM | _NEW_FF_FRAG_PROGRAM)
+
+#define _MESA_NEW_NEED_EYE_COORDS         (_NEW_FF_VERT_PROGRAM | \
+                                           _NEW_FF_FRAG_PROGRAM | \
+                                           _NEW_LIGHT_CONSTANTS | \
+                                           _NEW_TEXTURE_STATE |	\
+                                           _NEW_POINT |		\
+                                           _NEW_PROGRAM |	\
+                                           _NEW_MODELVIEW)
+
+#define _MESA_NEW_SEPARATE_SPECULAR        (_NEW_LIGHT | \
+                                            _NEW_FOG | \
+                                            _NEW_PROGRAM)
+
+
+/*@}*/
+
+
 
 
 /* This has to be included here. */
@@ -3181,57 +3247,6 @@ struct gl_attrib_node
 };
 
 /**
- * Dispatch tables.
- */
-struct gl_dispatch
-{
-   /**
-    * For non-displaylist-saving, non-begin/end.
-    */
-   struct _glapi_table *OutsideBeginEnd;
-
-   /**
-    * The dispatch table used between glBegin() and glEnd() (outside of a
-    * display list).  Only valid functions between those two are set.
-    */
-   struct _glapi_table *BeginEnd;
-
-   /**
-    * Same as BeginEnd except glVertex{Attrib} functions. Used when
-    * HW GL_SELECT mode instead of BeginEnd to insert extra code
-    * for GL_SELECT.
-    */
-   struct _glapi_table *HWSelectModeBeginEnd;
-
-   /**
-    * The dispatch table used between glNewList() and glEndList().
-    */
-   struct _glapi_table *Save;
-
-   /**
-    * Dispatch table for when a graphics reset has happened.
-    */
-   struct _glapi_table *ContextLost;
-
-   /**
-    * The current dispatch table for non-displaylist-saving execution.
-    * It can be equal to one of these:
-    * - OutsideBeginEnd
-    * - BeginEnd
-    * - HWSelectModeBeginEnd
-    */
-   struct _glapi_table *Exec;
-
-   /**
-    * The current dispatch table overall. It can be equal to one of these:
-    * - Exec
-    * - Save
-    * - ContextLost
-    */
-   struct _glapi_table *Current;
-};
-
-/**
  * Mesa rendering context.
  *
  * This is the central context data structure for Mesa.  Almost all
@@ -3254,23 +3269,47 @@ struct gl_context
    gl_api API;
 
    /**
-    * Dispatch tables implementing OpenGL functions. GLThread has no effect
-    * on this.
+    * The current dispatch table for non-displaylist-saving execution, either
+    * BeginEnd or OutsideBeginEnd
     */
-   struct gl_dispatch Dispatch;
-
+   struct _glapi_table *Exec;
    /**
-    * Dispatch table used by GLThread, a component used to marshal API
-    * calls from an application to a separate thread.
+    * The normal dispatch table for non-displaylist-saving, non-begin/end
+    */
+   struct _glapi_table *OutsideBeginEnd;
+   /** The dispatch table used between glNewList() and glEndList() */
+   struct _glapi_table *Save;
+   /**
+    * The dispatch table used between glBegin() and glEnd() (outside of a
+    * display list).  Only valid functions between those two are set.
+    */
+   struct _glapi_table *BeginEnd;
+   /**
+    * Same as BeginEnd except vertex postion set functions. Used when
+    * HW GL_SELECT mode instead of BeginEnd.
+    */
+   struct _glapi_table *HWSelectModeBeginEnd;
+   /**
+    * Dispatch table for when a graphics reset has happened.
+    */
+   struct _glapi_table *ContextLost;
+   /**
+    * Dispatch table used to marshal API calls from the client program to a
+    * separate server thread.
     */
    struct _glapi_table *MarshalExec;
-
    /**
     * Dispatch table currently in use for fielding API calls from the client
     * program.  If API calls are being marshalled to another thread, this ==
-    * MarshalExec.  Otherwise it == Dispatch.Current.
+    * MarshalExec.  Otherwise it == CurrentServerDispatch.
     */
-   struct _glapi_table *GLApi;
+   struct _glapi_table *CurrentClientDispatch;
+
+   /**
+    * Dispatch table currently in use for performing API calls.  == Save or
+    * Exec.
+    */
+   struct _glapi_table *CurrentServerDispatch;
 
    /*@}*/
 
@@ -3310,9 +3349,6 @@ struct gl_context
     * Same as ValidPrimMask, but should be applied to glDrawElements*.
     */
    GLbitfield ValidPrimMaskIndexed;
-
-   /** DrawID for the next non-multi non-indirect draw. Only set by glthread. */
-   GLuint DrawID;
 
    /**
     * Whether DrawPixels/CopyPixels/Bitmap are valid to render.
@@ -3545,6 +3581,7 @@ struct gl_context
 
    GLuint TextureStateTimestamp; /**< detect changes to shared state */
 
+   GLboolean LastVertexStageDirty; /**< the last vertex stage has changed */
    GLboolean PointSizeIsSet; /**< the glPointSize value in the shader is set */
 
    /** \name For debugging/development only */

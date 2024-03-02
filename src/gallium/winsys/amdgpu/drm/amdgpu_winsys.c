@@ -3,8 +3,28 @@
  * Copyright © 2009 Joakim Sindholt <opensource@zhasha.com>
  * Copyright © 2011 Marek Olšák <maraeo@gmail.com>
  * Copyright © 2015 Advanced Micro Devices, Inc.
+ * All Rights Reserved.
  *
- * SPDX-License-Identifier: MIT
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sub license, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NON-INFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDERS, AUTHORS
+ * AND/OR ITS SUPPLIERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+ * USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ * The above copyright notice and this permission notice (including the
+ * next paragraph) shall be included in all copies or substantial portions
+ * of the Software.
  */
 
 #include "amdgpu_cs.h"
@@ -14,13 +34,13 @@
 #include "util/u_cpu_detect.h"
 #include "util/u_hash_table.h"
 #include "util/hash_table.h"
-#include "util/thread_sched.h"
 #include "util/xmlconfig.h"
 #include "drm-uapi/amdgpu_drm.h"
 #include <xf86drm.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include "ac_llvm_util.h"
 #include "sid.h"
 
 static struct hash_table *dev_tab = NULL;
@@ -30,17 +50,59 @@ static simple_mtx_t dev_tab_mutex = SIMPLE_MTX_INITIALIZER;
 DEBUG_GET_ONCE_BOOL_OPTION(all_bos, "RADEON_ALL_BOS", false)
 #endif
 
+static void handle_env_var_force_family(struct amdgpu_winsys *ws)
+{
+      const char *family = debug_get_option("SI_FORCE_FAMILY", NULL);
+      unsigned i;
+
+      if (!family)
+               return;
+
+      for (i = CHIP_TAHITI; i < CHIP_LAST; i++) {
+         if (!strcmp(family, ac_get_llvm_processor_name(i))) {
+            /* Override family and gfx_level. */
+            ws->info.family = i;
+            ws->info.name = "NOOP";
+            strcpy(ws->info.lowercase_name , "noop");
+
+            if (i >= CHIP_GFX1100)
+               ws->info.gfx_level = GFX11;
+            else if (i >= CHIP_NAVI21)
+               ws->info.gfx_level = GFX10_3;
+            else if (i >= CHIP_NAVI10)
+               ws->info.gfx_level = GFX10;
+            else if (i >= CHIP_VEGA10)
+               ws->info.gfx_level = GFX9;
+            else if (i >= CHIP_TONGA)
+               ws->info.gfx_level = GFX8;
+            else if (i >= CHIP_BONAIRE)
+               ws->info.gfx_level = GFX7;
+            else
+               ws->info.gfx_level = GFX6;
+
+            /* Don't submit any IBs. */
+            setenv("RADEON_NOOP", "1", 1);
+            return;
+         }
+      }
+
+      fprintf(stderr, "radeonsi: Unknown family: %s\n", family);
+      exit(1);
+}
+
 /* Helper function to do the ioctls needed for setup and init. */
 static bool do_winsys_init(struct amdgpu_winsys *ws,
                            const struct pipe_screen_config *config,
                            int fd)
 {
-   if (!ac_query_gpu_info(fd, ws->dev, &ws->info, false))
+   if (!ac_query_gpu_info(fd, ws->dev, &ws->info))
       goto fail;
 
    /* TODO: Enable this once the kernel handles it efficiently. */
    if (ws->info.has_dedicated_vram)
       ws->info.has_local_buffers = false;
+
+   handle_env_var_force_family(ws);
 
    ws->addrlib = ac_addrlib_create(&ws->info, &ws->info.max_alignment);
    if (!ws->addrlib) {
@@ -50,7 +112,7 @@ static bool do_winsys_init(struct amdgpu_winsys *ws,
 
    ws->check_vm = strstr(debug_get_option("R600_DEBUG", ""), "check_vm") != NULL ||
                   strstr(debug_get_option("AMD_DEBUG", ""), "check_vm") != NULL;
-   ws->noop_cs = ws->info.family_overridden || debug_get_bool_option("RADEON_NOOP", false);
+   ws->noop_cs = debug_get_bool_option("RADEON_NOOP", false);
 #if DEBUG
    ws->debug_all_bos = debug_get_option_all_bos();
 #endif
@@ -73,19 +135,14 @@ static void do_winsys_deinit(struct amdgpu_winsys *ws)
    if (ws->reserve_vmid)
       amdgpu_vm_unreserve_vmid(ws->dev, 0);
 
-   for (unsigned i = 0; i < ARRAY_SIZE(ws->queues); i++) {
-      for (unsigned j = 0; j < ARRAY_SIZE(ws->queues[i].fences); j++)
-         amdgpu_fence_reference(&ws->queues[i].fences[j], NULL);
-
-      amdgpu_ctx_reference(&ws->queues[i].last_ctx, NULL);
-   }
-
    if (util_queue_is_initialized(&ws->cs_queue))
       util_queue_destroy(&ws->cs_queue);
 
    simple_mtx_destroy(&ws->bo_fence_lock);
-   if (ws->bo_slabs.groups)
-      pb_slabs_deinit(&ws->bo_slabs);
+   for (unsigned i = 0; i < NUM_SLAB_ALLOCATORS; i++) {
+      if (ws->bo_slabs[i].groups)
+         pb_slabs_deinit(&ws->bo_slabs[i]);
+   }
    pb_cache_deinit(&ws->bo_cache);
    _mesa_hash_table_destroy(ws->bo_export_table, NULL);
    simple_mtx_destroy(&ws->sws_list_lock);
@@ -138,9 +195,17 @@ static void amdgpu_winsys_destroy(struct radeon_winsys *rws)
    amdgpu_winsys_destroy_locked(rws, false);
 }
 
-static void amdgpu_winsys_query_info(struct radeon_winsys *rws, struct radeon_info *info)
+static void amdgpu_winsys_query_info(struct radeon_winsys *rws,
+                                     struct radeon_info *info,
+                                     bool enable_smart_access_memory,
+                                     bool disable_smart_access_memory)
 {
    struct amdgpu_winsys *ws = amdgpu_winsys(rws);
+
+   if (disable_smart_access_memory)
+      ws->info.smart_access_memory = false;
+   else if (enable_smart_access_memory && ws->info.all_vram_visible)
+      ws->info.smart_access_memory = true;
 
    *info = ws->info;
 }
@@ -271,19 +336,20 @@ static bool amdgpu_winsys_unref(struct radeon_winsys *rws)
 }
 
 static void amdgpu_pin_threads_to_L3_cache(struct radeon_winsys *rws,
-                                           unsigned cpu)
+                                           unsigned cache)
 {
    struct amdgpu_winsys *ws = amdgpu_winsys(rws);
 
-   util_thread_sched_apply_policy(ws->cs_queue.threads[0],
-                                  UTIL_THREAD_DRIVER_SUBMIT, cpu, NULL);
+   util_set_thread_affinity(ws->cs_queue.threads[0],
+                            util_get_cpu_caps()->L3_affinity_mask[cache],
+                            NULL, util_get_cpu_caps()->num_cpu_mask_bits);
 }
 
 static uint32_t kms_handle_hash(const void *key)
 {
-   const struct amdgpu_bo_real *bo = key;
+   const struct amdgpu_winsys_bo *bo = key;
 
-   return bo->kms_handle;
+   return bo->u.real.kms_handle;
 }
 
 static bool kms_handle_equals(const void *a, const void *b)
@@ -323,36 +389,6 @@ amdgpu_cs_set_pstate(struct radeon_cmdbuf *rcs, enum radeon_ctx_pstate pstate)
    uint32_t amdgpu_pstate = radeon_to_amdgpu_pstate(pstate);
    return amdgpu_cs_ctx_stable_pstate(cs->ctx->ctx,
       AMDGPU_CTX_OP_SET_STABLE_PSTATE, amdgpu_pstate, NULL) == 0;
-}
-
-static bool
-are_file_descriptions_equal(int fd1, int fd2)
-{
-   int r = os_same_file_description(fd1, fd2);
-
-   if (r == 0)
-      return true;
-
-   if (r < 0) {
-      static bool logged;
-
-      if (!logged) {
-         os_log_message("amdgpu: os_same_file_description couldn't "
-                        "determine if two DRM fds reference the same "
-                        "file description.\n"
-                        "If they do, bad things may happen!\n");
-         logged = true;
-      }
-   }
-   return false;
-}
-
-static int
-amdgpu_drm_winsys_get_fd(struct radeon_winsys *rws)
-{
-   struct amdgpu_screen_winsys *sws = amdgpu_screen_winsys(rws);
-
-   return sws->fd;
 }
 
 PUBLIC struct radeon_winsys *
@@ -398,13 +434,25 @@ amdgpu_winsys_create(int fd, const struct pipe_screen_config *config,
 
       simple_mtx_lock(&aws->sws_list_lock);
       for (sws_iter = aws->sws_list; sws_iter; sws_iter = sws_iter->next) {
-         if (are_file_descriptions_equal(sws_iter->fd, ws->fd)) {
+         r = os_same_file_description(sws_iter->fd, ws->fd);
+
+         if (r == 0) {
             close(ws->fd);
             FREE(ws);
             ws = sws_iter;
             pipe_reference(NULL, &ws->reference);
             simple_mtx_unlock(&aws->sws_list_lock);
             goto unlock;
+         } else if (r < 0) {
+            static bool logged;
+
+            if (!logged) {
+               os_log_message("amdgpu: os_same_file_description couldn't "
+                              "determine if two DRM fds reference the same "
+                              "file description.\n"
+                              "If they do, bad things may happen!\n");
+               logged = true;
+            }
          }
       }
       simple_mtx_unlock(&aws->sws_list_lock);
@@ -422,60 +470,51 @@ amdgpu_winsys_create(int fd, const struct pipe_screen_config *config,
          goto fail;
 
       aws->dev = dev;
-      /* The device fd might be different from the one we passed because of
-       * libdrm_amdgpu device dedup logic. This can happen if radv is initialized
-       * first.
-       * Get the correct fd or the buffer sharing will not work (see #3424).
-       */
-      int device_fd = amdgpu_device_get_fd(dev);
-      if (!are_file_descriptions_equal(device_fd, fd)) {
-         ws->kms_handles = _mesa_hash_table_create(NULL, kms_handle_hash,
-                                                   kms_handle_equals);
-         if (!ws->kms_handles)
-            goto fail;
-         /* We could avoid storing the fd and use amdgpu_device_get_fd() where
-          * we need it but we'd have to use os_same_file_description() to
-          * compare the fds.
-          */
-         aws->fd = device_fd;
-      } else {
-         aws->fd = ws->fd;
-      }
+      aws->fd = ws->fd;
       aws->info.drm_major = drm_major;
       aws->info.drm_minor = drm_minor;
-
-      /* Only aws and buffer functions are used. */
-      aws->dummy_ws.aws = aws;
-      amdgpu_bo_init_functions(&aws->dummy_ws);
+      aws->dummy_ws.aws = aws; /* only the pointer is used */
 
       if (!do_winsys_init(aws, config, fd))
          goto fail_alloc;
 
       /* Create managers. */
       pb_cache_init(&aws->bo_cache, RADEON_NUM_HEAPS,
-                    500000, aws->check_vm ? 1.0f : 1.5f, 0,
-                    ((uint64_t)aws->info.vram_size_kb + aws->info.gart_size_kb) * 1024 / 8,
-                    offsetof(struct amdgpu_bo_real_reusable, cache_entry), aws,
+                    500000, aws->check_vm ? 1.0f : 2.0f, 0,
+                    ((uint64_t)aws->info.vram_size_kb + aws->info.gart_size_kb) * 1024 / 8, aws,
                     /* Cast to void* because one of the function parameters
                      * is a struct pointer instead of void*. */
                     (void*)amdgpu_bo_destroy, (void*)amdgpu_bo_can_reclaim);
 
-      if (!pb_slabs_init(&aws->bo_slabs,
-                         8,  /* min slab entry size: 256 bytes */
-                         20, /* max slab entry size: 1 MB (slab size = 2 MB) */
-                         RADEON_NUM_HEAPS, true,
-                         aws,
-                         amdgpu_bo_can_reclaim_slab,
-                         amdgpu_bo_slab_alloc,
-                         /* Cast to void* because one of the function parameters
-                          * is a struct pointer instead of void*. */
-                         (void*)amdgpu_bo_slab_free)) {
-         amdgpu_winsys_destroy(&ws->base);
-         simple_mtx_unlock(&dev_tab_mutex);
-         return NULL;
+      unsigned min_slab_order = 8;  /* 256 bytes */
+      unsigned max_slab_order = 20; /* 1 MB (slab size = 2 MB) */
+      unsigned num_slab_orders_per_allocator = (max_slab_order - min_slab_order) /
+                                               NUM_SLAB_ALLOCATORS;
+
+      /* Divide the size order range among slab managers. */
+      for (unsigned i = 0; i < NUM_SLAB_ALLOCATORS; i++) {
+         unsigned min_order = min_slab_order;
+         unsigned max_order = MIN2(min_order + num_slab_orders_per_allocator,
+                                   max_slab_order);
+
+         if (!pb_slabs_init(&aws->bo_slabs[i],
+                            min_order, max_order,
+                            RADEON_NUM_HEAPS, true,
+                            aws,
+                            amdgpu_bo_can_reclaim_slab,
+                            amdgpu_bo_slab_alloc,
+                            /* Cast to void* because one of the function parameters
+                             * is a struct pointer instead of void*. */
+                            (void*)amdgpu_bo_slab_free)) {
+            amdgpu_winsys_destroy(&ws->base);
+            simple_mtx_unlock(&dev_tab_mutex);
+            return NULL;
+         }
+
+         min_slab_order = max_order + 1;
       }
 
-      aws->info.min_alloc_size = 1 << aws->bo_slabs.min_order;
+      aws->info.min_alloc_size = 1 << aws->bo_slabs[0].min_order;
 
       /* init reference */
       pipe_reference_init(&aws->reference, 1);
@@ -515,7 +554,6 @@ amdgpu_winsys_create(int fd, const struct pipe_screen_config *config,
    /* Set functions. */
    ws->base.unref = amdgpu_winsys_unref;
    ws->base.destroy = amdgpu_winsys_destroy;
-   ws->base.get_fd = amdgpu_drm_winsys_get_fd;
    ws->base.query_info = amdgpu_winsys_query_info;
    ws->base.cs_request_feature = amdgpu_cs_request_feature;
    ws->base.query_value = amdgpu_query_value;

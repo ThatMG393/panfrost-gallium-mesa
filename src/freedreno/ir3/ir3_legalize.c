@@ -58,33 +58,12 @@ struct ir3_legalize_state {
    regmask_t needs_ss;
    regmask_t needs_ss_war; /* write after read */
    regmask_t needs_sy;
-   bool needs_ss_for_const;
 };
 
 struct ir3_legalize_block_data {
    bool valid;
    struct ir3_legalize_state state;
 };
-
-static inline void
-apply_ss(struct ir3_instruction *instr,
-         struct ir3_legalize_state *state,
-         bool mergedregs)
-{
-   instr->flags |= IR3_INSTR_SS;
-   regmask_init(&state->needs_ss_war, mergedregs);
-   regmask_init(&state->needs_ss, mergedregs);
-   state->needs_ss_for_const = false;
-}
-
-static inline void
-apply_sy(struct ir3_instruction *instr,
-         struct ir3_legalize_state *state,
-         bool mergedregs)
-{
-   instr->flags |= IR3_INSTR_SY;
-   regmask_init(&state->needs_sy, mergedregs);
-}
 
 /* We want to evaluate each block from the position of any other
  * predecessor block, in order that the flags set are the union of
@@ -130,7 +109,6 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
       regmask_or(&state->needs_ss_war, &state->needs_ss_war,
                  &pstate->needs_ss_war);
       regmask_or(&state->needs_sy, &state->needs_sy, &pstate->needs_sy);
-      state->needs_ss_for_const |= pstate->needs_ss_for_const;
    }
 
    /* We need to take phsyical-only edges into account when tracking shared
@@ -184,13 +162,17 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
       }
 
       if ((last_n && is_barrier(last_n)) || n->opc == OPC_SHPE) {
-         apply_ss(n, state, mergedregs);
-         apply_sy(n, state, mergedregs);
+         n->flags |= IR3_INSTR_SS | IR3_INSTR_SY;
          last_input_needs_ss = false;
+         regmask_init(&state->needs_ss_war, mergedregs);
+         regmask_init(&state->needs_ss, mergedregs);
+         regmask_init(&state->needs_sy, mergedregs);
       }
 
       if (last_n && (last_n->opc == OPC_PREDT)) {
-         apply_ss(n, state, mergedregs);
+         n->flags |= IR3_INSTR_SS;
+         regmask_init(&state->needs_ss_war, mergedregs);
+         regmask_init(&state->needs_ss, mergedregs);
       }
 
       /* NOTE: consider dst register too.. it could happen that
@@ -213,25 +195,25 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
              * some tests for both this and (sy)..
              */
             if (regmask_get(&state->needs_ss, reg)) {
-               apply_ss(n, state, mergedregs);
+               n->flags |= IR3_INSTR_SS;
                last_input_needs_ss = false;
+               regmask_init(&state->needs_ss_war, mergedregs);
+               regmask_init(&state->needs_ss, mergedregs);
             }
 
             if (regmask_get(&state->needs_sy, reg)) {
-               apply_sy(n, state, mergedregs);
-            }
-         } else if ((reg->flags & IR3_REG_CONST)) {
-            if (state->needs_ss_for_const) {
-               apply_ss(n, state, mergedregs);
-               last_input_needs_ss = false;
+               n->flags |= IR3_INSTR_SY;
+               regmask_init(&state->needs_sy, mergedregs);
             }
          }
       }
 
       foreach_dst (reg, n) {
          if (regmask_get(&state->needs_ss_war, reg)) {
-            apply_ss(n, state, mergedregs);
+            n->flags |= IR3_INSTR_SS;
             last_input_needs_ss = false;
+            regmask_init(&state->needs_ss_war, mergedregs);
+            regmask_init(&state->needs_ss, mergedregs);
          }
       }
 
@@ -248,7 +230,7 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
       }
 
       /* need to be able to set (ss) on first instruction: */
-      if (list_is_empty(&block->instr_list) && (opc_cat(n->opc) >= 5) && !is_meta(n))
+      if (list_is_empty(&block->instr_list) && (opc_cat(n->opc) >= 5))
          ir3_NOP(block);
 
       if (ctx->compiler->samgq_workaround &&
@@ -299,8 +281,6 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
          } else {
             regmask_set(&state->needs_ss, n->dsts[0]);
          }
-      } else if (n->opc == OPC_PUSH_CONSTS_LOAD_MACRO) {
-         state->needs_ss_for_const = true;
       }
 
       if (is_ssbo(n->opc) || is_global_a3xx_atomic(n->opc) ||
@@ -344,7 +324,9 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
 
             last_input->dsts[0]->flags |= IR3_REG_EI;
             if (last_input_needs_ss) {
-               apply_ss(last_input, state, mergedregs);
+               last_input->flags |= IR3_INSTR_SS;
+               regmask_init(&state->needs_ss_war, mergedregs);
+               regmask_init(&state->needs_ss, mergedregs);
             }
          }
       }
@@ -418,41 +400,11 @@ apply_fine_deriv_macro(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
          struct ir3_instruction *op_p = ir3_instr_clone(n);
          op_p->flags = IR3_INSTR_P;
 
-         ctx->so->need_full_quad = true;
+         ctx->so->need_fine_derivatives = true;
       }
    }
 
    return true;
-}
-
-static void
-apply_push_consts_load_macro(struct ir3_legalize_ctx *ctx,
-                             struct ir3_block *block)
-{
-   foreach_instr (n, &block->instr_list) {
-      if (n->opc == OPC_PUSH_CONSTS_LOAD_MACRO) {
-         struct ir3_instruction *stsc = ir3_instr_create(block, OPC_STSC, 0, 2);
-         ir3_instr_move_after(stsc, n);
-         ir3_src_create(stsc, 0, IR3_REG_IMMED)->iim_val =
-            n->push_consts.dst_base;
-         ir3_src_create(stsc, 0, IR3_REG_IMMED)->iim_val =
-            n->push_consts.src_base;
-         stsc->cat6.iim_val = n->push_consts.src_size;
-         stsc->cat6.type = TYPE_U32;
-
-         if (ctx->compiler->stsc_duplication_quirk) {
-            struct ir3_instruction *nop = ir3_NOP(block);
-            ir3_instr_move_after(nop, stsc);
-            nop->flags |= IR3_INSTR_SS;
-            ir3_instr_move_after(ir3_instr_clone(stsc), nop);
-         }
-
-         list_delinit(&n->node);
-         break;
-      } else if (!is_meta(n)) {
-         break;
-      }
-   }
 }
 
 /* NOTE: branch instructions are always the last instruction(s)
@@ -531,11 +483,56 @@ remove_unused_block(struct ir3_block *old_target)
 {
    list_delinit(&old_target->node);
 
+   /* If there are any physical predecessors due to fallthroughs, then they may
+    * fall through to any of the physical successors of this block. But we can
+    * only fit two, so just pick the "earliest" one, i.e. the fallthrough if
+    * possible.
+    *
+    * TODO: we really ought to have unlimited numbers of physical successors,
+    * both because of this and because we currently don't model some scenarios
+    * with nested break/continue correctly.
+    */
+   struct ir3_block *new_target;
+   if (old_target->physical_successors[1] &&
+       old_target->physical_successors[1]->start_ip <
+       old_target->physical_successors[0]->start_ip) {
+      new_target = old_target->physical_successors[1];
+   } else {
+      new_target = old_target->physical_successors[0];
+   }
+
+   for (unsigned i = 0; i < old_target->physical_predecessors_count; i++) {
+      struct ir3_block *pred = old_target->physical_predecessors[i];
+      if (pred->physical_successors[0] == old_target) {
+         if (!new_target) {
+            /* If we remove a physical successor, make sure the only physical
+             * successor is the first one.
+             */
+            pred->physical_successors[0] = pred->physical_successors[1];
+            pred->physical_successors[1] = NULL;
+         } else {
+            pred->physical_successors[0] = new_target;
+         }
+      } else {
+         assert(pred->physical_successors[1] == old_target);
+         pred->physical_successors[1] = new_target;
+      }
+      if (new_target)
+         ir3_block_add_physical_predecessor(new_target, pred);
+   }
+
    /* cleanup dangling predecessors: */
    for (unsigned i = 0; i < ARRAY_SIZE(old_target->successors); i++) {
       if (old_target->successors[i]) {
          struct ir3_block *succ = old_target->successors[i];
          ir3_block_remove_predecessor(succ, old_target);
+      }
+   }
+
+   for (unsigned i = 0; i < ARRAY_SIZE(old_target->physical_successors); i++) {
+      if (old_target->physical_successors[i]) {
+         struct ir3_block *succ = old_target->physical_successors[i];
+         ir3_block_remove_physical_predecessor(succ, old_target);
       }
    }
 }
@@ -554,16 +551,21 @@ retarget_jump(struct ir3_instruction *instr, struct ir3_block *new_target)
       cur_block->successors[1] = new_target;
    }
 
+   /* also update physical_successors: */
+   if (cur_block->physical_successors[0] == old_target) {
+      cur_block->physical_successors[0] = new_target;
+   } else {
+      assert(cur_block->physical_successors[1] == old_target);
+      cur_block->physical_successors[1] = new_target;
+   }
+
    /* update new target's predecessors: */
    ir3_block_add_predecessor(new_target, cur_block);
+   ir3_block_add_physical_predecessor(new_target, cur_block);
 
    /* and remove old_target's predecessor: */
    ir3_block_remove_predecessor(old_target, cur_block);
-
-   /* If we reconverged at the old target, we'll reconverge at the new target
-    * too:
-    */
-   new_target->reconvergence_point |= old_target->reconvergence_point;
+   ir3_block_remove_physical_predecessor(old_target, cur_block);
 
    instr->cat0.target = new_target;
 
@@ -585,12 +587,6 @@ opt_jump(struct ir3 *ir)
       block->index = index++;
 
    foreach_block (block, &ir->block_list) {
-      /* This pass destroys the physical CFG so don't keep it around to avoid
-       * validation errors.
-       */
-      block->physical_successors_count = 0;
-      block->physical_predecessors_count = 0;
-
       foreach_instr (instr, &block->instr_list) {
          if (!is_flow(instr) || !instr->cat0.target)
             continue;
@@ -671,18 +667,51 @@ mark_jp(struct ir3_block *block)
    target->flags |= IR3_INSTR_JP;
 }
 
-/* Mark points where control flow reconverges.
+/* Mark points where control flow converges or diverges.
  *
- * Re-convergence points are where "parked" threads are reconverged with threads
- * that took the opposite path last time around. We already calculated them, we
- * just need to mark them with (jp).
+ * Divergence points could actually be re-convergence points where
+ * "parked" threads are recoverged with threads that took the opposite
+ * path last time around.  Possibly it is easier to think of (jp) as
+ * "the execution mask might have changed".
  */
 static void
 mark_xvergence_points(struct ir3 *ir)
 {
    foreach_block (block, &ir->block_list) {
-      if (block->reconvergence_point)
-         mark_jp(block);
+      /* We need to insert (jp) if an entry in the "branch stack" is created for
+       * our block. This happens if there is a predecessor to our block that may
+       * fallthrough to an earlier block in the physical CFG, either because it
+       * ends in a non-uniform conditional branch or because there's a
+       * fallthrough for an block in-between that also starts with (jp) and was
+       * pushed on the branch stack already.
+       */
+      for (unsigned i = 0; i < block->predecessors_count; i++) {
+         struct ir3_block *pred = block->predecessors[i];
+
+         for (unsigned j = 0; j < ARRAY_SIZE(pred->physical_successors); j++) {
+            if (pred->physical_successors[j] != NULL &&
+                pred->physical_successors[j]->start_ip < block->start_ip)
+               mark_jp(block);
+
+            /* If the predecessor just falls through to this block, we still
+             * need to check if it "falls through" by jumping to the block. This
+             * can happen if opt_jump fails and the block ends in two branches,
+             * or if there's an empty if-statement (which currently can happen
+             * with binning shaders after dead-code elimination) and the block
+             * before ends with a conditional branch directly to this block.
+             */
+            if (pred->physical_successors[j] == block) {
+               foreach_instr_rev (instr, &pred->instr_list) {
+                  if (!is_flow(instr))
+                     break;
+                  if (instr->cat0.target == block) {
+                     mark_jp(block);
+                     break;
+                  }
+               }
+            }
+         }
+      }
    }
 }
 
@@ -703,7 +732,6 @@ block_sched(struct ir3 *ir)
          struct ir3_instruction *br1, *br2;
 
          if (block->brtype == IR3_BRANCH_GETONE ||
-             block->brtype == IR3_BRANCH_GETLAST ||
              block->brtype == IR3_BRANCH_SHPS) {
             /* getone/shps can't be inverted, and it wouldn't even make sense
              * to follow it with an inverted branch, so follow it by an
@@ -712,8 +740,6 @@ block_sched(struct ir3 *ir)
             assert(!block->condition);
             if (block->brtype == IR3_BRANCH_GETONE)
                br1 = ir3_GETONE(block);
-            else if (block->brtype == IR3_BRANCH_GETLAST)
-               br1 = ir3_GETLAST(block);
             else
                br1 = ir3_SHPS(block);
             br1->cat0.target = block->successors[1];
@@ -751,7 +777,6 @@ block_sched(struct ir3 *ir)
                br2->cat0.brtype = BRANCH_ANY;
                break;
             case IR3_BRANCH_GETONE:
-            case IR3_BRANCH_GETLAST:
             case IR3_BRANCH_SHPS:
                unreachable("can't get here");
             }
@@ -883,243 +908,6 @@ nop_sched(struct ir3 *ir, struct ir3_shader_variant *so)
    }
 }
 
-static void
-dbg_sync_sched(struct ir3 *ir, struct ir3_shader_variant *so)
-{
-   foreach_block (block, &ir->block_list) {
-      foreach_instr_safe (instr, &block->instr_list) {
-         if (opc_cat(instr->opc) == 4 || opc_cat(instr->opc) == 5 ||
-             opc_cat(instr->opc) == 6) {
-            struct ir3_instruction *nop = ir3_NOP(block);
-            nop->flags |= IR3_INSTR_SS | IR3_INSTR_SY;
-            ir3_instr_move_after(nop, instr);
-         }
-      }
-   }
-}
-
-static void
-dbg_nop_sched(struct ir3 *ir, struct ir3_shader_variant *so)
-{
-   foreach_block (block, &ir->block_list) {
-      foreach_instr_safe (instr, &block->instr_list) {
-         struct ir3_instruction *nop = ir3_NOP(block);
-         nop->repeat = 5;
-         ir3_instr_move_before(nop, instr);
-      }
-   }
-}
-
-struct ir3_helper_block_data {
-   /* Whether helper invocations may be used on any path starting at the
-    * beginning of the block.
-    */
-   bool uses_helpers_beginning;
-
-   /* Whether helper invocations may be used by the end of the block. Branch
-    * instructions are considered to be "between" blocks, because (eq) has to be
-    * inserted after them in the successor blocks, so branch instructions using
-    * helpers will result in uses_helpers_end = true for their block.
-    */
-   bool uses_helpers_end;
-};
-
-/* Insert (eq) after the last instruction using the results of helper
- * invocations. Use a backwards dataflow analysis to determine at which points
- * in the program helper invocations are definitely never used, and then insert
- * (eq) at the point where we cross from a point where they may be used to a
- * point where they are never used.
- */
-static void
-helper_sched(struct ir3_legalize_ctx *ctx, struct ir3 *ir,
-             struct ir3_shader_variant *so)
-{
-   bool non_prefetch_helpers = false;
-
-   foreach_block (block, &ir->block_list) {
-      struct ir3_helper_block_data *bd =
-         rzalloc(ctx, struct ir3_helper_block_data);
-      foreach_instr (instr, &block->instr_list) {
-         if (uses_helpers(instr)) {
-            bd->uses_helpers_beginning = true;
-            if (instr->opc != OPC_META_TEX_PREFETCH) {
-               non_prefetch_helpers = true;
-               break;
-            }
-         }
-
-         if (instr->opc == OPC_SHPE) {
-            /* (eq) is not allowed in preambles, mark the whole preamble as
-             * requiring helpers to avoid putting it there.
-             */
-            bd->uses_helpers_beginning = true;
-            bd->uses_helpers_end = true;
-         }
-      }
-
-      if (block->brtype == IR3_BRANCH_ALL ||
-          block->brtype == IR3_BRANCH_ANY ||
-          block->brtype == IR3_BRANCH_GETONE) {
-         bd->uses_helpers_beginning = true;
-         bd->uses_helpers_end = true;
-      }
-
-      block->data = bd;
-   }
-
-   /* If only prefetches use helpers then we can disable them in the shader via
-    * a register setting.
-    */
-   if (!non_prefetch_helpers) {
-      so->prefetch_end_of_quad = true;
-      return;
-   }
-
-   bool progress;
-   do {
-      progress = false;
-      foreach_block_rev (block, &ir->block_list) {
-         struct ir3_helper_block_data *bd = block->data;
-
-         if (!bd->uses_helpers_beginning)
-            continue;
-
-         for (unsigned i = 0; i < block->predecessors_count; i++) {
-            struct ir3_block *pred = block->predecessors[i];
-            struct ir3_helper_block_data *pred_bd = pred->data;
-            if (!pred_bd->uses_helpers_end) {
-               pred_bd->uses_helpers_end = true;
-            }
-            if (!pred_bd->uses_helpers_beginning) {
-               pred_bd->uses_helpers_beginning = true;
-               progress = true;
-            }
-         }
-      }
-   } while (progress);
-
-   /* Now, we need to determine the points where helper invocations become
-    * unused.
-    */
-   foreach_block (block, &ir->block_list) {
-      struct ir3_helper_block_data *bd = block->data;
-      if (bd->uses_helpers_end)
-         continue;
-
-      /* We need to check the predecessors because of situations with critical
-       * edges like this that can occur after optimizing jumps:
-       *
-       *    br p0.x, #endif
-       *    ...
-       *    sam ...
-       *    ...
-       *    endif:
-       *    ...
-       *    end
-       *
-       * The endif block will have uses_helpers_beginning = false and
-       * uses_helpers_end = false, but because we jump to there from the
-       * beginning of the if where uses_helpers_end = true, we still want to
-       * add an (eq) at the beginning of the block:
-       *
-       *    br p0.x, #endif
-       *    ...
-       *    sam ...
-       *    (eq)nop
-       *    ...
-       *    endif:
-       *    (eq)nop
-       *    ...
-       *    end
-       *
-       * This an extra nop in the case where the branch isn't taken, but that's
-       * probably preferable to adding an extra jump instruction which is what
-       * would happen if we ran this pass before optimizing jumps:
-       *
-       *    br p0.x, #else
-       *    ...
-       *    sam ...
-       *    (eq)nop
-       *    ...
-       *    jump #endif
-       *    else:
-       *    (eq)nop
-       *    endif:
-       *    ...
-       *    end
-       *
-       * We also need this to make sure we insert (eq) after branches which use
-       * helper invocations.
-       */
-      bool pred_uses_helpers = bd->uses_helpers_beginning;
-      for (unsigned i = 0; i < block->predecessors_count; i++) {
-         struct ir3_block *pred = block->predecessors[i];
-         struct ir3_helper_block_data *pred_bd = pred->data;
-         if (pred_bd->uses_helpers_end) {
-            pred_uses_helpers = true;
-            break;
-         }
-      }
-
-      if (!pred_uses_helpers)
-         continue;
-
-      /* The last use of helpers is somewhere between the beginning and the
-       * end. first_instr will be the first instruction where helpers are no
-       * longer required, or NULL if helpers are not required just at the end.
-       */
-      struct ir3_instruction *first_instr = NULL;
-      foreach_instr_rev (instr, &block->instr_list) {
-         /* Skip prefetches because they actually execute before the block
-          * starts and at this stage they aren't guaranteed to be at the start
-          * of the block.
-          */
-         if (uses_helpers(instr) && instr->opc != OPC_META_TEX_PREFETCH)
-            break;
-         first_instr = instr;
-      }
-
-      bool killed = false;
-      bool expensive_instruction_in_block = false;
-      if (first_instr) {
-         foreach_instr_from (instr, first_instr, &block->instr_list) {
-            /* If there's already a nop, we don't have to worry about whether to
-             * insert one.
-             */
-            if (instr->opc == OPC_NOP) {
-               instr->flags |= IR3_INSTR_EQ;
-               killed = true;
-               break;
-            }
-
-            /* ALU and SFU instructions probably aren't going to benefit much
-             * from killing helper invocations, because they complete at least
-             * an entire quad in a cycle and don't access any quad-divergent
-             * memory, so delay emitting (eq) in the hopes that we find a nop
-             * afterwards.
-             */
-            if (is_alu(instr) || is_sfu(instr))
-               continue;
-
-            expensive_instruction_in_block = true;
-            break;
-         }
-      }
-
-      /* If this block isn't the last block before the end instruction, assume
-       * that there may be expensive instructions in later blocks so it's worth
-       * it to insert a nop.
-       */
-      if (!killed && (expensive_instruction_in_block ||
-                      block->successors[0] != ir3_end_block(ir))) {
-         struct ir3_instruction *nop = ir3_NOP(block);
-         nop->flags |= IR3_INSTR_EQ;
-         if (first_instr)
-            ir3_instr_move_before(nop, first_instr);
-      }
-   }
-}
-
 bool
 ir3_legalize(struct ir3 *ir, struct ir3_shader_variant *so, int *max_bary)
 {
@@ -1183,30 +971,10 @@ ir3_legalize(struct ir3 *ir, struct ir3_shader_variant *so, int *max_bary)
       progress |= apply_fine_deriv_macro(ctx, block);
    }
 
-   foreach_block (block, &ir->block_list) {
-      if (block->brtype == IR3_BRANCH_GETONE) {
-         apply_push_consts_load_macro(ctx, block->successors[0]);
-         break;
-      }
-   }
-
    nop_sched(ir, so);
-
-   if (ir3_shader_debug & IR3_DBG_FULLSYNC) {
-      dbg_sync_sched(ir, so);
-   }
-
-   if (ir3_shader_debug & IR3_DBG_FULLNOP) {
-      dbg_nop_sched(ir, so);
-   }
 
    while (opt_jump(ir))
       ;
-
-   /* TODO: does (eq) exist before a6xx? */
-   if (so->type == MESA_SHADER_FRAGMENT && so->need_pixlod &&
-       so->compiler->gen >= 6)
-      helper_sched(ctx, ir, so);
 
    ir3_count_instructions(ir);
    resolve_jumps(ir);

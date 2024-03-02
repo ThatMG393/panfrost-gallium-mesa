@@ -25,7 +25,7 @@
  *
  **************************************************************************/
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 
 #include "util/u_memory.h"
 #include "util/u_debug.h"

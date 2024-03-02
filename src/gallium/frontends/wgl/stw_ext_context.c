@@ -30,7 +30,6 @@
 #include <GL/gl.h>
 #include <GL/wglext.h>
 
-#include "stw_gdishim.h"
 #include "gldrv.h"
 #include "stw_context.h"
 #include "stw_device.h"
@@ -79,7 +78,7 @@ wglCreateContextAttribsARB(HDC hDC, HGLRC hShareContext, const int *attribList)
    int profileMask = WGL_CONTEXT_CORE_PROFILE_BIT_ARB;
    int resetStrategy = WGL_NO_RESET_NOTIFICATION_ARB;
    int i;
-   BOOL done = false;
+   BOOL done = FALSE;
    const int contextFlagsAll = (WGL_CONTEXT_DEBUG_BIT_ARB |
                                 WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB |
                                 WGL_CONTEXT_ROBUST_ACCESS_BIT_ARB);
@@ -111,7 +110,7 @@ wglCreateContextAttribsARB(HDC hDC, HGLRC hShareContext, const int *attribList)
             break;
          case 0:
             /* end of list */
-            done = true;
+            done = TRUE;
             break;
          default:
             /* bad attribute */
@@ -228,7 +227,7 @@ wglCreateContextAttribsARB(HDC hDC, HGLRC hShareContext, const int *attribList)
          return 0;
 
       struct stw_context *stw_ctx = stw_create_context_attribs(hDC, layerPlane, share_stw,
-                                                               stw_dev->fscreen,
+                                                               stw_dev->smapi,
                                                                majorVersion, minorVersion,
                                                                contextFlags, profileMask, pfi,
                                                                resetStrategy);

@@ -29,10 +29,6 @@
  * Target makefiles directly refer to vl_winsys_dri.c to avoid DRI dependency
  */
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #ifndef vl_winsys_h
 #define vl_winsys_h
 
@@ -41,7 +37,6 @@ extern "C" {
 #endif
 #ifdef _WIN32
 #include <windows.h>
-#include <unknwn.h>
 #endif
 #include "pipe/p_defines.h"
 #include "util/format/u_formats.h"
@@ -102,7 +97,6 @@ vl_dri3_screen_create(void *display, int screen) { return NULL; };
 
 #ifdef _WIN32
 struct vl_screen *vl_win32_screen_create(LUID *adapter);
-struct vl_screen *vl_win32_screen_create_from_d3d12_device(IUnknown* d3d12_device);
 #else
 /* Always enable the DRM vl winsys */
 struct vl_screen *
@@ -121,7 +115,4 @@ vl_xlib_swrast_screen_create(void *display, int screen) { return NULL; }
 #endif
 #endif
 
-#endif
-#ifdef __cplusplus
-}
 #endif

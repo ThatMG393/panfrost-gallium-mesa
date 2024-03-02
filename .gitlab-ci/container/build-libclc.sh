@@ -1,9 +1,8 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 set -ex
 
-export LLVM_CONFIG="llvm-config-${LLVM_VERSION:?"llvm unset!"}"
-LLVM_TAG="llvmorg-15.0.7"
+export LLVM_CONFIG="llvm-config-11"
 
 $LLVM_CONFIG --version
 
@@ -12,12 +11,12 @@ git config --global user.name "Mesa CI"
 git clone \
     https://github.com/llvm/llvm-project \
     --depth 1 \
-    -b "${LLVM_TAG}" \
+    -b llvmorg-12.0.0-rc3 \
     /llvm-project
 
 mkdir /libclc
 pushd /libclc
-cmake -S /llvm-project/libclc -B . -G Ninja -DLLVM_CONFIG="$LLVM_CONFIG" -DLIBCLC_TARGETS_TO_BUILD="spirv-mesa3d-;spirv64-mesa3d-" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DLLVM_SPIRV=/usr/bin/llvm-spirv
+cmake -S /llvm-project/libclc -B . -G Ninja -DLLVM_CONFIG=$LLVM_CONFIG -DLIBCLC_TARGETS_TO_BUILD="spirv-mesa3d-;spirv64-mesa3d-" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DLLVM_SPIRV=/usr/bin/llvm-spirv
 ninja
 ninja install
 popd

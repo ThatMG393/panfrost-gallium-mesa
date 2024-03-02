@@ -161,7 +161,7 @@ qir_lower_uniforms(struct vc4_compile *c)
                                 if (count <= 1)
                                         continue;
 
-                                /* If the block doesn't have a load of the
+                                /* If the block doesn't have a load of hte
                                  * uniform yet, add it.  We could potentially
                                  * do better and CSE MOVs from multiple blocks
                                  * into dominating blocks, except that may

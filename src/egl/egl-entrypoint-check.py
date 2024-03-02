@@ -4,8 +4,7 @@ import argparse
 from generate.eglFunctionList import EGL_FUNCTIONS as GLVND_ENTRYPOINTS
 
 
-PREFIX1 = 'EGL_ENTRYPOINT('
-PREFIX2 = 'EGL_ENTRYPOINT2('
+PREFIX = 'EGL_ENTRYPOINT('
 SUFFIX = ')'
 
 
@@ -70,14 +69,9 @@ def main():
     entrypoints = []
     for line in lines:
         line = line.strip()
-        if line.startswith(PREFIX1):
+        if line.startswith(PREFIX):
             assert line.endswith(SUFFIX)
-            entrypoints.append(line[len(PREFIX1):-len(SUFFIX)])
-        if line.startswith(PREFIX2):
-            assert line.endswith(SUFFIX)
-            entrypoint = line[len(PREFIX2):-len(SUFFIX)]
-            entrypoint = entrypoint.split(',')[0].strip()
-            entrypoints.append(entrypoint)
+            entrypoints.append(line[len(PREFIX):-len(SUFFIX)])
 
     check_entrypoint_sorted(entrypoints)
 

@@ -549,7 +549,8 @@ namespace {
        * Register allocation ensures that, so don't move 127 around to avoid
        * breaking that property.
        */
-      constrained[p.atom_of_reg(127)] = true;
+      if (v->devinfo->ver >= 8)
+         constrained[p.atom_of_reg(127)] = true;
 
       foreach_block_and_inst(block, fs_inst, inst, v->cfg) {
          /* Assume that anything referenced via fixed GRFs is baked into the
@@ -565,6 +566,26 @@ namespace {
                 (is_grf(inst->src[i]) && inst->eot))
                constrained[p.atom_of_reg(reg_of(inst->src[i]))] = true;
          }
+
+         /* Preserve the original allocation of VGRFs used by the barycentric
+          * source of the LINTERP instruction on Gfx6, since pair-aligned
+          * barycentrics allow the PLN instruction to be used.
+          */
+         if (v->devinfo->has_pln && v->devinfo->ver <= 6 &&
+             inst->opcode == FS_OPCODE_LINTERP)
+            constrained[p.atom_of_reg(reg_of(inst->src[0]))] = true;
+
+         /* The location of the Gfx7 MRF hack registers is hard-coded in the
+          * rest of the compiler back-end.  Don't attempt to move them around.
+          */
+         if (v->devinfo->ver >= 7) {
+            assert(inst->dst.file != MRF);
+
+            for (unsigned i = 0; i < inst->implied_mrf_writes(); i++) {
+               const unsigned reg = GFX7_MRF_HACK_START + inst->base_mrf + i;
+               constrained[p.atom_of_reg(reg)] = true;
+            }
+         }
       }
 
       return constrained;
@@ -579,10 +600,10 @@ namespace {
    is_conflict_optimized_out(const intel_device_info *devinfo,
                              const fs_inst *inst)
    {
-      return
-         (is_grf(inst->src[0]) && (reg_of(inst->src[0]) == reg_of(inst->src[1]) ||
-                                   reg_of(inst->src[0]) == reg_of(inst->src[2]))) ||
-          reg_of(inst->src[1]) == reg_of(inst->src[2]);
+      return devinfo->ver >= 9 &&
+         ((is_grf(inst->src[0]) && (reg_of(inst->src[0]) == reg_of(inst->src[1]) ||
+                                    reg_of(inst->src[0]) == reg_of(inst->src[2]))) ||
+          reg_of(inst->src[1]) == reg_of(inst->src[2]));
    }
 
    /**
@@ -886,23 +907,23 @@ namespace {
 }
 
 bool
-brw_fs_opt_bank_conflicts(fs_visitor &s)
+fs_visitor::opt_bank_conflicts()
 {
-   assert(s.grf_used || !"Must be called after register allocation");
+   assert(grf_used || !"Must be called after register allocation");
 
-   /* TODO: Re-work this pass for Gfx20+. */
-   if (s.devinfo->ver >= 20)
+   /* No ternary instructions -- No bank conflicts. */
+   if (devinfo->ver < 6)
       return false;
 
-   const partitioning p = shader_reg_partitioning(&s);
-   const bool *constrained = shader_reg_constraints(&s, p);
+   const partitioning p = shader_reg_partitioning(this);
+   const bool *constrained = shader_reg_constraints(this, p);
    const weight_vector_type *conflicts =
-      shader_conflict_weight_matrix(&s, p);
+      shader_conflict_weight_matrix(this, p);
    const permutation map =
       optimize_reg_permutation(p, constrained, conflicts,
                                identity_reg_permutation(p));
 
-   foreach_block_and_inst(block, fs_inst, inst, s.cfg) {
+   foreach_block_and_inst(block, fs_inst, inst, cfg) {
       inst->dst = transform(p, map, inst->dst);
 
       for (int i = 0; i < inst->sources; i++)

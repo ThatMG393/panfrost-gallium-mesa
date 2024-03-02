@@ -48,7 +48,6 @@ vklayer_mesa_overlay = shared_library(
 install_data(
   files('VkLayer_MESA_overlay.json'),
   install_dir : join_paths(get_option('datadir'), 'vulkan', 'explicit_layer.d'),
-  install_tag : 'runtime',
 )
 
 install_data(

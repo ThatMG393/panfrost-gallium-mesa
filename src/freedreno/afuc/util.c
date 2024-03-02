@@ -35,7 +35,6 @@
 static struct rnndeccontext *ctx;
 static struct rnndb *db;
 static struct rnndomain *control_regs;
-static struct rnndomain *sqe_regs;
 static struct rnndomain *pipe_regs;
 struct rnndomain *dom[2];
 static struct rnnenum *pm4_packets;
@@ -85,24 +84,6 @@ unsigned
 afuc_control_reg(const char *name)
 {
    return reg(control_regs, "control", name);
-}
-
-/**
- * Map offset to SQE reg name (or NULL), caller frees
- */
-char *
-afuc_sqe_reg_name(unsigned id)
-{
-   return reg_name(sqe_regs, id);
-}
-
-/**
- * Map SQE reg name to offset.
- */
-unsigned
-afuc_sqe_reg(const char *name)
-{
-   return reg(sqe_regs, "SQE", name);
 }
 
 /**
@@ -271,25 +252,17 @@ afuc_printc(enum afuc_color c, const char *fmt, ...)
 
 int afuc_util_init(int gpuver, bool colors)
 {
-   char *name, *control_reg_name, *variant;
+   char *name, *control_reg_name;
    char *pipe_reg_name = NULL;
 
    switch (gpuver) {
-   case 7:
-      name = "A6XX";
-      variant = "A7XX";
-      control_reg_name = "A7XX_CONTROL_REG";
-      pipe_reg_name = "A7XX_PIPE_REG";
-      break;
    case 6:
       name = "A6XX";
-      variant = "A6XX";
       control_reg_name = "A6XX_CONTROL_REG";
       pipe_reg_name = "A6XX_PIPE_REG";
       break;
    case 5:
       name = "A5XX";
-      variant = "A5XX";
       control_reg_name = "A5XX_CONTROL_REG";
       pipe_reg_name = "A5XX_PIPE_REG";
       break;
@@ -311,10 +284,9 @@ int afuc_util_init(int gpuver, bool colors)
    dom[0] = rnn_finddomain(db, name);
    dom[1] = rnn_finddomain(db, "AXXX");
    control_regs = rnn_finddomain(db, control_reg_name);
-   sqe_regs = rnn_finddomain(db, "A6XX_SQE_REG");
    pipe_regs = rnn_finddomain(db, pipe_reg_name);
 
-   rnndec_varadd(ctx, "chip", variant);
+   rnndec_varadd(ctx, "chip", name);
 
    pm4_packets = rnn_findenum(ctx->db, "adreno_pm4_type3_packets");
 

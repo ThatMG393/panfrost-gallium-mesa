@@ -64,7 +64,7 @@ static void r300_release_referenced_objects(struct r300_context *r300)
 
     /* Manually-created vertex buffers. */
     pipe_vertex_buffer_unreference(&r300->dummy_vb);
-    radeon_bo_reference(r300->rws, &r300->vbo, NULL);
+    pb_reference(&r300->vbo, NULL);
 
     r300->context.delete_depth_stencil_alpha_state(&r300->context,
                                                    r300->dsa_decompress_zmask);
@@ -75,10 +75,10 @@ static void r300_destroy_context(struct pipe_context* context)
     struct r300_context* r300 = r300_context(context);
 
     if (r300->cs.priv && r300->hyperz_enabled) {
-        r300->rws->cs_request_feature(&r300->cs, RADEON_FID_R300_HYPERZ_ACCESS, false);
+        r300->rws->cs_request_feature(&r300->cs, RADEON_FID_R300_HYPERZ_ACCESS, FALSE);
     }
     if (r300->cs.priv && r300->cmask_access) {
-        r300->rws->cs_request_feature(&r300->cs, RADEON_FID_R300_CMASK_ACCESS, false);
+        r300->rws->cs_request_feature(&r300->cs, RADEON_FID_R300_CMASK_ACCESS, FALSE);
     }
 
     if (r300->blitter)
@@ -86,15 +86,10 @@ static void r300_destroy_context(struct pipe_context* context)
     if (r300->draw)
         draw_destroy(r300->draw);
 
-    for (unsigned i = 0; i < r300->nr_vertex_buffers; i++)
-       pipe_vertex_buffer_unreference(&r300->vertex_buffer[i]);
-
     if (r300->uploader)
         u_upload_destroy(r300->uploader);
     if (r300->context.stream_uploader)
         u_upload_destroy(r300->context.stream_uploader);
-    if (r300->context.const_uploader)
-       u_upload_destroy(r300->context.const_uploader);
 
     /* XXX: This function assumes r300->query_list was initialized */
     r300_release_referenced_objects(r300);
@@ -104,7 +99,6 @@ static void r300_destroy_context(struct pipe_context* context)
         r300->rws->ctx_destroy(r300->ctx);
 
     rc_destroy_regalloc_state(&r300->fs_regalloc_state);
-    rc_destroy_regalloc_state(&r300->vs_regalloc_state);
 
     /* XXX: No way to tell if this was initialized or not? */
     slab_destroy_child(&r300->pool_transfers);
@@ -131,9 +125,6 @@ static void r300_destroy_context(struct pipe_context* context)
             FREE(r300->vertex_stream_state.state);
         }
     }
-
-    FREE(r300->stencilref_fallback);
-
     FREE(r300);
 }
 
@@ -151,21 +142,21 @@ static void r300_flush_callback(void *data, unsigned flags,
     r300->atomname.state = NULL; \
     r300->atomname.size = atomsize; \
     r300->atomname.emit = r300_emit_##atomname; \
-    r300->atomname.dirty = false; \
+    r300->atomname.dirty = FALSE; \
  } while (0)
 
 #define R300_ALLOC_ATOM(atomname, statetype) \
 do { \
     r300->atomname.state = CALLOC_STRUCT(statetype); \
     if (r300->atomname.state == NULL) \
-        return false; \
+        return FALSE; \
 } while (0)
 
-static bool r300_setup_atoms(struct r300_context* r300)
+static boolean r300_setup_atoms(struct r300_context* r300)
 {
-    bool is_rv350 = r300->screen->caps.is_rv350;
-    bool is_r500 = r300->screen->caps.is_r500;
-    bool has_tcl = r300->screen->caps.has_tcl;
+    boolean is_rv350 = r300->screen->caps.is_rv350;
+    boolean is_r500 = r300->screen->caps.is_r500;
+    boolean has_tcl = r300->screen->caps.has_tcl;
 
     /* Create the actual atom list.
      *
@@ -253,11 +244,11 @@ static bool r300_setup_atoms(struct r300_context* r300)
     }
 
     /* Some non-CSO atoms don't use the state pointer. */
-    r300->fb_state_pipelined.allow_null_state = true;
-    r300->fs_rc_constant_state.allow_null_state = true;
-    r300->pvs_flush.allow_null_state = true;
-    r300->query_start.allow_null_state = true;
-    r300->texture_cache_inval.allow_null_state = true;
+    r300->fb_state_pipelined.allow_null_state = TRUE;
+    r300->fs_rc_constant_state.allow_null_state = TRUE;
+    r300->pvs_flush.allow_null_state = TRUE;
+    r300->query_start.allow_null_state = TRUE;
+    r300->texture_cache_inval.allow_null_state = TRUE;
 
     /* Some states must be marked as dirty here to properly set up
      * hardware in the first command stream. */
@@ -267,7 +258,7 @@ static bool r300_setup_atoms(struct r300_context* r300)
     r300_mark_atom_dirty(r300, &r300->texture_cache_inval);
     r300_mark_atom_dirty(r300, &r300->textures_state);
 
-    return true;
+    return TRUE;
 }
 
 /* Not every gallium frontend calls every driver function before the first draw
@@ -398,12 +389,12 @@ struct pipe_context* r300_create_context(struct pipe_screen* screen,
 
     slab_create_child(&r300->pool_transfers, &r300screen->pool_transfers);
 
-    r300->ctx = rws->ctx_create(rws, RADEON_CTX_PRIORITY_MEDIUM, false);
+    r300->ctx = rws->ctx_create(rws, RADEON_CTX_PRIORITY_MEDIUM);
     if (!r300->ctx)
         goto fail;
 
 
-    if (!rws->cs_create(&r300->cs, r300->ctx, AMD_IP_GFX, r300_flush_callback, r300))
+    if (!rws->cs_create(&r300->cs, r300->ctx, AMD_IP_GFX, r300_flush_callback, r300, false))
         goto fail;
 
     if (!r300screen->caps.has_tcl) {
@@ -416,9 +407,9 @@ struct pipe_context* r300_create_context(struct pipe_screen* screen,
         /* Disable converting points/lines to triangles. */
         draw_wide_line_threshold(r300->draw, 10000000.f);
         draw_wide_point_threshold(r300->draw, 10000000.f);
-        draw_wide_point_sprites(r300->draw, false);
-        draw_enable_line_stipple(r300->draw, true);
-        draw_enable_point_sprites(r300->draw, false);
+        draw_wide_point_sprites(r300->draw, FALSE);
+        draw_enable_line_stipple(r300->draw, TRUE);
+        draw_enable_point_sprites(r300->draw, FALSE);
     }
 
     if (!r300_setup_atoms(r300))
@@ -483,7 +474,7 @@ struct pipe_context* r300_create_context(struct pipe_screen* screen,
         vb.depth0 = 1;
 
         r300->dummy_vb.buffer.resource = screen->resource_create(screen, &vb);
-        util_set_vertex_buffers(&r300->context, 1, false, &r300->dummy_vb);
+        r300->context.set_vertex_buffers(&r300->context, 0, 1, 0, false, &r300->dummy_vb);
     }
 
     {

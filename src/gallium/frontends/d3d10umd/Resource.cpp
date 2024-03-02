@@ -118,9 +118,6 @@ translate_resource_flags(UINT flags)
    if (flags & D3D10_DDI_BIND_STREAM_OUTPUT)
       bind |= PIPE_BIND_STREAM_OUTPUT;
 
-   if (flags & D3D10_DDI_BIND_PRESENT)
-      bind |= PIPE_BIND_DISPLAY_TARGET;
-
    return bind;
 }
 
@@ -363,8 +360,8 @@ CreateResource(D3D10DDI_HDEVICE hDevice,                                // IN
             assert(map);
             if (map) {
                for (int z = 0; z < box.depth; ++z) {
-                  uint8_t *dst = (uint8_t*)map + z*transfer->layer_stride;
-                  const uint8_t *src = (const uint8_t*)pInitialDataUP->pSysMem + z*pInitialDataUP->SysMemSlicePitch;
+                  ubyte *dst = (ubyte*)map + z*transfer->layer_stride;
+                  const ubyte *src = (const ubyte*)pInitialDataUP->pSysMem + z*pInitialDataUP->SysMemSlicePitch;
                   util_copy_rect(dst,
                                  templat.format,
                                  transfer->stride,
@@ -612,14 +609,14 @@ areResourcesCompatible(const struct pipe_resource *src_resource, // IN
        * Trivial.
        */
 
-      return true;
+      return TRUE;
    } else if (src_resource->target == PIPE_BUFFER &&
               dst_resource->target == PIPE_BUFFER) {
       /*
        * Buffer resources are merely a collection of bytes.
        */
 
-      return true;
+      return TRUE;
    } else {
       /*
        * Check whether the formats are supported by
@@ -824,7 +821,7 @@ ResourceIsStagingBusy(D3D10DDI_HDEVICE hDevice,       // IN
 
    /* ignore */
 
-   return false;
+   return FALSE;
 }
 
 
@@ -920,8 +917,8 @@ ResourceUpdateSubResourceUP(D3D10DDI_HDEVICE hDevice,                // IN
    assert(map);
    if (map) {
       for (int z = 0; z < box.depth; ++z) {
-         uint8_t *dst = (uint8_t*)map + z*transfer->layer_stride;
-         const uint8_t *src = (const uint8_t*)pSysMemUP + z*DepthPitch;
+         ubyte *dst = (ubyte*)map + z*transfer->layer_stride;
+         const ubyte *src = (const ubyte*)pSysMemUP + z*DepthPitch;
          util_copy_rect(dst,
                         dst_resource->format,
                         transfer->stride,

@@ -39,7 +39,7 @@ static inline int pack_float_16_6x(float f) {
 /* Blend state. */
 
 static inline uint32_t r300_translate_blend_function(int blend_func,
-                                                     bool clamp)
+                                                     boolean clamp)
 {
     switch (blend_func) {
     case PIPE_BLEND_ADD:
@@ -260,7 +260,7 @@ static inline uint32_t r300_translate_wrap(int wrap)
 }
 
 static inline uint32_t r300_translate_tex_filters(int min, int mag, int mip,
-                                                  bool is_anisotropic)
+                                                  boolean is_anisotropic)
 {
     uint32_t retval = 0;
 

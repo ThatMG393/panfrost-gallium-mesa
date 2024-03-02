@@ -28,7 +28,7 @@
 #include <windows.h>
 #include <tlhelp32.h>
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "util/u_debug.h"
 #include "stw_tls.h"
 
@@ -57,12 +57,12 @@ static struct stw_tls_data *
 stw_tls_lookup_pending_data(DWORD dwThreadId);
 
 
-bool
+boolean
 stw_tls_init(void)
 {
    tlsIndex = TlsAlloc();
    if (tlsIndex == TLS_OUT_OF_INDEXES) {
-      return false;
+      return FALSE;
    }
 
    /*
@@ -73,38 +73,38 @@ stw_tls_init(void)
     * XXX: Except for the current thread since it there is an explicit
     * stw_tls_init_thread() call for it later on.
     */
-#ifndef _GAMING_XBOX
-   DWORD dwCurrentProcessId = GetCurrentProcessId();
-   DWORD dwCurrentThreadId = GetCurrentThreadId();
-   HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, dwCurrentProcessId);
-   if (hSnapshot != INVALID_HANDLE_VALUE) {
-      THREADENTRY32 te;
-      te.dwSize = sizeof te;
-      if (Thread32First(hSnapshot, &te)) {
-         do {
-            if (te.dwSize >= FIELD_OFFSET(THREADENTRY32, th32OwnerProcessID) +
-                             sizeof te.th32OwnerProcessID) {
-               if (te.th32OwnerProcessID == dwCurrentProcessId) {
-                  if (te.th32ThreadID != dwCurrentThreadId) {
-                     struct stw_tls_data *data;
-                     data = stw_tls_data_create(te.th32ThreadID);
-                     if (data) {
-                        EnterCriticalSection(&g_mutex);
-                        data->next = g_pendingTlsData;
-                        g_pendingTlsData = data;
-                        LeaveCriticalSection(&g_mutex);
+   if (1) {
+      DWORD dwCurrentProcessId = GetCurrentProcessId();
+      DWORD dwCurrentThreadId = GetCurrentThreadId();
+      HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, dwCurrentProcessId);
+      if (hSnapshot != INVALID_HANDLE_VALUE) {
+         THREADENTRY32 te;
+         te.dwSize = sizeof te;
+         if (Thread32First(hSnapshot, &te)) {
+            do {
+               if (te.dwSize >= FIELD_OFFSET(THREADENTRY32, th32OwnerProcessID) +
+                                sizeof te.th32OwnerProcessID) {
+                  if (te.th32OwnerProcessID == dwCurrentProcessId) {
+                     if (te.th32ThreadID != dwCurrentThreadId) {
+                        struct stw_tls_data *data;
+                        data = stw_tls_data_create(te.th32ThreadID);
+                        if (data) {
+                           EnterCriticalSection(&g_mutex);
+                           data->next = g_pendingTlsData;
+                           g_pendingTlsData = data;
+                           LeaveCriticalSection(&g_mutex);
+                        }
                      }
                   }
                }
-            }
-            te.dwSize = sizeof te;
-         } while (Thread32Next(hSnapshot, &te));
+               te.dwSize = sizeof te;
+            } while (Thread32Next(hSnapshot, &te));
+         }
+         CloseHandle(hSnapshot);
       }
-      CloseHandle(hSnapshot);
    }
-#endif /* _GAMING_XBOX */
 
-   return true;
+   return TRUE;
 }
 
 
@@ -127,14 +127,10 @@ stw_tls_data_create(DWORD dwThreadId)
 
    data->dwThreadId = dwThreadId;
 
-#ifndef _GAMING_XBOX
    data->hCallWndProcHook = SetWindowsHookEx(WH_CALLWNDPROC,
                                              stw_call_window_proc,
                                              NULL,
                                              dwThreadId);
-#else
-   data->hCallWndProcHook = NULL;
-#endif
    if (data->hCallWndProcHook == NULL) {
       goto no_hook;
    }
@@ -165,33 +161,31 @@ stw_tls_data_destroy(struct stw_tls_data *data)
       debug_printf("%s(0x%04lx)\n", __func__, data->dwThreadId);
    }
 
-#ifndef _GAMING_XBOX
    if (data->hCallWndProcHook) {
       UnhookWindowsHookEx(data->hCallWndProcHook);
       data->hCallWndProcHook = NULL;
    }
-#endif
 
    free(data);
 }
 
-bool
+boolean
 stw_tls_init_thread(void)
 {
    struct stw_tls_data *data;
 
    if (tlsIndex == TLS_OUT_OF_INDEXES) {
-      return false;
+      return FALSE;
    }
 
    data = stw_tls_data_create(GetCurrentThreadId());
    if (!data) {
-      return false;
+      return FALSE;
    }
 
    TlsSetValue(tlsIndex, data);
 
-   return true;
+   return TRUE;
 }
 
 void
@@ -304,7 +298,7 @@ stw_tls_get_data(void)
    }
 
    assert(data);
-   assert(data->dwThreadId == GetCurrentThreadId());
+   assert(data->dwThreadId = GetCurrentThreadId());
    assert(data->next == NULL);
 
    return data;

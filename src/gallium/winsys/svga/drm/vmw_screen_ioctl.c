@@ -100,7 +100,7 @@ vmw_ioctl_context_create(struct vmw_winsys_screen *vws)
 
 uint32
 vmw_ioctl_extended_context_create(struct vmw_winsys_screen *vws,
-                                  bool vgpu10)
+                                  boolean vgpu10)
 {
    union drm_vmw_extended_context_arg c_arg;
    int ret;
@@ -159,7 +159,7 @@ vmw_ioctl_surface_create(struct vmw_winsys_screen *vws,
    req->flags = (uint32_t) flags;
    req->scanout = !!(usage & SVGA_SURFACE_USAGE_SCANOUT);
    req->format = (uint32_t) format;
-   req->shareable = true;
+   req->shareable = !!(usage & SVGA_SURFACE_USAGE_SHARED);
 
    assert(numFaces * numMipLevels < DRM_VMW_MAX_SURFACE_FACES*
 	  DRM_VMW_MAX_MIP_LEVELS);
@@ -244,10 +244,12 @@ vmw_ioctl_gb_surface_create(struct vmw_winsys_screen *vws,
       if (usage & SVGA_SURFACE_USAGE_SCANOUT)
          req->base.drm_surface_flags |= drm_vmw_surface_flag_scanout;
 
+      if (usage & SVGA_SURFACE_USAGE_SHARED)
+         req->base.drm_surface_flags |= drm_vmw_surface_flag_shareable;
+
       if ((usage & SVGA_SURFACE_USAGE_COHERENT) || vws->force_coherent)
          req->base.drm_surface_flags |= drm_vmw_surface_flag_coherent;
 
-      req->base.drm_surface_flags |= drm_vmw_surface_flag_shareable;
       req->base.drm_surface_flags |= drm_vmw_surface_flag_create_buffer;
       req->base.base_size.width = size.width;
       req->base.base_size.height = size.height;
@@ -284,7 +286,8 @@ vmw_ioctl_gb_surface_create(struct vmw_winsys_screen *vws,
       if (usage & SVGA_SURFACE_USAGE_SCANOUT)
          req->drm_surface_flags |= drm_vmw_surface_flag_scanout;
 
-      req->drm_surface_flags |= drm_vmw_surface_flag_shareable;
+      if (usage & SVGA_SURFACE_USAGE_SHARED)
+         req->drm_surface_flags |= drm_vmw_surface_flag_shareable;
 
       req->drm_surface_flags |= drm_vmw_surface_flag_create_buffer;
       req->base_size.width = size.width;
@@ -346,14 +349,14 @@ static int
 vmw_ioctl_surface_req(const struct vmw_winsys_screen *vws,
                       const struct winsys_handle *whandle,
                       struct drm_vmw_surface_arg *req,
-                      bool *needs_unref)
+                      boolean *needs_unref)
 {
    int ret;
 
    switch(whandle->type) {
    case WINSYS_HANDLE_TYPE_SHARED:
    case WINSYS_HANDLE_TYPE_KMS:
-      *needs_unref = false;
+      *needs_unref = FALSE;
       req->handle_type = DRM_VMW_HANDLE_LEGACY;
       req->sid = whandle->handle;
       break;
@@ -368,11 +371,11 @@ vmw_ioctl_surface_req(const struct vmw_winsys_screen *vws,
             return -EINVAL;
          }
 
-         *needs_unref = true;
+         *needs_unref = TRUE;
          req->handle_type = DRM_VMW_HANDLE_LEGACY;
          req->sid = handle;
       } else {
-         *needs_unref = false;
+         *needs_unref = FALSE;
          req->handle_type = DRM_VMW_HANDLE_PRIME;
          req->sid = whandle->handle;
       }
@@ -410,7 +413,7 @@ vmw_ioctl_gb_surface_ref(struct vmw_winsys_screen *vws,
                          struct vmw_region **p_region)
 {
    struct vmw_region *region = NULL;
-   bool needs_unref = false;
+   boolean needs_unref = FALSE;
    int ret;
 
    assert(p_region != NULL);
@@ -516,18 +519,18 @@ vmw_ioctl_command(struct vmw_winsys_screen *vws, int32_t cid,
 
 #ifdef DEBUG
    {
-      static bool firsttime = true;
-      static bool debug = false;
-      static bool skip = false;
+      static boolean firsttime = TRUE;
+      static boolean debug = FALSE;
+      static boolean skip = FALSE;
       if (firsttime) {
-         debug = debug_get_bool_option("SVGA_DUMP_CMD", false);
-         skip = debug_get_bool_option("SVGA_SKIP_CMD", false);
+         debug = debug_get_bool_option("SVGA_DUMP_CMD", FALSE);
+         skip = debug_get_bool_option("SVGA_SKIP_CMD", FALSE);
       }
       if (debug) {
          VMW_FUNC;
          svga_dump_commands(commands, size);
       }
-      firsttime = false;
+      firsttime = FALSE;
       if (skip) {
          size = 0;
       }
@@ -584,7 +587,7 @@ vmw_ioctl_command(struct vmw_winsys_screen *vws, int32_t cid,
    } else {
       if (pfence) {
          vmw_fences_signal(vws->fence_ops, rep.passed_seqno, rep.seqno,
-                           true);
+                           TRUE);
 
          /* Older DRM module will set this to zero, but -1 is the proper FD
           * to use for no Fence FD support */
@@ -732,9 +735,9 @@ vmw_ioctl_region_unmap(struct vmw_region *region)
  */
 int
 vmw_ioctl_syncforcpu(struct vmw_region *region,
-                     bool dont_block,
-                     bool readonly,
-                     bool allow_cs)
+                     boolean dont_block,
+                     boolean readonly,
+                     boolean allow_cs)
 {
    struct drm_vmw_synccpu_arg arg;
 
@@ -761,8 +764,8 @@ vmw_ioctl_syncforcpu(struct vmw_region *region,
  */
 void
 vmw_ioctl_releasefromcpu(struct vmw_region *region,
-                         bool readonly,
-                         bool allow_cs)
+                         boolean readonly,
+                         boolean allow_cs)
 {
    struct drm_vmw_synccpu_arg arg;
 
@@ -827,7 +830,7 @@ vmw_ioctl_fence_signalled(struct vmw_winsys_screen *vws,
    if (ret != 0)
       return ret;
 
-   vmw_fences_signal(vws->fence_ops, arg.passed_seqno, 0, false);
+   vmw_fences_signal(vws->fence_ops, arg.passed_seqno, 0, FALSE);
 
    return (arg.signaled) ? 0 : -1;
 }
@@ -918,7 +921,7 @@ vmw_ioctl_parse_caps(struct vmw_winsys_screen *vws,
 
    if (vws->base.have_gb_objects) {
       for (i = 0; i < vws->ioctl.num_cap_3d; ++i) {
-	 vws->ioctl.cap_3d[i].has_cap = true;
+	 vws->ioctl.cap_3d[i].has_cap = TRUE;
 	 vws->ioctl.cap_3d[i].result.u = cap_buffer[i];
       }
       return 0;
@@ -957,7 +960,7 @@ vmw_ioctl_parse_caps(struct vmw_winsys_screen *vws,
       for (i = 0; i < numCaps; i++) {
 	 index = capArray[i][0];
 	 if (index < vws->ioctl.num_cap_3d) {
-	    vws->ioctl.cap_3d[index].has_cap = true;
+	    vws->ioctl.cap_3d[index].has_cap = TRUE;
 	    vws->ioctl.cap_3d[index].result.u = capArray[i][1];
 	 } else {
 	    debug_printf("Unknown devcaps seen: %d\n", index);
@@ -967,7 +970,7 @@ vmw_ioctl_parse_caps(struct vmw_winsys_screen *vws,
    return 0;
 }
 
-bool
+boolean
 vmw_ioctl_init(struct vmw_winsys_screen *vws)
 {
    struct drm_vmw_getparam_arg gp_arg;
@@ -976,8 +979,8 @@ vmw_ioctl_init(struct vmw_winsys_screen *vws)
    int ret;
    uint32_t *cap_buffer;
    drmVersionPtr version;
-   bool drm_gb_capable;
-   bool have_drm_2_5;
+   boolean drm_gb_capable;
+   boolean have_drm_2_5;
    const char *getenv_val;
 
    VMW_FUNC;
@@ -1038,7 +1041,7 @@ vmw_ioctl_init(struct vmw_winsys_screen *vws)
       ret = -EINVAL;
    }
    if (ret)
-      vws->base.have_gb_objects = false;
+      vws->base.have_gb_objects = FALSE;
    else
       vws->base.have_gb_objects =
          !!(gp_arg.value & (uint64_t) SVGA_CAP_GBOBJECTS);
@@ -1046,9 +1049,9 @@ vmw_ioctl_init(struct vmw_winsys_screen *vws)
    if (vws->base.have_gb_objects && !drm_gb_capable)
       goto out_no_3d;
 
-   vws->base.have_vgpu10 = false;
-   vws->base.have_sm4_1 = false;
-   vws->base.have_intra_surface_copy = false;
+   vws->base.have_vgpu10 = FALSE;
+   vws->base.have_sm4_1 = FALSE;
+   vws->base.have_intra_surface_copy = FALSE;
 
    memset(&gp_arg, 0, sizeof(gp_arg));
    gp_arg.param = DRM_VMW_PARAM_DEVICE_ID;
@@ -1095,11 +1098,11 @@ vmw_ioctl_init(struct vmw_winsys_screen *vws)
             const char *vgpu10_val;
 
             debug_printf("Have VGPU10 interface and hardware.\n");
-            vws->base.have_vgpu10 = true;
+            vws->base.have_vgpu10 = TRUE;
             vgpu10_val = getenv("SVGA_VGPU10");
             if (vgpu10_val && strcmp(vgpu10_val, "0") == 0) {
                debug_printf("Disabling VGPU10 interface.\n");
-               vws->base.have_vgpu10 = false;
+               vws->base.have_vgpu10 = FALSE;
             } else {
                debug_printf("Enabling VGPU10 interface.\n");
             }
@@ -1112,7 +1115,7 @@ vmw_ioctl_init(struct vmw_winsys_screen *vws)
          ret = drmCommandWriteRead(vws->ioctl.drm_fd, DRM_VMW_GET_PARAM,
                                    &gp_arg, sizeof(gp_arg));
          if (ret == 0 && gp_arg.value != 0) {
-            vws->base.have_intra_surface_copy = true;
+            vws->base.have_intra_surface_copy = TRUE;
          }
 
          memset(&gp_arg, 0, sizeof(gp_arg));
@@ -1120,7 +1123,7 @@ vmw_ioctl_init(struct vmw_winsys_screen *vws)
          ret = drmCommandWriteRead(vws->ioctl.drm_fd, DRM_VMW_GET_PARAM,
                                    &gp_arg, sizeof(gp_arg));
          if (ret == 0 && gp_arg.value != 0) {
-            vws->base.have_sm4_1 = true;
+            vws->base.have_sm4_1 = TRUE;
          }
       }
 
@@ -1130,7 +1133,7 @@ vmw_ioctl_init(struct vmw_winsys_screen *vws)
          ret = drmCommandWriteRead(vws->ioctl.drm_fd, DRM_VMW_GET_PARAM,
                                    &gp_arg, sizeof(gp_arg));
          if (ret == 0 && gp_arg.value != 0) {
-            vws->base.have_sm5 = true;
+            vws->base.have_sm5 = TRUE;
          }
       }
 
@@ -1140,7 +1143,7 @@ vmw_ioctl_init(struct vmw_winsys_screen *vws)
          ret = drmCommandWriteRead(vws->ioctl.drm_fd, DRM_VMW_GET_PARAM,
                                    &gp_arg, sizeof(gp_arg));
          if (ret == 0 && gp_arg.value != 0) {
-            vws->base.have_gl43 = true;
+            vws->base.have_gl43 = TRUE;
          }
       }
 
@@ -1159,10 +1162,10 @@ vmw_ioctl_init(struct vmw_winsys_screen *vws)
          vws->ioctl.num_cap_3d = SVGA3D_DEVCAP_MAX;
 
       if (vws->ioctl.have_drm_2_16) {
-         vws->base.have_coherent = true;
+         vws->base.have_coherent = TRUE;
          getenv_val = getenv("SVGA_FORCE_COHERENT");
          if (getenv_val && strcmp(getenv_val, "0") != 0)
-            vws->force_coherent = true;
+            vws->force_coherent = TRUE;
       }
    } else {
       vws->ioctl.num_cap_3d = SVGA3D_DEVCAP_MAX;
@@ -1231,18 +1234,18 @@ vmw_ioctl_init(struct vmw_winsys_screen *vws)
      /* support for these commands didn't make it into vmwgfx kernel
       * modules before 2.10.
       */
-      vws->base.have_generate_mipmap_cmd = true;
-      vws->base.have_set_predication_cmd = true;
+      vws->base.have_generate_mipmap_cmd = TRUE;
+      vws->base.have_set_predication_cmd = TRUE;
    }
 
    if (version->version_major == 2 && version->version_minor >= 14) {
-      vws->base.have_fence_fd = true;
+      vws->base.have_fence_fd = TRUE;
    }
 
    free(cap_buffer);
    drmFreeVersion(version);
    vmw_printf("%s OK\n", __func__);
-   return true;
+   return TRUE;
   out_no_caps:
    free(vws->ioctl.cap_3d);
   out_no_caparray:
@@ -1252,7 +1255,7 @@ vmw_ioctl_init(struct vmw_winsys_screen *vws)
   out_no_version:
    vws->ioctl.num_cap_3d = 0;
    debug_printf("%s Failed\n", __func__);
-   return false;
+   return FALSE;
 }
 
 

@@ -19,10 +19,6 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-imagination_c_args = cc.get_supported_arguments(
-  '-Werror=pointer-arith',
-)
-
 inc_imagination = include_directories([
   '.',
   'common',

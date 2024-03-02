@@ -29,7 +29,6 @@
 #include <pthread.h>
 
 #include "util/hash_table.h"
-#include "util/libsync.h"
 #include "util/os_file.h"
 #include "util/slab.h"
 
@@ -52,56 +51,17 @@ static struct fd_ringbuffer *
 fd_ringbuffer_sp_init(struct fd_ringbuffer_sp *fd_ring, uint32_t size,
                       enum fd_ringbuffer_flags flags);
 
-
-static inline bool
-check_append_suballoc_bo(struct fd_submit_sp *submit, struct fd_bo *bo, bool check)
+/* add (if needed) bo to submit and return index: */
+uint32_t
+fd_submit_append_bo(struct fd_submit_sp *submit, struct fd_bo *bo)
 {
-   uint32_t idx = READ_ONCE(bo->idx);
-
-   if (unlikely((idx >= submit->nr_suballoc_bos) ||
-       (submit->suballoc_bos[idx] != bo))) {
-      uint32_t hash = _mesa_hash_pointer(bo);
-      struct hash_entry *entry;
-
-      entry = _mesa_hash_table_search_pre_hashed(
-            submit->suballoc_bo_table, hash, bo);
-      if (entry) {
-         /* found */
-         idx = (uint32_t)(uintptr_t)entry->data;
-      } else if (unlikely(check)) {
-         return false;
-      } else {
-         idx = APPEND(submit, suballoc_bos, fd_bo_ref(bo));
-
-         _mesa_hash_table_insert_pre_hashed(
-               submit->suballoc_bo_table, hash, bo, (void *)(uintptr_t)idx);
-      }
-      bo->idx = idx;
-   }
-
-   return true;
-}
-
-static inline uint32_t
-check_append_bo(struct fd_submit_sp *submit, struct fd_bo *bo, bool check)
-{
-   if (suballoc_bo(bo)) {
-      if (check) {
-         if (!check_append_suballoc_bo(submit, bo, true)) {
-            return ~0;
-         }
-         bo = fd_bo_heap_block(bo);
-      } else {
-         check_append_suballoc_bo(submit, bo, false);
-         bo = fd_bo_heap_block(bo);
-      }
-   }
+   uint32_t idx;
 
    /* NOTE: it is legal to use the same bo on different threads for
     * different submits.  But it is not legal to use the same submit
     * from different threads.
     */
-   uint32_t idx = READ_ONCE(bo->idx);
+   idx = READ_ONCE(bo->idx);
 
    if (unlikely((idx >= submit->nr_bos) || (submit->bos[idx] != bo))) {
       uint32_t hash = _mesa_hash_pointer(bo);
@@ -111,8 +71,6 @@ check_append_bo(struct fd_submit_sp *submit, struct fd_bo *bo, bool check)
       if (entry) {
          /* found */
          idx = (uint32_t)(uintptr_t)entry->data;
-      } else if (unlikely(check)) {
-         return ~0;
       } else {
          idx = APPEND(submit, bos, fd_bo_ref(bo));
 
@@ -123,13 +81,6 @@ check_append_bo(struct fd_submit_sp *submit, struct fd_bo *bo, bool check)
    }
 
    return idx;
-}
-
-/* add (if needed) bo to submit and return index: */
-uint32_t
-fd_submit_append_bo(struct fd_submit_sp *submit, struct fd_bo *bo)
-{
-   return check_append_bo(submit, bo, false);
 }
 
 static void
@@ -215,7 +166,7 @@ fd_submit_sp_new_ringbuffer(struct fd_submit *submit, uint32_t size,
  */
 static bool
 fd_submit_sp_flush_prep(struct fd_submit *submit, int in_fence_fd,
-                        struct fd_fence *out_fence)
+                        struct fd_submit_fence *out_fence)
 {
    struct fd_submit_sp *fd_submit = to_fd_submit_sp(submit);
    bool has_shared = false;
@@ -228,19 +179,14 @@ fd_submit_sp_flush_prep(struct fd_submit *submit, int in_fence_fd,
    for (unsigned i = 0; i < primary->u.nr_cmds; i++)
       fd_submit_append_bo(fd_submit, primary->u.cmds[i].ring_bo);
 
-   out_fence->ufence = submit->fence;
-
-   simple_mtx_lock(&fence_lock);
+   simple_mtx_lock(&table_lock);
    for (unsigned i = 0; i < fd_submit->nr_bos; i++) {
-      fd_bo_add_fence(fd_submit->bos[i], out_fence);
-      has_shared |= fd_submit->bos[i]->alloc_flags & FD_BO_SHARED;
+      fd_bo_add_fence(fd_submit->bos[i], submit->pipe, submit->fence);
+      has_shared |= fd_submit->bos[i]->shared;
    }
-   for (unsigned i = 0; i < fd_submit->nr_suballoc_bos; i++) {
-      fd_bo_add_fence(fd_submit->suballoc_bos[i], out_fence);
-   }
-   simple_mtx_unlock(&fence_lock);
+   simple_mtx_unlock(&table_lock);
 
-   fd_submit->out_fence   = fd_fence_ref(out_fence);
+   fd_submit->out_fence   = out_fence;
    fd_submit->in_fence_fd = (in_fence_fd == -1) ?
          -1 : os_dupfd_cloexec(in_fence_fd);
 
@@ -272,55 +218,32 @@ fd_submit_sp_flush_cleanup(void *job, void *gdata, int thread_index)
    fd_submit_del(submit);
 }
 
-static void
-flush_deferred_submits(struct fd_device *dev)
+static int
+enqueue_submit_list(struct list_head *submit_list)
 {
-   MESA_TRACE_FUNC();
-
-   simple_mtx_assert_locked(&dev->submit_lock);
-
-   if (list_is_empty(&dev->deferred_submits))
-      return;
-
-   struct fd_submit *submit = last_submit(&dev->deferred_submits);
+   struct fd_submit *submit = last_submit(submit_list);
    struct fd_submit_sp *fd_submit = to_fd_submit_sp(submit);
-   list_replace(&dev->deferred_submits, &fd_submit->submit_list);
-   list_inithead(&dev->deferred_submits);
-   dev->deferred_cmds = 0;
 
-   /* If we have multiple submits with in-fence-fd's then merge them: */
-   foreach_submit (submit, &fd_submit->submit_list) {
-      struct fd_submit_sp *fd_deferred_submit = to_fd_submit_sp(submit);
+   list_replace(submit_list, &fd_submit->submit_list);
+   list_inithead(submit_list);
 
-      if (fd_deferred_submit == fd_submit)
-         break;
-
-      if (fd_deferred_submit->in_fence_fd != -1) {
-         sync_accumulate("freedreno",
-                         &fd_submit->in_fence_fd,
-                         fd_deferred_submit->in_fence_fd);
-         close(fd_deferred_submit->in_fence_fd);
-         fd_deferred_submit->in_fence_fd = -1;
-      }
+   struct util_queue_fence *fence;
+   if (fd_submit->out_fence) {
+      fence = &fd_submit->out_fence->ready;
+   } else {
+      util_queue_fence_init(&fd_submit->fence);
+      fence = &fd_submit->fence;
    }
-
-   fd_fence_del(dev->deferred_submits_fence);
-   dev->deferred_submits_fence = NULL;
-
-   struct util_queue_fence *fence = &fd_submit->out_fence->ready;
 
    DEBUG_MSG("enqueue: %u", submit->fence);
 
-   if (fd_device_threaded_submit(submit->pipe->dev)) {
-      util_queue_add_job(&submit->pipe->dev->submit_queue,
-                         submit, fence,
-                         fd_submit_sp_flush_execute,
-                         fd_submit_sp_flush_cleanup,
-                         0);
-   } else {
-      fd_submit_sp_flush_execute(submit, NULL, 0);
-      fd_submit_sp_flush_cleanup(submit, NULL, 0);
-   }
+   util_queue_add_job(&submit->pipe->dev->submit_queue,
+                      submit, fence,
+                      fd_submit_sp_flush_execute,
+                      fd_submit_sp_flush_cleanup,
+                      0);
+
+   return 0;
 }
 
 static bool
@@ -343,13 +266,12 @@ should_defer(struct fd_submit *submit)
    return true;
 }
 
-static struct fd_fence *
-fd_submit_sp_flush(struct fd_submit *submit, int in_fence_fd, bool use_fence_fd)
+static int
+fd_submit_sp_flush(struct fd_submit *submit, int in_fence_fd,
+                   struct fd_submit_fence *out_fence)
 {
    struct fd_device *dev = submit->pipe->dev;
    struct fd_pipe *pipe = submit->pipe;
-
-   MESA_TRACE_FUNC();
 
    /* Acquire lock before flush_prep() because it is possible to race between
     * this and pipe->flush():
@@ -362,30 +284,18 @@ fd_submit_sp_flush(struct fd_submit *submit, int in_fence_fd, bool use_fence_fd)
     */
    if (!list_is_empty(&dev->deferred_submits) &&
        (last_submit(&dev->deferred_submits)->pipe != submit->pipe)) {
-      flush_deferred_submits(dev);
+      struct list_head submit_list;
+
+      list_replace(&dev->deferred_submits, &submit_list);
+      list_inithead(&dev->deferred_submits);
+      dev->deferred_cmds = 0;
+
+      enqueue_submit_list(&submit_list);
    }
 
    list_addtail(&fd_submit_ref(submit)->node, &dev->deferred_submits);
 
-   if (!dev->deferred_submits_fence)
-      dev->deferred_submits_fence = fd_fence_new(submit->pipe, use_fence_fd);
-
-   struct fd_fence *out_fence = fd_fence_ref(dev->deferred_submits_fence);
-
-   /* upgrade the out_fence for the deferred submits, if needed: */
-   if (use_fence_fd)
-      out_fence->use_fence_fd = true;
-
    bool has_shared = fd_submit_sp_flush_prep(submit, in_fence_fd, out_fence);
-
-   if ((in_fence_fd != -1) || out_fence->use_fence_fd)
-      pipe->no_implicit_sync = true;
-
-   /* The rule about skipping submit merging with shared buffers is only
-    * needed for implicit-sync.
-    */
-   if (pipe->no_implicit_sync)
-      has_shared = false;
 
    assert(fd_fence_before(pipe->last_enqueue_fence, submit->fence));
    pipe->last_enqueue_fence = submit->fence;
@@ -396,43 +306,66 @@ fd_submit_sp_flush(struct fd_submit *submit, int in_fence_fd, bool use_fence_fd)
     * reference to the fd, and merged all the in-fence-fd's when we flush the
     * deferred submits
     */
-   if (!use_fence_fd && !has_shared && should_defer(submit)) {
+   if ((in_fence_fd == -1) && !out_fence && !has_shared && should_defer(submit)) {
       DEBUG_MSG("defer: %u", submit->fence);
       dev->deferred_cmds += fd_ringbuffer_cmd_count(submit->primary);
       assert(dev->deferred_cmds == fd_dev_count_deferred_cmds(dev));
       simple_mtx_unlock(&dev->submit_lock);
 
-      return out_fence;
+      return 0;
    }
 
-   flush_deferred_submits(dev);
+   struct list_head submit_list;
+
+   list_replace(&dev->deferred_submits, &submit_list);
+   list_inithead(&dev->deferred_submits);
+   dev->deferred_cmds = 0;
 
    simple_mtx_unlock(&dev->submit_lock);
 
-   return out_fence;
+   return enqueue_submit_list(&submit_list);
 }
 
 void
 fd_pipe_sp_flush(struct fd_pipe *pipe, uint32_t fence)
 {
    struct fd_device *dev = pipe->dev;
+   struct list_head submit_list;
 
-   if (!fd_fence_before(pipe->last_submit_fence, fence))
-      return;
+   DEBUG_MSG("flush: %u", fence);
 
-   MESA_TRACE_FUNC();
+   list_inithead(&submit_list);
 
    simple_mtx_lock(&dev->submit_lock);
 
    assert(!fd_fence_after(fence, pipe->last_enqueue_fence));
 
-   flush_deferred_submits(dev);
+   foreach_submit_safe (deferred_submit, &dev->deferred_submits) {
+      /* We should never have submits from multiple pipes in the deferred
+       * list.  If we did, we couldn't compare their fence to our fence,
+       * since each fd_pipe is an independent timeline.
+       */
+      if (deferred_submit->pipe != pipe)
+         break;
+
+      if (fd_fence_after(deferred_submit->fence, fence))
+         break;
+
+      list_del(&deferred_submit->node);
+      list_addtail(&deferred_submit->node, &submit_list);
+      dev->deferred_cmds -= fd_ringbuffer_cmd_count(deferred_submit->primary);
+   }
+
+   assert(dev->deferred_cmds == fd_dev_count_deferred_cmds(dev));
 
    simple_mtx_unlock(&dev->submit_lock);
 
-   if (!fd_device_threaded_submit(pipe->dev))
-      return;
+   if (list_is_empty(&submit_list))
+      goto flush_sync;
 
+   enqueue_submit_list(&submit_list);
+
+flush_sync:
    /* Once we are sure that we've enqueued at least up to the requested
     * submit, we need to be sure that submitq has caught up and flushed
     * them to the kernel
@@ -453,7 +386,6 @@ fd_submit_sp_destroy(struct fd_submit *submit)
       fd_ringbuffer_del(fd_submit->suballoc_ring);
 
    _mesa_hash_table_destroy(fd_submit->bo_table, NULL);
-   _mesa_hash_table_destroy(fd_submit->suballoc_bo_table, NULL);
 
    // TODO it would be nice to have a way to assert() if all
    // rb's haven't been free'd back to the slab, because that is
@@ -461,14 +393,8 @@ fd_submit_sp_destroy(struct fd_submit *submit)
    slab_destroy_child(&fd_submit->ring_pool);
 
    fd_bo_del_array(fd_submit->bos, fd_submit->nr_bos);
+
    free(fd_submit->bos);
-
-   fd_bo_del_array(fd_submit->suballoc_bos, fd_submit->nr_suballoc_bos);
-   free(fd_submit->suballoc_bos);
-
-   if (fd_submit->out_fence)
-      fd_fence_del(fd_submit->out_fence);
-
    free(fd_submit);
 }
 
@@ -484,13 +410,12 @@ fd_submit_sp_new(struct fd_pipe *pipe, flush_submit_list_fn flush_submit_list)
    struct fd_submit_sp *fd_submit = calloc(1, sizeof(*fd_submit));
    struct fd_submit *submit;
 
-   fd_submit->bo_table = _mesa_pointer_hash_table_create(NULL);
-   fd_submit->suballoc_bo_table = _mesa_pointer_hash_table_create(NULL);
+   fd_submit->bo_table = _mesa_hash_table_create(NULL, _mesa_hash_pointer,
+                                                 _mesa_key_pointer_equal);
 
    slab_create_child(&fd_submit->ring_pool, &pipe->ring_pool);
 
    fd_submit->flush_submit_list = flush_submit_list;
-   fd_submit->seqno = seqno_next(&pipe->submit_seqno);
 
    submit = &fd_submit->base;
    submit->funcs = &submit_funcs;
@@ -568,16 +493,6 @@ fd_ringbuffer_sp_emit_bo_nonobj(struct fd_ringbuffer *ring, struct fd_bo *bo)
 }
 
 static void
-fd_ringbuffer_sp_assert_attached_nonobj(struct fd_ringbuffer *ring, struct fd_bo *bo)
-{
-#ifndef NDEBUG
-   struct fd_ringbuffer_sp *fd_ring = to_fd_ringbuffer_sp(ring);
-   struct fd_submit_sp *fd_submit = to_fd_submit_sp(fd_ring->u.submit);
-   assert(check_append_bo(fd_submit, bo, true) != ~0);
-#endif
-}
-
-static void
 fd_ringbuffer_sp_emit_bo_obj(struct fd_ringbuffer *ring, struct fd_bo *bo)
 {
    assert(ring->flags & _FD_RINGBUFFER_OBJECT);
@@ -593,27 +508,6 @@ fd_ringbuffer_sp_emit_bo_obj(struct fd_ringbuffer *ring, struct fd_bo *bo)
    if (!fd_ringbuffer_references_bo(ring, bo)) {
       APPEND(&fd_ring->u, reloc_bos, fd_bo_ref(bo));
    }
-}
-
-static void
-fd_ringbuffer_sp_assert_attached_obj(struct fd_ringbuffer *ring, struct fd_bo *bo)
-{
-#ifndef NDEBUG
-   /* If the stateobj already references the bo, nothing more to do: */
-   if (fd_ringbuffer_references_bo(ring, bo))
-      return;
-
-   /* If not, we need to defer the assert.. because the batch resource
-    * tracking may have attached the bo to the submit that the stateobj
-    * will eventually be referenced by:
-    */
-   struct fd_ringbuffer_sp *fd_ring = to_fd_ringbuffer_sp(ring);
-   for (int i = 0; i < fd_ring->u.nr_assert_bos; i++)
-      if (fd_ring->u.assert_bos[i] == bo)
-         return;
-
-   APPEND(&fd_ring->u, assert_bos, fd_bo_ref(bo));
-#endif
 }
 
 #define PTRSZ 64
@@ -642,10 +536,6 @@ fd_ringbuffer_sp_check_size(struct fd_ringbuffer *ring)
       return false;
    }
 
-   if (to_fd_submit_sp(submit)->nr_suballoc_bos > MAX_ARRAY_SIZE/2) {
-      return false;
-   }
-
    return true;
 }
 
@@ -659,10 +549,6 @@ fd_ringbuffer_sp_destroy(struct fd_ringbuffer *ring)
    if (ring->flags & _FD_RINGBUFFER_OBJECT) {
       fd_bo_del_array(fd_ring->u.reloc_bos, fd_ring->u.nr_reloc_bos);
       free(fd_ring->u.reloc_bos);
-#ifndef NDEBUG
-      fd_bo_del_array(fd_ring->u.assert_bos, fd_ring->u.nr_assert_bos);
-      free(fd_ring->u.assert_bos);
-#endif
       free(fd_ring);
    } else {
       struct fd_submit *submit = fd_ring->u.submit;
@@ -680,7 +566,6 @@ fd_ringbuffer_sp_destroy(struct fd_ringbuffer *ring)
 static const struct fd_ringbuffer_funcs ring_funcs_nonobj_32 = {
    .grow = fd_ringbuffer_sp_grow,
    .emit_bo = fd_ringbuffer_sp_emit_bo_nonobj,
-   .assert_attached = fd_ringbuffer_sp_assert_attached_nonobj,
    .emit_reloc = fd_ringbuffer_sp_emit_reloc_nonobj_32,
    .emit_reloc_ring = fd_ringbuffer_sp_emit_reloc_ring_32,
    .cmd_count = fd_ringbuffer_sp_cmd_count,
@@ -691,7 +576,6 @@ static const struct fd_ringbuffer_funcs ring_funcs_nonobj_32 = {
 static const struct fd_ringbuffer_funcs ring_funcs_obj_32 = {
    .grow = fd_ringbuffer_sp_grow,
    .emit_bo = fd_ringbuffer_sp_emit_bo_obj,
-   .assert_attached = fd_ringbuffer_sp_assert_attached_obj,
    .emit_reloc = fd_ringbuffer_sp_emit_reloc_obj_32,
    .emit_reloc_ring = fd_ringbuffer_sp_emit_reloc_ring_32,
    .cmd_count = fd_ringbuffer_sp_cmd_count,
@@ -701,7 +585,6 @@ static const struct fd_ringbuffer_funcs ring_funcs_obj_32 = {
 static const struct fd_ringbuffer_funcs ring_funcs_nonobj_64 = {
    .grow = fd_ringbuffer_sp_grow,
    .emit_bo = fd_ringbuffer_sp_emit_bo_nonobj,
-   .assert_attached = fd_ringbuffer_sp_assert_attached_nonobj,
    .emit_reloc = fd_ringbuffer_sp_emit_reloc_nonobj_64,
    .emit_reloc_ring = fd_ringbuffer_sp_emit_reloc_ring_64,
    .cmd_count = fd_ringbuffer_sp_cmd_count,
@@ -712,7 +595,6 @@ static const struct fd_ringbuffer_funcs ring_funcs_nonobj_64 = {
 static const struct fd_ringbuffer_funcs ring_funcs_obj_64 = {
    .grow = fd_ringbuffer_sp_grow,
    .emit_bo = fd_ringbuffer_sp_emit_bo_obj,
-   .assert_attached = fd_ringbuffer_sp_assert_attached_obj,
    .emit_reloc = fd_ringbuffer_sp_emit_reloc_obj_64,
    .emit_reloc_ring = fd_ringbuffer_sp_emit_reloc_ring_64,
    .cmd_count = fd_ringbuffer_sp_cmd_count,
@@ -736,13 +618,13 @@ fd_ringbuffer_sp_init(struct fd_ringbuffer_sp *fd_ring, uint32_t size,
    ring->flags = flags;
 
    if (flags & _FD_RINGBUFFER_OBJECT) {
-      if (fd_ring->u.pipe->is_64bit) {
+      if (fd_dev_64b(&fd_ring->u.pipe->dev_id)) {
          ring->funcs = &ring_funcs_obj_64;
       } else {
          ring->funcs = &ring_funcs_obj_32;
       }
    } else {
-      if (fd_ring->u.submit->pipe->is_64bit) {
+      if (fd_dev_64b(&fd_ring->u.submit->pipe->dev_id)) {
          ring->funcs = &ring_funcs_nonobj_64;
       } else {
          ring->funcs = &ring_funcs_nonobj_32;
@@ -756,10 +638,6 @@ fd_ringbuffer_sp_init(struct fd_ringbuffer_sp *fd_ring, uint32_t size,
 
    fd_ring->u.reloc_bos = NULL;
    fd_ring->u.nr_reloc_bos = fd_ring->u.max_reloc_bos = 0;
-#ifndef NDEBUG
-   fd_ring->u.assert_bos = NULL;
-   fd_ring->u.nr_assert_bos = fd_ring->u.max_assert_bos = 0;
-#endif
 
    return ring;
 }
@@ -789,7 +667,6 @@ fd_ringbuffer_sp_new_object(struct fd_pipe *pipe, uint32_t size)
    fd_ring->u.pipe = pipe;
    fd_ring->ring_bo = fd_bo_ref(dev->suballoc_bo);
    fd_ring->base.refcnt = 1;
-   fd_ring->u.last_submit_seqno = 0;
 
    dev->suballoc_offset = fd_ring->offset + size;
 

@@ -25,115 +25,105 @@
 #ifndef __PAN_BLITTER_H
 #define __PAN_BLITTER_H
 
-#include "util/format/u_format.h"
-#include "pan_desc.h"
+#include "genxml/gen_macros.h"
+
+#include "panfrost-job.h"
+#include "pan_cs.h"
 #include "pan_pool.h"
 #include "pan_texture.h"
 #include "pan_util.h"
+#include "util/format/u_format.h"
 
-struct pan_blend_shader_cache;
 struct pan_fb_info;
-struct pan_jc;
+struct pan_scoreboard;
 struct pan_pool;
-
-struct pan_blitter_cache {
-   unsigned gpu_id;
-   struct {
-      struct pan_pool *pool;
-      struct hash_table *blit;
-      struct hash_table *blend;
-      pthread_mutex_t lock;
-   } shaders;
-   struct {
-      struct pan_pool *pool;
-      struct hash_table *rsds;
-      pthread_mutex_t lock;
-   } rsds;
-   struct pan_blend_shader_cache *blend_shader_cache;
-};
+struct panfrost_device;
 
 struct pan_blit_info {
-   struct {
-      struct {
-         const struct pan_image *image;
-         enum pipe_format format;
-      } planes[MAX_IMAGE_PLANES];
-      unsigned level;
-      struct {
-         int32_t x, y, z;
-         unsigned layer;
-      } start, end;
-   } src, dst;
-   struct {
-      bool enable;
-      uint16_t minx, miny, maxx, maxy;
-   } scissor;
-   bool nearest;
+        struct {
+                struct {
+                        const struct pan_image *image;
+                        enum pipe_format format;
+                } planes[2];
+                unsigned level;
+                struct {
+                        int32_t x, y, z;
+                        unsigned layer;
+                } start, end;
+        } src, dst;
+        struct {
+               bool enable;
+               uint16_t minx, miny, maxx, maxy;
+        } scissor;
+        bool nearest;
 };
 
 struct pan_blit_context {
-   mali_ptr rsd, vpd;
-   mali_ptr textures;
-   mali_ptr samplers;
-   mali_ptr position;
-   struct {
-      enum mali_texture_dimension dim;
-      struct {
-         float x, y;
-      } start, end;
-      union {
-         unsigned layer_offset;
-         float z_offset;
-      };
-   } src;
-   struct {
-      int32_t layer_offset;
-      int32_t cur_layer;
-      int32_t last_layer;
-   } dst;
-   float z_scale;
+        mali_ptr rsd, vpd;
+        mali_ptr textures;
+        mali_ptr samplers;
+        mali_ptr position;
+        struct {
+                enum mali_texture_dimension dim;
+                struct {
+                        float x, y;
+                } start, end;
+                union {
+                        unsigned layer_offset;
+                        float z_offset;
+                };
+        } src;
+        struct {
+                int32_t layer_offset;
+                int32_t cur_layer;
+                int32_t last_layer;
+        } dst;
+        float z_scale;
 };
+
+void
+GENX(pan_blitter_init)(struct panfrost_device *dev,
+                       struct pan_pool *bin_pool,
+                       struct pan_pool *desc_pool);
+
+void
+GENX(pan_blitter_cleanup)(struct panfrost_device *dev);
+
+unsigned
+GENX(pan_preload_fb)(struct pan_pool *desc_pool,
+                     struct pan_scoreboard *scoreboard,
+                     struct pan_fb_info *fb,
+                     mali_ptr tsd, mali_ptr tiler,
+                     struct panfrost_ptr *jobs);
+
+void
+GENX(pan_blit_ctx_init)(struct panfrost_device *dev,
+                        const struct pan_blit_info *info,
+                        struct pan_pool *blit_pool,
+                        struct pan_blit_context *ctx);
 
 static inline bool
 pan_blit_next_surface(struct pan_blit_context *ctx)
 {
-   if (ctx->dst.last_layer < ctx->dst.layer_offset) {
-      if (ctx->dst.cur_layer <= ctx->dst.last_layer)
-         return false;
+        if (ctx->dst.last_layer < ctx->dst.layer_offset) {
+                if (ctx->dst.cur_layer <= ctx->dst.last_layer)
+                        return false;
 
-      ctx->dst.cur_layer--;
-   } else {
-      if (ctx->dst.cur_layer >= ctx->dst.last_layer)
-         return false;
+                ctx->dst.cur_layer--;
+        } else {
+                if (ctx->dst.cur_layer >= ctx->dst.last_layer)
+                        return false;
 
-      ctx->dst.cur_layer++;
-   }
+                ctx->dst.cur_layer++;
+        }
 
-   return true;
+        return true;
 }
 
-#ifdef PAN_ARCH
-void GENX(pan_blitter_cache_init)(struct pan_blitter_cache *cache,
-                                  unsigned gpu_id,
-                                  struct pan_blend_shader_cache *blend_shader_cache,
-                                  struct pan_pool *bin_pool,
-                                  struct pan_pool *desc_pool);
-
-void GENX(pan_blitter_cache_cleanup)(struct pan_blitter_cache *cache);
-
-unsigned GENX(pan_preload_fb)(struct pan_blitter_cache *cache,
-                              struct pan_pool *desc_pool, struct pan_jc *jc,
-                              struct pan_fb_info *fb, mali_ptr tsd,
-                              mali_ptr tiler, struct panfrost_ptr *jobs);
-
-void GENX(pan_blit_ctx_init)(struct pan_blitter_cache *cache,
-                             const struct pan_blit_info *info,
-                             struct pan_pool *blit_pool,
-                             struct pan_blit_context *ctx);
-
-struct panfrost_ptr GENX(pan_blit)(struct pan_blit_context *ctx,
-                                   struct pan_pool *pool, struct pan_jc *jc,
-                                   mali_ptr tsd, mali_ptr tiler);
-#endif
+struct panfrost_ptr
+GENX(pan_blit)(struct pan_blit_context *ctx,
+               struct pan_pool *pool,
+               struct pan_scoreboard *scoreboard,
+               mali_ptr tsd, mali_ptr tiler);
 
 #endif

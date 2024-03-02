@@ -64,7 +64,7 @@ describe_suballoc_bo(char *buf, struct d3d12_bo *ptr)
    d3d12_bo *base = d3d12_bo_get_base(ptr, &offset);
    describe_direct_bo(res, base);
    sprintf(buf, "d3d12_bo<suballoc<%s>,0x%x,0x%x>", res,
-           (unsigned)ptr->buffer->base.size, (unsigned)offset);
+           (unsigned)ptr->buffer->size, (unsigned)offset);
 }
 
 void
@@ -81,10 +81,9 @@ d3d12_bo_wrap_res(struct d3d12_screen *screen, ID3D12Resource *res, enum d3d12_r
 {
    struct d3d12_bo *bo;
 
-   bo = MALLOC_STRUCT(d3d12_bo);
+   bo = CALLOC_STRUCT(d3d12_bo);
    if (!bo)
       return NULL;
-   memset(bo, 0, offsetof(d3d12_bo, local_context_states));
 
    D3D12_RESOURCE_DESC desc = GetDesc(res);
    unsigned array_size = desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ? 1 : desc.DepthOrArraySize;
@@ -100,7 +99,6 @@ d3d12_bo_wrap_res(struct d3d12_screen *screen, ID3D12Resource *res, enum d3d12_r
 
    bo->residency_status = residency;
    bo->last_used_timestamp = 0;
-   desc.Flags &= ~D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
    screen->dev->GetCopyableFootprints(&desc, 0, total_subresources, 0, nullptr, nullptr, nullptr, &bo->estimated_size);
    if (residency == d3d12_resident) {
       mtx_lock(&screen->submit_mutex);
@@ -160,10 +158,9 @@ d3d12_bo_wrap_buffer(struct d3d12_screen *screen, struct pb_buffer *buf)
 {
    struct d3d12_bo *bo;
 
-   bo = MALLOC_STRUCT(d3d12_bo);
+   bo = CALLOC_STRUCT(d3d12_bo);
    if (!bo)
       return NULL;
-   memset(bo, 0, offsetof(d3d12_bo, local_context_states));
 
    pipe_reference_init(&bo->reference, 1);
    bo->screen = screen;
@@ -196,21 +193,13 @@ d3d12_bo_unreference(struct d3d12_bo *bo)
       /* MSVC's offsetof fails when the name is ambiguous between struct and function */
       typedef struct d3d12_context d3d12_context_type;
       list_for_each_entry(d3d12_context_type, ctx, &bo->screen->context_list, context_list_entry)
-         if (ctx->id == D3D12_CONTEXT_NO_ID)
-            util_dynarray_append(&ctx->recently_destroyed_bos, uint64_t, bo->unique_id);
+         util_dynarray_append(&ctx->recently_destroyed_bos, uint64_t, bo->unique_id);
 
       mtx_unlock(&bo->screen->submit_mutex);
 
       d3d12_resource_state_cleanup(&bo->global_state);
       if (bo->res)
          bo->res->Release();
-
-      uint64_t mask = bo->local_context_state_mask;
-      while (mask) {
-         int ctxid = u_bit_scan64(&mask);
-         d3d12_destroy_context_state_table_entry(&bo->local_context_states[ctxid]);
-      }
-
       FREE(bo);
    }
 }
@@ -332,11 +321,11 @@ d3d12_bufmgr_create_buffer(struct pb_manager *pmgr,
    if (!buf)
       return NULL;
 
-   pipe_reference_init(&buf->base.base.reference, 1);
-   buf->base.base.alignment_log2 = util_logbase2(pb_desc->alignment);
-   buf->base.base.usage = pb_desc->usage;
+   pipe_reference_init(&buf->base.reference, 1);
+   buf->base.alignment_log2 = util_logbase2(pb_desc->alignment);
+   buf->base.usage = pb_desc->usage;
    buf->base.vtbl = &d3d12_buffer_vtbl;
-   buf->base.base.size = size;
+   buf->base.size = size;
    buf->range.Begin = 0;
    buf->range.End = size;
 
@@ -371,7 +360,7 @@ d3d12_bufmgr_destroy(struct pb_manager *_mgr)
    FREE(mgr);
 }
 
-static bool
+static boolean
 d3d12_bufmgr_is_buffer_busy(struct pb_manager *_mgr, struct pb_buffer *_buf)
 {
    /* We're only asked this on buffers that are known not busy */

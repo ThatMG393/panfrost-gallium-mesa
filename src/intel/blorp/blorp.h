@@ -29,12 +29,11 @@
 
 #include "isl/isl.h"
 
+struct brw_stage_prog_data;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-struct brw_compiler;
-struct elk_compiler;
 
 enum blorp_op {
    BLORP_OP_BLIT,
@@ -46,7 +45,6 @@ enum blorp_op {
    BLORP_OP_HIZ_AMBIGUATE,
    BLORP_OP_HIZ_CLEAR,
    BLORP_OP_HIZ_RESOLVE,
-   BLORP_OP_MCS_AMBIGUATE,
    BLORP_OP_MCS_COLOR_CLEAR,
    BLORP_OP_MCS_PARTIAL_RESOLVE,
    BLORP_OP_SLOW_COLOR_CLEAR,
@@ -58,7 +56,6 @@ struct blorp_params;
 
 struct blorp_config {
    bool use_mesh_shading;
-   bool use_unrestricted_depth_range;
 };
 
 struct blorp_context {
@@ -66,9 +63,7 @@ struct blorp_context {
 
    const struct isl_device *isl_dev;
 
-   struct blorp_compiler *compiler;
-
-   bool enable_tbimr;
+   const struct brw_compiler *compiler;
 
    bool (*lookup_shader)(struct blorp_batch *batch,
                          const void *key, uint32_t key_size,
@@ -77,7 +72,7 @@ struct blorp_context {
                          uint32_t stage,
                          const void *key, uint32_t key_size,
                          const void *kernel, uint32_t kernel_size,
-                         const void *prog_data,
+                         const struct brw_stage_prog_data *prog_data,
                          uint32_t prog_data_size,
                          uint32_t *kernel_out, void *prog_data_out);
    void (*exec)(struct blorp_batch *batch, const struct blorp_params *params);
@@ -85,16 +80,9 @@ struct blorp_context {
    struct blorp_config config;
 };
 
-void blorp_init_brw(struct blorp_context *blorp, void *driver_ctx,
-                    struct isl_device *isl_dev, const struct brw_compiler *brw,
-                    const struct blorp_config *config);
-
-void blorp_init_elk(struct blorp_context *blorp, void *driver_ctx,
-                    struct isl_device *isl_dev, const struct elk_compiler *brw,
-                    const struct blorp_config *config);
-
+void blorp_init(struct blorp_context *blorp, void *driver_ctx,
+                struct isl_device *isl_dev, const struct blorp_config *config);
 void blorp_finish(struct blorp_context *blorp);
-
 
 enum blorp_batch_flags {
    /**
@@ -146,12 +134,6 @@ struct blorp_address {
    bool local_hint;
 };
 
-static inline bool
-blorp_address_is_null(struct blorp_address address)
-{
-   return address.buffer == NULL && address.offset == 0;
-}
-
 struct blorp_surf
 {
    const struct isl_surf *surf;
@@ -199,13 +181,6 @@ blorp_blit(struct blorp_batch *batch,
            float dst_x1, float dst_y1,
            enum blorp_filter filter,
            bool mirror_x, bool mirror_y);
-
-void
-blorp_copy_get_formats(const struct isl_device *isl_dev,
-                       const struct isl_surf *src_surf,
-                       const struct isl_surf *dst_surf,
-                       enum isl_format *src_view_format,
-                       enum isl_format *dst_view_format);
 
 void
 blorp_copy(struct blorp_batch *batch,
@@ -330,11 +305,6 @@ blorp_mcs_partial_resolve(struct blorp_batch *batch,
                           struct blorp_surf *surf,
                           enum isl_format format,
                           uint32_t start_layer, uint32_t num_layers);
-
-void
-blorp_mcs_ambiguate(struct blorp_batch *batch,
-                    struct blorp_surf *surf,
-                    uint32_t start_layer, uint32_t num_layers);
 
 void
 blorp_hiz_op(struct blorp_batch *batch, struct blorp_surf *surf,

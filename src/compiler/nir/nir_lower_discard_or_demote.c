@@ -26,8 +26,12 @@
 #include "nir_builder.h"
 
 static bool
-lower_discard_to_demote(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
+nir_lower_discard_to_demote_instr(nir_builder *b, nir_instr *instr, void *data)
 {
+   if (instr->type != nir_instr_type_intrinsic)
+      return false;
+
+   nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
    switch (intrin->intrinsic) {
    case nir_intrinsic_discard:
       intrin->intrinsic = nir_intrinsic_demote;
@@ -44,8 +48,12 @@ lower_discard_to_demote(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
 }
 
 static bool
-lower_demote_to_discard(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
+nir_lower_demote_to_discard_instr(nir_builder *b, nir_instr *instr, void *data)
 {
+   if (instr->type != nir_instr_type_intrinsic)
+      return false;
+
+   nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
    switch (intrin->intrinsic) {
    case nir_intrinsic_demote:
       intrin->intrinsic = nir_intrinsic_discard;
@@ -57,10 +65,10 @@ lower_demote_to_discard(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
    case nir_intrinsic_load_helper_invocation: {
       /* If the shader doesn't need helper invocations,
        * we can assume there are none */
-      b->cursor = nir_before_instr(&intrin->instr);
-      nir_def *zero = nir_imm_false(b);
-      nir_def_rewrite_uses(&intrin->def, zero);
-      nir_instr_remove(&intrin->instr);
+      b->cursor = nir_before_instr(instr);
+      nir_ssa_def *zero = nir_imm_false(b);
+      nir_ssa_def_rewrite_uses(&intrin->dest.ssa, zero);
+      nir_instr_remove_v(instr);
       return true;
    }
    default:
@@ -68,7 +76,7 @@ lower_demote_to_discard(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
    }
 }
 
-static nir_def *
+static nir_ssa_def *
 insert_is_helper(nir_builder *b, nir_instr *instr)
 {
    /* find best place to insert is_helper */
@@ -84,18 +92,22 @@ insert_is_helper(nir_builder *b, nir_instr *instr)
    return nir_is_helper_invocation(b, 1);
 }
 
+
 static bool
-lower_load_helper_to_is_helper(nir_builder *b,
-                               nir_intrinsic_instr *intrin, void *data)
+nir_lower_load_helper_to_is_helper(nir_builder *b, nir_instr *instr, void *data)
 {
-   nir_def *is_helper = *(nir_def **)data;
+   if (instr->type != nir_instr_type_intrinsic)
+      return false;
+
+   nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
+   nir_ssa_def *is_helper = *(nir_ssa_def**) data;
    switch (intrin->intrinsic) {
    case nir_intrinsic_demote:
    case nir_intrinsic_demote_if:
       /* insert is_helper at last top level occasion */
       if (is_helper == NULL) {
-         is_helper = insert_is_helper(b, &intrin->instr);
-         *(nir_def **)data = is_helper;
+         is_helper = insert_is_helper(b, instr);
+         *(nir_ssa_def**)data = is_helper;
          return true;
       } else {
          return false;
@@ -105,9 +117,9 @@ lower_load_helper_to_is_helper(nir_builder *b,
        * we can insert new is_helper() intrinsics. These are placed at
        * top-level blocks to ensure correct behavior w.r.t. loops */
       if (is_helper == NULL)
-         is_helper = insert_is_helper(b, &intrin->instr);
-      nir_def_rewrite_uses(&intrin->def, is_helper);
-      nir_instr_remove(&intrin->instr);
+         is_helper = insert_is_helper(b, instr);
+      nir_ssa_def_rewrite_uses(&intrin->dest.ssa, is_helper);
+      nir_instr_remove_v(instr);
       return true;
    default:
       return false;
@@ -150,33 +162,35 @@ nir_lower_discard_or_demote(nir_shader *shader,
       /* If we need correct derivatives, convert discard to demote only when
        * derivatives are actually used.
        */
-      progress = nir_shader_intrinsics_pass(shader, lower_discard_to_demote,
-                                            nir_metadata_block_index |
-                                               nir_metadata_dominance |
-                                               nir_metadata_live_defs |
-                                               nir_metadata_instr_index,
-                                            NULL);
+      progress = nir_shader_instructions_pass(shader,
+                                              nir_lower_discard_to_demote_instr,
+                                              nir_metadata_block_index |
+                                              nir_metadata_dominance |
+                                              nir_metadata_live_ssa_defs |
+                                              nir_metadata_instr_index,
+                                              NULL);
       shader->info.fs.uses_demote = true;
    } else if (!shader->info.fs.needs_quad_helper_invocations &&
-              !shader->info.uses_wide_subgroup_intrinsics &&
+              !shader->info.fs.needs_all_helper_invocations &&
               shader->info.fs.uses_demote) {
       /* If we don't need any helper invocations, convert demote to discard. */
-      progress = nir_shader_intrinsics_pass(shader, lower_demote_to_discard,
-                                            nir_metadata_block_index |
-                                               nir_metadata_dominance,
-                                            NULL);
+      progress = nir_shader_instructions_pass(shader,
+                                              nir_lower_demote_to_discard_instr,
+                                              nir_metadata_block_index |
+                                              nir_metadata_dominance,
+                                              NULL);
       shader->info.fs.uses_demote = false;
    } else if (shader->info.fs.uses_demote &&
               BITSET_TEST(shader->info.system_values_read,
                           nir_system_value_from_intrinsic(nir_intrinsic_load_helper_invocation))) {
       /* load_helper needs to preserve the value (whether an invocation is
        * a helper lane) from the beginning of the shader. */
-      nir_def *is_helper = NULL;
-      progress = nir_shader_intrinsics_pass(shader,
-                                            lower_load_helper_to_is_helper,
-                                            nir_metadata_block_index |
-                                               nir_metadata_dominance,
-                                            &is_helper);
+      nir_ssa_def *is_helper = NULL;
+      progress = nir_shader_instructions_pass(shader,
+                                              nir_lower_load_helper_to_is_helper,
+                                              nir_metadata_block_index |
+                                              nir_metadata_dominance,
+                                              &is_helper);
       BITSET_CLEAR(shader->info.system_values_read,
                    nir_system_value_from_intrinsic(nir_intrinsic_load_helper_invocation));
    }

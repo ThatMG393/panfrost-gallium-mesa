@@ -27,14 +27,12 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
-#include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 
 #include "util/compress.h"
 #include "util/crc32.h"
-#include "util/u_debug.h"
 #include "util/disk_cache.h"
 #include "util/disk_cache_os.h"
 
@@ -96,7 +94,6 @@ disk_cache_get_function_identifier(void *ptr, struct mesa_sha1 *ctx)
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include "utime.h"
 
 #include "util/blob.h"
 #include "util/crc32.h"
@@ -127,7 +124,7 @@ mkdir_if_needed(const char *path)
       }
    }
 
-   int ret = mkdir(path, 0700);
+   int ret = mkdir(path, 0755);
    if (ret == 0 || (ret == -1 && errno == EEXIST))
      return 0;
 
@@ -135,45 +132,6 @@ mkdir_if_needed(const char *path)
            path, strerror(errno));
 
    return -1;
-}
-
-/* Create a directory named 'path' if it does not already exist,
- * including parent directories if required.
- *
- * Returns: 0 if path already exists as a directory or if created.
- *         -1 in all other cases.
- */
-static int
-mkdir_with_parents_if_needed(const char *path)
-{
-   char *p;
-   const char *end;
-
-   if (path[0] == '\0')
-      return -1;
-
-   p = strdup(path);
-   end = p + strlen(p) + 1; /* end points to the \0 terminator */
-   for (char *q = p; q != end; q++) {
-      if (*q == '/' || q == end - 1) {
-         if (q == p) {
-            /* Skip the first / of an absolute path. */
-            continue;
-         }
-
-         *q = '\0';
-
-         if (mkdir_if_needed(p) == -1) {
-            free(p);
-            return -1;
-         }
-
-         *q = '/';
-      }
-   }
-   free(p);
-
-   return 0;
 }
 
 /* Concatenate an existing path and a new name to form a new path.  If the new
@@ -242,24 +200,12 @@ choose_lru_file_matching(const char *dir_path,
    if (dir == NULL)
       return NULL;
 
-   const int dir_fd = dirfd(dir);
-
    /* First count the number of files in the directory */
    unsigned total_file_count = 0;
    while ((dir_ent = readdir(dir)) != NULL) {
-#ifdef HAVE_DIRENT_D_TYPE
       if (dir_ent->d_type == DT_REG) { /* If the entry is a regular file */
          total_file_count++;
       }
-#else
-      struct stat st;
-
-      if (fstatat(dir_fd, dir_ent->d_name, &st, AT_SYMLINK_NOFOLLOW) == 0) {
-         if (S_ISREG(st.st_mode)) {
-            total_file_count++;
-         }
-      }
-#endif
    }
 
    /* Reset to the start of the directory */
@@ -279,7 +225,7 @@ choose_lru_file_matching(const char *dir_path,
          break;
 
       struct stat sb;
-      if (fstatat(dir_fd, dir_ent->d_name, &sb, 0) == 0) {
+      if (fstatat(dirfd(dir), dir_ent->d_name, &sb, 0) == 0) {
          struct lru_file *entry = NULL;
          if (!list_is_empty(lru_file_list))
             entry = list_first_entry(lru_file_list, struct lru_file, node);
@@ -498,7 +444,7 @@ disk_cache_evict_lru_item(struct disk_cache *cache)
    free(dir_path);
 
    if (size) {
-      p_atomic_add(&cache->size->value, - (uint64_t)size);
+      p_atomic_add(cache->size, - (uint64_t)size);
       return;
    }
 
@@ -525,7 +471,7 @@ disk_cache_evict_lru_item(struct disk_cache *cache)
    free_lru_file_list(lru_file_list);
 
    if (size)
-      p_atomic_add(&cache->size->value, - (uint64_t)size);
+      p_atomic_add(cache->size, - (uint64_t)size);
 }
 
 void
@@ -541,7 +487,7 @@ disk_cache_evict_item(struct disk_cache *cache, char *filename)
    free(filename);
 
    if (sb.st_blocks)
-      p_atomic_add(&cache->size->value, - (uint64_t)sb.st_blocks * 512);
+      p_atomic_add(cache->size, - (uint64_t)sb.st_blocks * 512);
 }
 
 static void *
@@ -861,7 +807,7 @@ disk_cache_write_item_to_disk(struct disk_cache_put_job *dc_job,
       goto done;
    }
 
-   p_atomic_add(&dc_job->cache->size->value, sb.st_blocks * 512);
+   p_atomic_add(dc_job->cache->size, sb.st_blocks * 512);
 
  done:
    if (fd_final != -1)
@@ -883,19 +829,18 @@ disk_cache_write_item_to_disk(struct disk_cache_put_job *dc_job,
  */
 char *
 disk_cache_generate_cache_dir(void *mem_ctx, const char *gpu_name,
-                              const char *driver_id,
-                              enum disk_cache_type cache_type)
+                              const char *driver_id)
 {
    char *cache_dir_name = CACHE_DIR_NAME;
-   if (cache_type == DISK_CACHE_SINGLE_FILE)
+   if (debug_get_bool_option("MESA_DISK_CACHE_SINGLE_FILE", false))
       cache_dir_name = CACHE_DIR_NAME_SF;
-   else if (cache_type == DISK_CACHE_DATABASE)
+   else if (debug_get_bool_option("MESA_DISK_CACHE_DATABASE", false))
       cache_dir_name = CACHE_DIR_NAME_DB;
 
-   char *path = secure_getenv("MESA_SHADER_CACHE_DIR");
+   char *path = getenv("MESA_SHADER_CACHE_DIR");
 
    if (!path) {
-      path = secure_getenv("MESA_GLSL_CACHE_DIR");
+      path = getenv("MESA_GLSL_CACHE_DIR");
       if (path)
          fprintf(stderr,
                  "*** MESA_GLSL_CACHE_DIR is deprecated; "
@@ -903,7 +848,7 @@ disk_cache_generate_cache_dir(void *mem_ctx, const char *gpu_name,
    }
 
    if (path) {
-      if (mkdir_with_parents_if_needed(path) == -1)
+      if (mkdir_if_needed(path) == -1)
          return NULL;
 
       path = concatenate_and_mkdir(mem_ctx, path, cache_dir_name);
@@ -912,7 +857,7 @@ disk_cache_generate_cache_dir(void *mem_ctx, const char *gpu_name,
    }
 
    if (path == NULL) {
-      char *xdg_cache_home = secure_getenv("XDG_CACHE_HOME");
+      char *xdg_cache_home = getenv("XDG_CACHE_HOME");
 
       if (xdg_cache_home) {
          if (mkdir_if_needed(xdg_cache_home) == -1)
@@ -959,7 +904,7 @@ disk_cache_generate_cache_dir(void *mem_ctx, const char *gpu_name,
          return NULL;
    }
 
-   if (cache_type == DISK_CACHE_SINGLE_FILE) {
+   if (debug_get_bool_option("MESA_DISK_CACHE_SINGLE_FILE", false)) {
       path = concatenate_and_mkdir(mem_ctx, path, driver_id);
       if (!path)
          return NULL;
@@ -975,14 +920,8 @@ disk_cache_generate_cache_dir(void *mem_ctx, const char *gpu_name,
 bool
 disk_cache_enabled()
 {
-   /* Disk cache is not enabled for android, but android's EGL layer
-    * uses EGL_ANDROID_blob_cache to manage the cache itself:
-    */
-   if (DETECT_OS_ANDROID)
-      return false;
-
    /* If running as a users other than the real user disable cache */
-   if (!__normal_user())
+   if (geteuid() != getuid())
       return false;
 
    /* At user request, disable shader cache entirely. */
@@ -1045,29 +984,6 @@ disk_cache_load_cache_index_foz(void *mem_ctx, struct disk_cache *cache)
    return foz_prepare(&cache->foz_db, cache->path);
 }
 
-
-void
-disk_cache_touch_cache_user_marker(char *path)
-{
-   char *marker_path = NULL;
-   asprintf(&marker_path, "%s/marker", path);
-   if (!marker_path)
-      return;
-
-   time_t now = time(NULL);
-
-   struct stat attr;
-   if (stat(marker_path, &attr) == -1) {
-      int fd = open(marker_path, O_WRONLY | O_CREAT | O_CLOEXEC, 0644);
-      if (fd != -1) {
-         close(fd);
-      }
-   } else if (now - attr.st_mtime < 60 * 60 * 24 /* One day */) {
-      (void)utime(marker_path, NULL);
-   }
-   free(marker_path);
-}
-
 bool
 disk_cache_mmap_cache_index(void *mem_ctx, struct disk_cache *cache,
                             char *path)
@@ -1090,20 +1006,8 @@ disk_cache_mmap_cache_index(void *mem_ctx, struct disk_cache *cache,
    /* Force the index file to be the expected size. */
    size_t size = sizeof(*cache->size) + CACHE_INDEX_MAX_KEYS * CACHE_KEY_SIZE;
    if (sb.st_size != size) {
-#if HAVE_POSIX_FALLOCATE
-      /* posix_fallocate() ensures disk space is allocated otherwise it
-       * fails if there is not enough space on the disk.
-       */
-      if (posix_fallocate(fd, 0, size) != 0)
-         goto path_fail;
-#else
-      /* ftruncate() allocates disk space lazily. If the disk is full
-       * and it is unable to allocate disk space when accessed via
-       * mmap, it will crash with a SIGBUS.
-       */
       if (ftruncate(fd, size) == -1)
          goto path_fail;
-#endif
    }
 
    /* We map this shared so that other processes see updates that we
@@ -1127,7 +1031,7 @@ disk_cache_mmap_cache_index(void *mem_ctx, struct disk_cache *cache,
       goto path_fail;
    cache->index_mmap_size = size;
 
-   cache->size = (p_atomic_uint64_t *) cache->index_mmap;
+   cache->size = (uint64_t *) cache->index_mmap;
    cache->stored_keys = cache->index_mmap + sizeof(uint64_t);
    mapped = true;
 
@@ -1149,8 +1053,8 @@ disk_cache_db_load_item(struct disk_cache *cache, const cache_key key,
                         size_t *size)
 {
    size_t cache_tem_size = 0;
-   void *cache_item = mesa_cache_db_multipart_read_entry(&cache->cache_db,
-                                                         key, &cache_tem_size);
+   void *cache_item = mesa_cache_db_read_entry(&cache->cache_db, key,
+                                               &cache_tem_size);
    if (!cache_item)
       return NULL;
 
@@ -1170,9 +1074,8 @@ disk_cache_db_write_item_to_disk(struct disk_cache_put_job *dc_job)
    if (!create_cache_item_header_and_blob(dc_job, &cache_blob))
       return false;
 
-   bool r = mesa_cache_db_multipart_entry_write(&dc_job->cache->cache_db,
-                                                dc_job->key, cache_blob.data,
-                                                cache_blob.size);
+   bool r = mesa_cache_db_entry_write(&dc_job->cache->cache_db, dc_job->key,
+                                      cache_blob.data, cache_blob.size);
 
    blob_finish(&cache_blob);
    return r;
@@ -1181,7 +1084,7 @@ disk_cache_db_write_item_to_disk(struct disk_cache_put_job *dc_job)
 bool
 disk_cache_db_load_cache_index(void *mem_ctx, struct disk_cache *cache)
 {
-   return mesa_cache_db_multipart_open(&cache->cache_db, cache->path);
+   return mesa_cache_db_open(&cache->cache_db, cache->path);
 }
 #endif
 

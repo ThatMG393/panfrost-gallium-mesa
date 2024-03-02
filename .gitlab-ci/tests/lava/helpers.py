@@ -1,22 +1,15 @@
 from contextlib import nullcontext as does_not_raise
 from datetime import datetime
-from io import StringIO
 from itertools import cycle
-from typing import Any, Callable, Generator, Iterable, Optional, Tuple, Union
+from typing import Callable, Generator, Iterable, Optional, Tuple, Union
 
+import yaml
 from freezegun import freeze_time
 from lava.utils.log_section import (
     DEFAULT_GITLAB_SECTION_TIMEOUTS,
     FALLBACK_GITLAB_SECTION_TIMEOUT,
     LogSectionType,
 )
-from lavacli.utils import flow_yaml as lava_yaml
-
-
-def yaml_dump(data: dict[str, Any]) -> str:
-    stream = StringIO()
-    lava_yaml.dump(data, stream)
-    return stream.getvalue()
 
 
 def section_timeout(section_type: LogSectionType) -> int:
@@ -53,7 +46,7 @@ def jobs_logs_response(
 
     logs = [timed_msg] if msg is None else msg
 
-    return finished, yaml_dump(logs)
+    return finished, yaml.safe_dump(logs)
 
 
 def section_aware_message_generator(

@@ -32,7 +32,6 @@
 #include "pipe/p_state.h"
 #include "util/list.h"
 #include "hud/font.h"
-#include "hud/hud_context.h"
 #include "cso_cache/cso_context.h"
 
 enum hud_counter {
@@ -52,10 +51,7 @@ struct hud_context {
    /* Context where the HUD is drawn: */
    struct pipe_context *pipe;
    struct cso_context *cso;
-
-   /* For notifying st_context to rebind states that we clobbered. */
-   struct st_context *st;
-   hud_st_invalidate_state_func st_invalidate_state;
+   struct st_context_iface *st;
 
    struct hud_batch_query_context *batch_query;
    struct list_head pane_list;
@@ -69,7 +65,6 @@ struct hud_context {
    struct pipe_rasterizer_state rasterizer, rasterizer_aa_lines;
    void *vs_color, *vs_text;
    struct cso_velems_state velems;
-   struct cso_velems_state text_velems;
 
    /* font */
    struct util_font font;
@@ -123,7 +118,6 @@ struct hud_graph {
    unsigned index; /* vertex index being updated */
    double current_value;
    FILE *fd;
-   const char *separator;
 };
 
 struct hud_pane {
@@ -143,8 +137,8 @@ struct hud_pane {
    uint64_t initial_max_value;
    uint64_t ceiling;
    unsigned dyn_ceil_last_ran;
-   bool dyn_ceiling;
-   bool sort_items;
+   boolean dyn_ceiling;
+   boolean sort_items;
    enum pipe_driver_query_type type;
    uint64_t period; /* in microseconds */
 
@@ -181,9 +175,9 @@ void hud_pipe_query_install(struct hud_batch_query_context **pbq,
                             enum pipe_driver_query_type type,
                             enum pipe_driver_query_result_type result_type,
                             unsigned flags);
-bool hud_driver_query_install(struct hud_batch_query_context **pbq,
-                              struct hud_pane *pane,
-                              struct pipe_screen *screen, const char *name);
+boolean hud_driver_query_install(struct hud_batch_query_context **pbq,
+                                 struct hud_pane *pane,
+                                 struct pipe_screen *screen, const char *name);
 void hud_batch_query_begin(struct hud_batch_query_context *bq,
                            struct pipe_context *pipe);
 void hud_batch_query_update(struct hud_batch_query_context *bq,

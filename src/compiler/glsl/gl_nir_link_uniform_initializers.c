@@ -158,6 +158,7 @@ copy_constant_to_storage(union gl_constant_value *storage,
          case GLSL_TYPE_INTERFACE:
          case GLSL_TYPE_VOID:
          case GLSL_TYPE_SUBROUTINE:
+         case GLSL_TYPE_FUNCTION:
          case GLSL_TYPE_ERROR:
          case GLSL_TYPE_UINT16:
          case GLSL_TYPE_INT16:
@@ -169,8 +170,6 @@ copy_constant_to_storage(union gl_constant_value *storage,
              */
             assert(!"Should not get here.");
             break;
-         case GLSL_TYPE_COOPERATIVE_MATRIX:
-            unreachable("unsupported base type cooperative matrix");
          }
          i += dmul;
       }

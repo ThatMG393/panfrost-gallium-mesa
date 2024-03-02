@@ -39,10 +39,10 @@ struct stw_tls_data
    struct stw_tls_data *next;
 };
 
-bool
+boolean
 stw_tls_init(void);
 
-bool
+boolean
 stw_tls_init_thread(void);
 
 void

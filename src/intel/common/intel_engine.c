@@ -23,24 +23,74 @@
 
 #include <stdlib.h>
 
-#include "util/macros.h"
-
 #include "intel_engine.h"
-#include "i915/intel_engine.h"
-#include "xe/intel_engine.h"
+#include "intel_gem.h"
+
+enum intel_engine_class i915_engine_class_to_intel(enum drm_i915_gem_engine_class i915)
+{
+   switch (i915) {
+   case I915_ENGINE_CLASS_RENDER:
+      return INTEL_ENGINE_CLASS_RENDER;
+   case I915_ENGINE_CLASS_COPY:
+      return INTEL_ENGINE_CLASS_COPY;
+   case I915_ENGINE_CLASS_VIDEO:
+      return INTEL_ENGINE_CLASS_VIDEO;
+   case I915_ENGINE_CLASS_VIDEO_ENHANCE:
+      return INTEL_ENGINE_CLASS_VIDEO_ENHANCE;
+   case I915_ENGINE_CLASS_COMPUTE:
+      return INTEL_ENGINE_CLASS_COMPUTE;
+   default:
+      return INTEL_ENGINE_CLASS_INVALID;
+   }
+}
+
+enum drm_i915_gem_engine_class intel_engine_class_to_i915(enum intel_engine_class intel)
+{
+   switch (intel) {
+   case INTEL_ENGINE_CLASS_RENDER:
+      return I915_ENGINE_CLASS_RENDER;
+   case INTEL_ENGINE_CLASS_COPY:
+      return I915_ENGINE_CLASS_COPY;
+   case INTEL_ENGINE_CLASS_VIDEO:
+      return I915_ENGINE_CLASS_VIDEO;
+   case INTEL_ENGINE_CLASS_VIDEO_ENHANCE:
+      return I915_ENGINE_CLASS_VIDEO_ENHANCE;
+   case INTEL_ENGINE_CLASS_COMPUTE:
+      return I915_ENGINE_CLASS_COMPUTE;
+   default:
+      return I915_ENGINE_CLASS_INVALID;
+   }
+}
 
 struct intel_query_engine_info *
-intel_engine_get_info(int fd, enum intel_kmd_type type)
+intel_engine_get_info(int fd)
 {
-   switch (type) {
-   case INTEL_KMD_TYPE_I915:
-      return i915_engine_get_info(fd);
-   case INTEL_KMD_TYPE_XE:
-      return xe_engine_get_info(fd);
-   default:
-      unreachable("Missing");
+   struct drm_i915_query_engine_info *i915_engines_info;
+   i915_engines_info = intel_i915_query_alloc(fd, DRM_I915_QUERY_ENGINE_INFO, NULL);
+   if (!i915_engines_info)
+      return NULL;
+
+   struct intel_query_engine_info *intel_engines_info;
+   intel_engines_info = calloc(1, sizeof(*intel_engines_info) +
+                               sizeof(*intel_engines_info->engines) *
+                               i915_engines_info->num_engines);
+   if (!intel_engines_info) {
+      free(i915_engines_info);
       return NULL;
    }
+
+   for (int i = 0; i < i915_engines_info->num_engines; i++) {
+      struct drm_i915_engine_info *i915_engine = &i915_engines_info->engines[i];
+      struct intel_engine_class_instance *intel_engine = &intel_engines_info->engines[i];
+
+      intel_engine->engine_class = i915_engine_class_to_intel(i915_engine->engine.engine_class);
+      intel_engine->engine_instance = i915_engine->engine.engine_instance;
+   }
+
+   intel_engines_info->num_engines = i915_engines_info->num_engines;
+
+   free(i915_engines_info);
+   return intel_engines_info;
 }
 
 int
@@ -74,42 +124,4 @@ intel_engines_class_to_string(enum intel_engine_class engine_class)
    default:
       return "unknown";
    }
-}
-
-static bool
-is_guc_semaphore_functional(int fd, const struct intel_device_info *info)
-{
-   switch (info->kmd_type) {
-   case INTEL_KMD_TYPE_I915:
-      return i915_engines_is_guc_semaphore_functional(fd, info);
-   case INTEL_KMD_TYPE_XE:
-      return xe_engines_is_guc_semaphore_functional(fd, info);
-   default:
-      unreachable("Missing");
-      return false;
-   }
-}
-
-int
-intel_engines_supported_count(int fd, const struct intel_device_info *info,
-                              const struct intel_query_engine_info *engine_info,
-                              enum intel_engine_class engine_class)
-{
-   bool supported;
-
-   /* check if user set the force enabled engine with run-time parameter */
-   switch (engine_class) {
-   case INTEL_ENGINE_CLASS_COMPUTE:
-      supported = debug_get_bool_option("INTEL_ENGINE_CLASS_COMPUTE", false);
-      supported |= is_guc_semaphore_functional(fd, info);
-      break;
-   case INTEL_ENGINE_CLASS_COPY:
-      supported = debug_get_bool_option("INTEL_ENGINE_CLASS_COPY", true);
-      break;
-   default:
-      /* There is no restrictions or parameters for other engines */
-      supported = true;
-   }
-
-   return supported ? intel_engines_count(engine_info, engine_class) : 0;
 }

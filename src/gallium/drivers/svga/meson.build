@@ -92,7 +92,6 @@ libsvga = static_library(
     inc_src, inc_include, inc_gallium, inc_gallium_aux,
     include_directories('include')
   ],
-  link_with : [libglsl],
   dependencies : [idep_mesautil, idep_nir],
 )
 

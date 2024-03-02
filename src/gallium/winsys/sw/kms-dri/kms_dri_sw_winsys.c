@@ -42,7 +42,7 @@
 #include <fcntl.h>
 #include <xf86drm.h>
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "util/format/u_formats.h"
 #include "pipe/p_state.h"
 #include "util/u_inlines.h"
@@ -483,7 +483,6 @@ static void
 kms_sw_displaytarget_display(struct sw_winsys *ws,
                              struct sw_displaytarget *dt,
                              void *context_private,
-                             unsigned nboxes,
                              struct pipe_box *box)
 {
    /* This function should not be called, instead the dri2 loader should
@@ -492,13 +491,6 @@ kms_sw_displaytarget_display(struct sw_winsys *ws,
    assert(0);
 }
 
-static int
-kms_sw_winsys_get_fd(struct sw_winsys *ws)
-{
-   struct kms_sw_winsys *kms_sw = kms_sw_winsys(ws);
-
-   return kms_sw->fd;
-}
 
 static void
 kms_destroy_sw_winsys(struct sw_winsys *winsys)
@@ -519,8 +511,6 @@ kms_dri_create_winsys(int fd)
    list_inithead(&ws->bo_list);
 
    ws->base.destroy = kms_destroy_sw_winsys;
-
-   ws->base.get_fd = kms_sw_winsys_get_fd;
 
    ws->base.is_displaytarget_format_supported = kms_sw_is_displaytarget_format_supported;
 

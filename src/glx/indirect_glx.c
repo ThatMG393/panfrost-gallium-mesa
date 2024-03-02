@@ -100,15 +100,40 @@ SendMakeCurrentRequest(Display * dpy, GLXContextID gc_id,
       req->oldContextTag = gc_tag;
    }
    else {
-      xGLXMakeContextCurrentReq *req;
+      struct glx_display *priv = __glXInitialize(dpy);
 
-      GetReq(GLXMakeContextCurrent, req);
-      req->reqType = opcode;
-      req->glxCode = X_GLXMakeContextCurrent;
-      req->drawable = draw;
-      req->readdrawable = read;
-      req->context = gc_id;
-      req->oldContextTag = gc_tag;
+      /* If the server can support the GLX 1.3 version, we should
+       * perfer that.  Not only that, some servers support GLX 1.3 but
+       * not the SGI extension.
+       */
+
+      if (priv->minorVersion >= 3) {
+         xGLXMakeContextCurrentReq *req;
+
+         GetReq(GLXMakeContextCurrent, req);
+         req->reqType = opcode;
+         req->glxCode = X_GLXMakeContextCurrent;
+         req->drawable = draw;
+         req->readdrawable = read;
+         req->context = gc_id;
+         req->oldContextTag = gc_tag;
+      }
+      else {
+         xGLXVendorPrivateWithReplyReq *vpreq;
+         xGLXMakeCurrentReadSGIReq *req;
+
+         GetReqExtra(GLXVendorPrivateWithReply,
+                     sz_xGLXMakeCurrentReadSGIReq -
+                     sz_xGLXVendorPrivateWithReplyReq, vpreq);
+         req = (xGLXMakeCurrentReadSGIReq *) vpreq;
+         req->reqType = opcode;
+         req->glxCode = X_GLXVendorPrivateWithReply;
+         req->vendorCode = X_GLXvop_MakeCurrentReadSGI;
+         req->drawable = draw;
+         req->readable = read;
+         req->context = gc_id;
+         req->oldContextTag = gc_tag;
+      }
    }
 
    ret = _XReply(dpy, (xReply *) &reply, 0, False);
@@ -123,13 +148,21 @@ SendMakeCurrentRequest(Display * dpy, GLXContextID gc_id,
 }
 
 static int
-indirect_bind_context(struct glx_context *gc,
+indirect_bind_context(struct glx_context *gc, struct glx_context *old,
 		      GLXDrawable draw, GLXDrawable read)
 {
+   GLXContextTag tag;
    Display *dpy = gc->psc->dpy;
    Bool sent;
 
-   sent = SendMakeCurrentRequest(dpy, gc->xid, 0, draw, read,
+   if (old != &dummyContext && !old->isDirect && old->psc->dpy == dpy) {
+      tag = old->currentContextTag;
+      old->currentContextTag = 0;
+   } else {
+      tag = 0;
+   }
+
+   sent = SendMakeCurrentRequest(dpy, gc->xid, tag, draw, read,
 				 &gc->currentContextTag);
 
    if (sent) {
@@ -158,12 +191,22 @@ indirect_bind_context(struct glx_context *gc,
 }
 
 static void
-indirect_unbind_context(struct glx_context *gc)
+indirect_unbind_context(struct glx_context *gc, struct glx_context *new)
 {
    Display *dpy = gc->psc->dpy;
 
-   SendMakeCurrentRequest(dpy, None, gc->currentContextTag, None, None, NULL);
-   gc->currentContextTag = 0;
+   if (gc == new)
+      return;
+   
+   /* We are either switching to no context, away from an indirect
+    * context to a direct context or from one dpy to another and have
+    * to send a request to the dpy to unbind the previous context.
+    */
+   if (!new || new->isDirect || new->psc->dpy != dpy) {
+      SendMakeCurrentRequest(dpy, None, gc->currentContextTag, None, None,
+                             NULL);
+      gc->currentContextTag = 0;
+   }
 }
 
 static void
@@ -247,7 +290,6 @@ indirect_create_context_attribs(struct glx_screen *psc,
 
    opcode = __glXSetupForCommand(psc->dpy);
    if (!opcode) {
-      *error = BadImplementation;
       return NULL;
    }
 
@@ -270,7 +312,6 @@ indirect_create_context_attribs(struct glx_screen *psc,
    if (mask != GLX_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB ||
        major != 1 ||
        minor > 4) {
-      *error = GLXBadFBConfig;
       return NULL;
    }
 
@@ -281,7 +322,6 @@ indirect_create_context_attribs(struct glx_screen *psc,
    /* Allocate our context record */
    gc = calloc(1, sizeof *gc);
    if (!gc) {
-      *error = BadAlloc;
       /* Out of memory */
       return NULL;
    }
@@ -294,7 +334,6 @@ indirect_create_context_attribs(struct glx_screen *psc,
 
    if (state == NULL) {
       /* Out of memory */
-      *error = BadAlloc;
       free(gc);
       return NULL;
    }
@@ -311,7 +350,6 @@ indirect_create_context_attribs(struct glx_screen *psc,
    bufSize = (XMaxRequestSize(psc->dpy) * 4) - sz_xGLXRenderReq;
    gc->buf = malloc(bufSize);
    if (!gc->buf) {
-      *error = BadAlloc;
       free(gc->client_state_private);
       free(gc);
       return NULL;

@@ -34,49 +34,44 @@ static const struct glsl_type *
 copy_type_for_byte_size(unsigned size)
 {
    switch (size) {
-   case 1:
-      return glsl_vector_type(GLSL_TYPE_UINT8, 1);
-   case 2:
-      return glsl_vector_type(GLSL_TYPE_UINT16, 1);
-   case 4:
-      return glsl_vector_type(GLSL_TYPE_UINT, 1);
-   case 8:
-      return glsl_vector_type(GLSL_TYPE_UINT, 2);
-   case 16:
-      return glsl_vector_type(GLSL_TYPE_UINT, 4);
+   case 1:  return glsl_vector_type(GLSL_TYPE_UINT8, 1);
+   case 2:  return glsl_vector_type(GLSL_TYPE_UINT16, 1);
+   case 4:  return glsl_vector_type(GLSL_TYPE_UINT, 1);
+   case 8:  return glsl_vector_type(GLSL_TYPE_UINT, 2);
+   case 16: return glsl_vector_type(GLSL_TYPE_UINT, 4);
    default:
       unreachable("Unsupported size");
    }
 }
 
-static nir_def *
+static nir_ssa_def *
 memcpy_load_deref_elem(nir_builder *b, nir_deref_instr *parent,
-                       nir_def *index)
+                       nir_ssa_def *index)
 {
    nir_deref_instr *deref;
 
-   index = nir_i2iN(b, index, parent->def.bit_size);
+   index = nir_i2iN(b, index, nir_dest_bit_size(parent->dest));
    assert(parent->deref_type == nir_deref_type_cast);
    deref = nir_build_deref_ptr_as_array(b, parent, index);
 
    return nir_load_deref(b, deref);
 }
 
-static nir_def *
+static nir_ssa_def *
 memcpy_load_deref_elem_imm(nir_builder *b, nir_deref_instr *parent,
                            uint64_t index)
 {
-   nir_def *idx = nir_imm_intN_t(b, index, parent->def.bit_size);
+   nir_ssa_def *idx = nir_imm_intN_t(b, index, parent->dest.ssa.bit_size);
    return memcpy_load_deref_elem(b, parent, idx);
 }
 
 static void
 memcpy_store_deref_elem(nir_builder *b, nir_deref_instr *parent,
-                        nir_def *index, nir_def *value)
+                        nir_ssa_def *index, nir_ssa_def *value)
 {
    nir_deref_instr *deref;
 
-   index = nir_i2iN(b, index, parent->def.bit_size);
+   index = nir_i2iN(b, index, nir_dest_bit_size(parent->dest));
    assert(parent->deref_type == nir_deref_type_cast);
    deref = nir_build_deref_ptr_as_array(b, parent, index);
    nir_store_deref(b, deref, value, ~0);
@@ -84,16 +79,17 @@ memcpy_store_deref_elem(nir_builder *b, nir_deref_instr *parent,
 
 static void
 memcpy_store_deref_elem_imm(nir_builder *b, nir_deref_instr *parent,
-                            uint64_t index, nir_def *value)
+                            uint64_t index, nir_ssa_def *value)
 {
-   nir_def *idx = nir_imm_intN_t(b, index, parent->def.bit_size);
+   nir_ssa_def *idx = nir_imm_intN_t(b, index, parent->dest.ssa.bit_size);
    memcpy_store_deref_elem(b, parent, idx, value);
 }
 
 static bool
 lower_memcpy_impl(nir_function_impl *impl)
 {
-   nir_builder b = nir_builder_create(impl);
+   nir_builder b;
+   nir_builder_init(&b, impl);
 
    bool found_const_memcpy = false, found_non_const_memcpy = false;
 
@@ -127,48 +123,49 @@ lower_memcpy_impl(nir_function_impl *impl)
                   copy_type_for_byte_size(copy_size);
 
                nir_deref_instr *copy_dst =
-                  nir_build_deref_cast(&b, &dst->def, dst->modes,
+                  nir_build_deref_cast(&b, &dst->dest.ssa, dst->modes,
                                        copy_type, copy_size);
                nir_deref_instr *copy_src =
-                  nir_build_deref_cast(&b, &src->def, src->modes,
+                  nir_build_deref_cast(&b, &src->dest.ssa, src->modes,
                                        copy_type, copy_size);
 
                uint64_t index = offset / copy_size;
-               nir_def *value =
+               nir_ssa_def *value =
                   memcpy_load_deref_elem_imm(&b, copy_src, index);
                memcpy_store_deref_elem_imm(&b, copy_dst, index, value);
                offset += copy_size;
             }
          } else {
             found_non_const_memcpy = true;
-            nir_def *size = cpy->src[2].ssa;
+            assert(cpy->src[2].is_ssa);
+            nir_ssa_def *size = cpy->src[2].ssa;
 
             /* In this case, we don't have any idea what the size is so we
              * emit a loop which copies one byte at a time.
              */
             nir_deref_instr *copy_dst =
-               nir_build_deref_cast(&b, &dst->def, dst->modes,
+               nir_build_deref_cast(&b, &dst->dest.ssa, dst->modes,
                                     glsl_uint8_t_type(), 1);
             nir_deref_instr *copy_src =
-               nir_build_deref_cast(&b, &src->def, src->modes,
+               nir_build_deref_cast(&b, &src->dest.ssa, src->modes,
                                     glsl_uint8_t_type(), 1);
 
             nir_variable *i = nir_local_variable_create(impl,
-                                                        glsl_uintN_t_type(size->bit_size), NULL);
+               glsl_uintN_t_type(size->bit_size), NULL);
             nir_store_var(&b, i, nir_imm_intN_t(&b, 0, size->bit_size), ~0);
             nir_push_loop(&b);
             {
-               nir_def *index = nir_load_var(&b, i);
+               nir_ssa_def *index = nir_load_var(&b, i);
                nir_push_if(&b, nir_uge(&b, index, size));
                {
                   nir_jump(&b, nir_jump_break);
                }
                nir_pop_if(&b, NULL);
 
-               nir_def *value =
+               nir_ssa_def *value =
                   memcpy_load_deref_elem(&b, copy_src, index);
                memcpy_store_deref_elem(&b, copy_dst, index, value);
-               nir_store_var(&b, i, nir_iadd_imm(&b, index, 1), ~0);
+               nir_store_var(&b, i, nir_iadd_imm(&b, index, 1),  ~0);
             }
             nir_pop_loop(&b, NULL);
          }
@@ -179,7 +176,7 @@ lower_memcpy_impl(nir_function_impl *impl)
       nir_metadata_preserve(impl, nir_metadata_none);
    } else if (found_const_memcpy) {
       nir_metadata_preserve(impl, nir_metadata_block_index |
-                                     nir_metadata_dominance);
+                                  nir_metadata_dominance);
    } else {
       nir_metadata_preserve(impl, nir_metadata_all);
    }
@@ -192,8 +189,8 @@ nir_lower_memcpy(nir_shader *shader)
 {
    bool progress = false;
 
-   nir_foreach_function_impl(impl, shader) {
-      if (lower_memcpy_impl(impl))
+   nir_foreach_function(function, shader) {
+      if (function->impl && lower_memcpy_impl(function->impl))
          progress = true;
    }
 

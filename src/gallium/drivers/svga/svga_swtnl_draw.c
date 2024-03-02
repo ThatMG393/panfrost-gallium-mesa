@@ -50,7 +50,7 @@ svga_swtnl_draw_vbo(struct svga_context *svga,
    ASSERTED unsigned old_num_vertex_buffers;
    unsigned i;
    const void *map;
-   bool retried;
+   boolean retried;
 
    SVGA_STATS_TIME_PUSH(svga_sws(svga), SVGA_STATS_TIME_SWTNLDRAWVBO);
 
@@ -59,11 +59,11 @@ svga_swtnl_draw_vbo(struct svga_context *svga,
    assert(draw);
 
    /* Make sure that the need_swtnl flag does not go away */
-   svga->state.sw.in_swtnl_draw = true;
+   svga->state.sw.in_swtnl_draw = TRUE;
 
    SVGA_RETRY_CHECK(svga, svga_update_state(svga, SVGA_STATE_SWTNL_DRAW), retried);
    if (retried) {
-      svga->swtnl.new_vbuf = true;
+      svga->swtnl.new_vbuf = TRUE;
    }
 
    /*
@@ -86,14 +86,14 @@ svga_swtnl_draw_vbo(struct svga_context *svga,
    map = NULL;
    if (info->index_size) {
       if (info->has_user_indices) {
-         map = (uint8_t *) info->index.user;
+         map = (ubyte *) info->index.user;
       } else {
          map = pipe_buffer_map(&svga->pipe, info->index.resource,
                                PIPE_MAP_READ |
                                PIPE_MAP_UNSYNCHRONIZED, &ib_transfer);
       }
       draw_set_indexes(draw,
-                       (const uint8_t *) map,
+                       (const ubyte *) map,
                        info->index_size, ~0);
    }
 
@@ -145,7 +145,7 @@ svga_swtnl_draw_vbo(struct svga_context *svga,
    }
 
    /* Now safe to remove the need_swtnl flag in any update_state call */
-   svga->state.sw.in_swtnl_draw = false;
+   svga->state.sw.in_swtnl_draw = FALSE;
    svga->dirty |= SVGA_NEW_NEED_PIPELINE | SVGA_NEW_NEED_SWVFETCH;
 
    SVGA_STATS_TIME_POP(svga_sws(svga));
@@ -153,7 +153,7 @@ svga_swtnl_draw_vbo(struct svga_context *svga,
 }
 
 
-bool
+boolean
 svga_init_swtnl(struct svga_context *svga)
 {
    struct svga_screen *screen = svga_screen(svga->pipe.screen);
@@ -182,11 +182,6 @@ svga_init_swtnl(struct svga_context *svga)
    /* must be done before installing Draw stages */
    util_blitter_cache_all_shaders(svga->blitter);
 
-   const nir_alu_type bool_type =
-      screen->screen.get_shader_param(&screen->screen, PIPE_SHADER_FRAGMENT,
-                                      PIPE_SHADER_CAP_INTEGERS) ?
-      nir_type_bool32 : nir_type_float32;
-
    if (!screen->haveLineSmooth)
       draw_install_aaline_stage(svga->swtnl.draw, &svga->pipe);
 
@@ -194,7 +189,7 @@ svga_init_swtnl(struct svga_context *svga)
    draw_enable_line_stipple(svga->swtnl.draw, !screen->haveLineStipple);
 
    /* always install AA point stage */
-   draw_install_aapoint_stage(svga->swtnl.draw, &svga->pipe, bool_type);
+   draw_install_aapoint_stage(svga->swtnl.draw, &svga->pipe);
 
    /* Set wide line threshold above device limit (so we'll never really use it)
     */
@@ -202,10 +197,10 @@ svga_init_swtnl(struct svga_context *svga)
                             MAX2(screen->maxLineWidth,
                                  screen->maxLineWidthAA));
 
-   if (debug_get_bool_option("SVGA_SWTNL_FSE", false))
-      draw_set_driver_clipping(svga->swtnl.draw, true, true, true, false);
+   if (debug_get_bool_option("SVGA_SWTNL_FSE", FALSE))
+      draw_set_driver_clipping(svga->swtnl.draw, TRUE, TRUE, TRUE, FALSE);
 
-   return true;
+   return TRUE;
 
 fail:
    if (svga->blitter)
@@ -217,7 +212,7 @@ fail:
    if (svga->swtnl.draw)
       draw_destroy(svga->swtnl.draw);
 
-   return false;
+   return FALSE;
 }
 
 

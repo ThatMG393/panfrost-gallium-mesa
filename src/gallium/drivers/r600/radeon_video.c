@@ -141,13 +141,13 @@ void rvid_clear_buffer(struct pipe_context *context, struct rvid_buffer* buffer)
  * sumup their sizes and replace the backend buffers with a single bo
  */
 void rvid_join_surfaces(struct r600_common_context *rctx,
-			struct pb_buffer_lean** buffers[VL_NUM_COMPONENTS],
+			struct pb_buffer** buffers[VL_NUM_COMPONENTS],
 			struct radeon_surf *surfaces[VL_NUM_COMPONENTS])
 {
 	struct radeon_winsys* ws;
 	unsigned best_tiling, best_wh, off;
 	unsigned size, alignment;
-	struct pb_buffer_lean *pb;
+	struct pb_buffer *pb;
 	unsigned i, j;
 
 	ws = rctx->ws;
@@ -209,10 +209,10 @@ void rvid_join_surfaces(struct r600_common_context *rctx,
 		if (!buffers[i] || !*buffers[i])
 			continue;
 
-		radeon_bo_reference(rctx->ws, buffers[i], pb);
+		pb_reference(buffers[i], pb);
 	}
 
-	radeon_bo_reference(rctx->ws, &pb, NULL);
+	pb_reference(&pb, NULL);
 }
 
 int rvid_get_video_param(struct pipe_screen *screen,
@@ -224,7 +224,7 @@ int rvid_get_video_param(struct pipe_screen *screen,
 	enum pipe_video_format codec = u_reduce_video_profile(profile);
 	struct radeon_info info;
 
-	rscreen->ws->query_info(rscreen->ws, &info);
+	rscreen->ws->query_info(rscreen->ws, &info, false, false);
 
 	if (entrypoint == PIPE_VIDEO_ENTRYPOINT_ENCODE) {
 		switch (param) {

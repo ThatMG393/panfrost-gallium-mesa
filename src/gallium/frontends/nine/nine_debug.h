@@ -24,7 +24,7 @@
 #define _NINE_DEBUG_H_
 
 #include "util/u_debug.h"
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 
 void
 _nine_debug_printf( unsigned long flag,
@@ -38,9 +38,9 @@ _nine_debug_printf( unsigned long flag,
 #define WARN(fmt, ...) _nine_debug_printf(DBG_WARN, __func__, fmt, ## __VA_ARGS__)
 #define WARN_ONCE(fmt, ...) \
     do { \
-        static bool once = true; \
+        static boolean once = TRUE; \
         if (once) { \
-            once = false; \
+            once = FALSE; \
             _nine_debug_printf(DBG_WARN, __func__, fmt, ## __VA_ARGS__); \
         } \
     } while(0)
@@ -107,8 +107,8 @@ _nine_stub( const char *file,
  * It also prints debug message if the assertion fails. */
 #if defined(DEBUG) || !defined(NDEBUG)
 #define user_error(x) \
-    (!(x) ? (DBG_FLAG(DBG_USER, "User assertion failed: `%s'\n", #x), true) \
-          : false)
+    (!(x) ? (DBG_FLAG(DBG_USER, "User assertion failed: `%s'\n", #x), TRUE) \
+          : FALSE)
 #else
 #define user_error(x) (!(x) ? TRUE : FALSE)
 #endif

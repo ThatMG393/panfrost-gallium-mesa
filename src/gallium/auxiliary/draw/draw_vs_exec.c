@@ -92,7 +92,8 @@ static void
 vs_exec_run_linear(struct draw_vertex_shader *shader,
                    const float (*input)[4],
                    float (*output)[4],
-                   const struct draw_buffer_info *constants,
+                   const void *constants[PIPE_MAX_CONSTANT_BUFFERS],
+                    const unsigned const_size[PIPE_MAX_CONSTANT_BUFFERS],
                    unsigned count,
                    unsigned input_stride,
                    unsigned output_stride,
@@ -102,11 +103,11 @@ vs_exec_run_linear(struct draw_vertex_shader *shader,
    struct tgsi_exec_machine *machine = evs->machine;
    unsigned int i, j;
    unsigned slot;
-   bool clamp_vertex_color = shader->draw->rasterizer->clamp_vertex_color;
+   boolean clamp_vertex_color = shader->draw->rasterizer->clamp_vertex_color;
 
    assert(!shader->draw->llvm);
    tgsi_exec_set_constant_buffers(machine, PIPE_MAX_CONSTANT_BUFFERS,
-                                  (const struct tgsi_exec_consts_info *)constants);
+                                  constants, const_size);
 
    if (shader->info.uses_instanceid) {
       unsigned i = machine->SysSemanticToIndex[TGSI_SEMANTIC_INSTANCEID];

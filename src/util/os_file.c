@@ -15,9 +15,6 @@
 #include <io.h>
 #define open _open
 #define fdopen _fdopen
-#define close _close
-#define dup _dup
-#define read _read
 #define O_CREAT _O_CREAT
 #define O_EXCL _O_EXCL
 #define O_WRONLY _O_WRONLY
@@ -194,33 +191,37 @@ os_read_file(const char *filename, size_t *size)
    return buf;
 }
 
-#if (DETECT_OS_LINUX || DETECT_OS_FREEBSD) && ALLOW_KCMP
+#if DETECT_OS_LINUX
 
 #include <sys/syscall.h>
 #include <unistd.h>
 
-#if DETECT_OS_LINUX
 /* copied from <linux/kcmp.h> */
 #define KCMP_FILE 0
-#endif
-
-#endif
 
 int
 os_same_file_description(int fd1, int fd2)
 {
-#ifdef SYS_kcmp
    pid_t pid = getpid();
-#endif
 
    /* Same file descriptor trivially implies same file description */
    if (fd1 == fd2)
       return 0;
 
-#ifdef SYS_kcmp
    return syscall(SYS_kcmp, pid, pid, KCMP_FILE, fd1, fd2);
+}
+
 #else
+
+int
+os_same_file_description(int fd1, int fd2)
+{
+   /* Same file descriptor trivially implies same file description */
+   if (fd1 == fd2)
+      return 0;
+
    /* Otherwise we can't tell */
    return -1;
-#endif
 }
+
+#endif

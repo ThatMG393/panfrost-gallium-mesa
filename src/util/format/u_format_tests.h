@@ -30,7 +30,7 @@
 #define U_FORMAT_TESTS_H_
 
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "util/format/u_formats.h"
 
 

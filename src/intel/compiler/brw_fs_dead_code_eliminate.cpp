@@ -56,8 +56,8 @@ static bool
 can_omit_write(const fs_inst *inst)
 {
    switch (inst->opcode) {
-   case SHADER_OPCODE_A64_UNTYPED_ATOMIC_LOGICAL:
    case SHADER_OPCODE_UNTYPED_ATOMIC_LOGICAL:
+   case SHADER_OPCODE_UNTYPED_ATOMIC_FLOAT_LOGICAL:
    case SHADER_OPCODE_TYPED_ATOMIC_LOGICAL:
       return true;
    default:
@@ -73,18 +73,16 @@ can_omit_write(const fs_inst *inst)
 }
 
 bool
-brw_fs_opt_dead_code_eliminate(fs_visitor &s)
+fs_visitor::dead_code_eliminate()
 {
-   const intel_device_info *devinfo = s.devinfo;
-
    bool progress = false;
 
-   const fs_live_variables &live_vars = s.live_analysis.require();
+   const fs_live_variables &live_vars = live_analysis.require();
    int num_vars = live_vars.num_vars;
    BITSET_WORD *live = rzalloc_array(NULL, BITSET_WORD, BITSET_WORDS(num_vars));
    BITSET_WORD *flag_live = rzalloc_array(NULL, BITSET_WORD, 1);
 
-   foreach_block_reverse_safe(block, s.cfg) {
+   foreach_block_reverse_safe(block, cfg) {
       memcpy(live, live_vars.block_data[block->num].liveout,
              sizeof(BITSET_WORD) * BITSET_WORDS(num_vars));
       memcpy(flag_live, live_vars.block_data[block->num].flag_liveout,
@@ -142,13 +140,13 @@ brw_fs_opt_dead_code_eliminate(fs_visitor &s)
       }
    }
 
-   s.cfg->adjust_block_ips();
+   cfg->adjust_block_ips();
 
    ralloc_free(live);
    ralloc_free(flag_live);
 
    if (progress)
-      s.invalidate_analysis(DEPENDENCY_INSTRUCTIONS);
+      invalidate_analysis(DEPENDENCY_INSTRUCTIONS);
 
    return progress;
 }

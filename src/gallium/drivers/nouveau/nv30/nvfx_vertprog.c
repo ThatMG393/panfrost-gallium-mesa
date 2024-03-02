@@ -10,6 +10,8 @@
 #include "pipe/p_shader_tokens.h"
 #include "tgsi/tgsi_parse.h"
 #include "tgsi/tgsi_dump.h"
+#include "tgsi/tgsi_util.h"
+#include "tgsi/tgsi_ureg.h"
 
 #include "draw/draw_context.h"
 

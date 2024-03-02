@@ -42,11 +42,7 @@ __gen_combine_address(__attribute__((unused)) void *data,
 #if GFX_VERx10 >= 125
 static const uint8_t isl_encode_tiling[] = {
    [ISL_TILING_4]  = TILE4,
-#if GFX_VER >= 20
-   [ISL_TILING_64_XE2] = TILE64,
-#else
    [ISL_TILING_64] = TILE64,
-#endif
 };
 #endif
 
@@ -59,7 +55,7 @@ isl_genX(emit_cpb_control_s)(const struct isl_device *dev, void *batch,
       assert((info->surf->usage & ISL_SURF_USAGE_CPB_BIT));
       assert(info->surf->dim != ISL_SURF_DIM_3D);
       assert(info->surf->tiling == ISL_TILING_4 ||
-             isl_tiling_is_64(info->surf->tiling));
+             info->surf->tiling == ISL_TILING_64);
       assert(info->surf->format == ISL_FORMAT_R8_UINT);
    }
 
@@ -104,7 +100,10 @@ isl_genX(emit_cpb_control_s)(const struct isl_device *dev, void *batch,
       cpb.TiledMode              = isl_encode_tiling[info->surf->tiling];
       cpb.SurfaceBaseAddress     = info->address;
 
-      cpb.MipTailStartLOD        = info->surf->miptail_start_level;
+      /* We don't use miptails yet. The PRM recommends that you set "Mip Tail
+       * Start LOD" to 15 to prevent the hardware from trying to use them.
+       */
+      cpb.MipTailStartLOD        = 15;
       /* TODO:
        *
        * cpb.CPCBCompressionEnable is this CCS compression? Currently disabled

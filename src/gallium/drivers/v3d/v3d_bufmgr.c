@@ -327,11 +327,9 @@ v3d_bo_open_handle(struct v3d_screen *screen,
 {
         struct v3d_bo *bo;
 
-        /* Note: the caller is responsible for locking screen->bo_handles_mutex.
-         * This allows the lock to cover the actual BO import, avoiding a race.
-         */
-
         assert(size);
+
+        mtx_lock(&screen->bo_handles_mutex);
 
         bo = util_hash_table_get(screen->bo_handles, (void*)(uintptr_t)handle);
         if (bo) {
@@ -383,13 +381,10 @@ v3d_bo_open_name(struct v3d_screen *screen, uint32_t name)
         struct drm_gem_open o = {
                 .name = name
         };
-        mtx_lock(&screen->bo_handles_mutex);
-
         int ret = v3d_ioctl(screen->fd, DRM_IOCTL_GEM_OPEN, &o);
         if (ret) {
                 fprintf(stderr, "Failed to open bo %d: %s\n",
                         name, strerror(errno));
-                mtx_unlock(&screen->bo_handles_mutex);
                 return NULL;
         }
 
@@ -400,14 +395,10 @@ struct v3d_bo *
 v3d_bo_open_dmabuf(struct v3d_screen *screen, int fd)
 {
         uint32_t handle;
-
-        mtx_lock(&screen->bo_handles_mutex);
-
         int ret = drmPrimeFDToHandle(screen->fd, fd, &handle);
         int size;
         if (ret) {
                 fprintf(stderr, "Failed to get v3d handle for dmabuf %d\n", fd);
-                mtx_unlock(&screen->bo_handles_mutex);
                 return NULL;
         }
 
@@ -415,7 +406,6 @@ v3d_bo_open_dmabuf(struct v3d_screen *screen, int fd)
         size = lseek(fd, 0, SEEK_END);
         if (size == -1) {
                 fprintf(stderr, "Couldn't get size of dmabuf fd %d.\n", fd);
-                mtx_unlock(&screen->bo_handles_mutex);
                 return NULL;
         }
 
@@ -537,7 +527,7 @@ v3d_bo_map(struct v3d_bo *bo)
 {
         void *map = v3d_bo_map_unsynchronized(bo);
 
-        bool ok = v3d_bo_wait(bo, OS_TIMEOUT_INFINITE, "bo map");
+        bool ok = v3d_bo_wait(bo, PIPE_TIMEOUT_INFINITE, "bo map");
         if (!ok) {
                 fprintf(stderr, "BO wait for map failed\n");
                 abort();

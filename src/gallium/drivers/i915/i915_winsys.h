@@ -26,7 +26,7 @@
 #ifndef I915_WINSYS_H
 #define I915_WINSYS_H
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 
 struct i915_winsys;
 struct i915_winsys_buffer;
@@ -236,11 +236,6 @@ struct i915_winsys {
     * Destroy the winsys.
     */
    void (*destroy)(struct i915_winsys *iws);
-
-   /**
-    * Get FD if the winsys provides one
-    */
-   int (*get_fd)(struct i915_winsys *iws);
 };
 
 #endif

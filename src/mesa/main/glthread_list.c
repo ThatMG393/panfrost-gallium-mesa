@@ -29,24 +29,22 @@
 struct marshal_cmd_CallList
 {
    struct marshal_cmd_base cmd_base;
-   uint16_t num_slots;
    GLuint num;
    GLuint list[];
 };
 
 uint32_t
-_mesa_unmarshal_CallList(struct gl_context *ctx,
-                         const struct marshal_cmd_CallList *restrict cmd)
+_mesa_unmarshal_CallList(struct gl_context *ctx, const struct marshal_cmd_CallList *cmd)
 {
    const GLuint num = cmd->num;
 
-   if (cmd->num_slots == sizeof(*cmd) / 8) {
-      CALL_CallList(ctx->Dispatch.Current, (num));
+   if (cmd->cmd_base.cmd_size == sizeof(*cmd) / 8) {
+      CALL_CallList(ctx->CurrentServerDispatch, (num));
    } else {
-      CALL_CallLists(ctx->Dispatch.Current, (num, GL_UNSIGNED_INT, cmd->list));
+      CALL_CallLists(ctx->CurrentServerDispatch, (num, GL_UNSIGNED_INT, cmd->list));
    }
 
-   return cmd->num_slots;
+   return cmd->cmd_base.cmd_size;
 }
 
 void GLAPIENTRY
@@ -59,16 +57,15 @@ _mesa_marshal_CallList(GLuint list)
    _mesa_glthread_CallList(ctx, list);
 
    /* If the last call is CallList and there is enough space to append another list... */
-   if (last &&
-       _mesa_glthread_call_is_last(glthread, &last->cmd_base, last->num_slots) &&
+   if (_mesa_glthread_call_is_last(glthread, &last->cmd_base) &&
        glthread->used + 1 <= MARSHAL_MAX_CMD_SIZE / 8) {
       STATIC_ASSERT(sizeof(*last) == 8);
 
       /* Add the list to the last call. */
-      if (last->num_slots > sizeof(*last) / 8) {
+      if (last->cmd_base.cmd_size > sizeof(*last) / 8) {
          last->list[last->num++] = list;
          if (last->num % 2 == 1) {
-            last->num_slots++;
+            last->cmd_base.cmd_size++;
             glthread->used++;
          }
       } else {
@@ -78,17 +75,16 @@ _mesa_marshal_CallList(GLuint list)
          last->list[0] = last->num;
          last->list[1] = list;
          last->num = 2;
-         last->num_slots++;
+         last->cmd_base.cmd_size++;
          glthread->used++;
       }
-      assert(align(sizeof(*last) + last->num * 4, 8) / 8 == last->num_slots);
+      assert(align(sizeof(*last) + last->num * 4, 8) / 8 == last->cmd_base.cmd_size);
       return;
    }
 
    int cmd_size = sizeof(struct marshal_cmd_CallList);
    struct marshal_cmd_CallList *cmd;
    cmd = _mesa_glthread_allocate_command(ctx, DISPATCH_CMD_CallList, cmd_size);
-   cmd->num_slots = align(cmd_size, 8) / 8;
    cmd->num = list;
 
    glthread->LastCallList = cmd;

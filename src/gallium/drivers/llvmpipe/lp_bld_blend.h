@@ -50,8 +50,8 @@ lp_build_blend(struct lp_build_context *bld,
                LLVMValueRef dst,
                LLVMValueRef src_factor,
                LLVMValueRef dst_factor,
-               bool not_alpha_dependent,
-               bool optimise_only);
+               boolean not_alpha_dependent,
+               boolean optimise_only);
 
 
 LLVMValueRef
@@ -92,11 +92,11 @@ lp_build_blend_func(struct lp_build_context *bld,
                     LLVMValueRef term2);
 
 
-bool
+boolean
 lp_build_blend_func_reverse(enum pipe_blend_func rgb_func,
                             enum pipe_blend_func alpha_func);
 
-bool
+boolean
 lp_build_blend_func_commutative(enum pipe_blend_func func);
 
 void
@@ -104,6 +104,6 @@ lp_build_alpha_to_coverage(struct gallivm_state *gallivm,
                            struct lp_type type,
                            struct lp_build_mask_context *mask,
                            LLVMValueRef alpha,
-                           bool do_branch);
+                           boolean do_branch);
 
 #endif /* !LP_BLD_BLEND_H */

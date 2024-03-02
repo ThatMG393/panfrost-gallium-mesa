@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-CHECKPATH=".gitlab-ci"
+CHECKPATH=".gitlab-ci/container"  # TODO: expand to cover whole .gitlab-ci/
 
 is_bash() {
     [[ $1 == *.sh ]] && return 0

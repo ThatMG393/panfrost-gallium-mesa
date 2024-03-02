@@ -35,7 +35,7 @@ u_trace is controlled by environment variables:
       valid. For the Vulkan API, it is expected to destroy the device,
       for GL it's expected to destroy the context.
    ``perfetto``
-      enables Perfetto instrumentation prior to connecting, Perfetto
+      enables perfetto instrumentation prior to connecting, perfetto
       traces can be collected without setting this but it may miss some
       events prior to the tracing session being started.
    ``markers``
@@ -68,6 +68,3 @@ u_trace is controlled by environment variables:
       * - Turnip
         - .. envvar:: TU_GPU_TRACEPOINT
         - ``src/freedreno/vulkan/tu_tracepoints.py``
-      * - Anv
-        - .. envvar:: INTEL_GPU_TRACEPOINT
-        - ``src/intel/vulkan/intel_tracepoints.py``

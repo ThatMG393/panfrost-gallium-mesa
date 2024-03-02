@@ -1,21 +1,40 @@
 /*
- * Copyright 2022 Alyssa Rosenzweig
- * SPDX-License-Identifier: MIT
+ * Copyright (C) 2022 Alyssa Rosenzweig
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  *
  */
 
-#pragma once
+#ifndef __AIL_LAYOUT_H_
+#define __AIL_LAYOUT_H_
 
 #include "util/format/u_format.h"
-#include "util/macros.h"
 #include "util/u_math.h"
+#include "util/macros.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define AIL_CACHELINE      0x80
-#define AIL_PAGESIZE       0x4000
+#define AIL_CACHELINE 0x80
+#define AIL_PAGESIZE  0x4000
 #define AIL_MAX_MIP_LEVELS 16
 
 enum ail_tiling {
@@ -60,12 +79,6 @@ struct ail_layout {
    /** Number of miplevels. 1 if no mipmapping is used. */
    uint8_t levels;
 
-   /** Should this image be mipmapped along the Z-axis in addition to the X- and
-    * Y-axes? This should be set for API-level 3D images, but not 2D arrays or
-    * cubes.
-    */
-   bool mipmapped_z;
-
    /** Tiling mode used */
    enum ail_tiling tiling;
 
@@ -84,7 +97,7 @@ struct ail_layout {
     *
     * If depth_px = 1, the value of this field is UNDEFINED.
     */
-   uint64_t layer_stride_B;
+   uint32_t layer_stride_B;
 
    /**
     * Whether the layer stride is aligned to the page size or not. The hardware
@@ -95,12 +108,7 @@ struct ail_layout {
    /**
     * Offsets of mip levels within a layer.
     */
-   uint64_t level_offsets_B[AIL_MAX_MIP_LEVELS];
-
-   /**
-    * For the compressed buffer, offsets of mip levels within a layer.
-    */
-   uint64_t level_offsets_compressed_B[AIL_MAX_MIP_LEVELS];
+   uint32_t level_offsets_B[AIL_MAX_MIP_LEVELS];
 
    /**
     * If tiling is TWIDDLED, the tile size used for each mip level within a
@@ -109,32 +117,11 @@ struct ail_layout {
     */
    struct ail_tile tilesize_el[AIL_MAX_MIP_LEVELS];
 
-   /**
-    * If tiling is TWIDDLED, the stride in elements used for each mip level
-    * within a layer. Calculating level strides is the sole responsibility of
-    * ail_initialized_twiddled. This is necessary because compressed pixel
-    * formats may add extra stride padding.
-    */
-   uint32_t stride_el[AIL_MAX_MIP_LEVELS];
-
    /* Offset of the start of the compression metadata buffer */
    uint32_t metadata_offset_B;
 
-   /* Stride between subsequent layers in the compression metadata buffer */
-   uint64_t compression_layer_stride_B;
-
    /* Size of entire texture */
-   uint64_t size_B;
-
-   /* Must the layout support writeable images? If false, the layout MUST NOT be
-    * used as a writeable image (either PBE or image atomics).
-    */
-   bool writeable_image;
-
-   /* Must the layout support rendering? If false, the layout MUST NOT be used
-    * for rendering, either PBE or ZLS.
-    */
-   bool renderable;
+   uint32_t size_B;
 };
 
 static inline uint32_t
@@ -189,38 +176,16 @@ ail_get_linear_pixel_B(struct ail_layout *layout, ASSERTED unsigned level,
                        uint32_t x_px, uint32_t y_px, uint32_t z_px)
 {
    assert(level == 0 && "Strided linear mipmapped textures are unsupported");
+   assert(z_px == 0 && "Strided linear 3D textures are unsupported");
    assert(util_format_get_blockwidth(layout->format) == 1 &&
-          "Strided linear block formats unsupported");
+         "Strided linear block formats unsupported");
    assert(util_format_get_blockheight(layout->format) == 1 &&
-          "Strided linear block formats unsupported");
+         "Strided linear block formats unsupported");
    assert(layout->sample_count_sa == 1 &&
           "Strided linear multisampling unsupported");
 
-   return ail_get_layer_offset_B(layout, z_px) +
-          (y_px * ail_get_linear_stride_B(layout, level)) +
+   return (y_px * ail_get_linear_stride_B(layout, level)) +
           (x_px * util_format_get_blocksize(layout->format));
-}
-
-static inline unsigned
-ail_effective_width_sa(unsigned width_px, unsigned sample_count_sa)
-{
-   return width_px * (sample_count_sa == 4 ? 2 : 1);
-}
-
-static inline unsigned
-ail_effective_height_sa(unsigned height_px, unsigned sample_count_sa)
-{
-   return height_px * (sample_count_sa >= 2 ? 2 : 1);
-}
-
-static inline bool
-ail_can_compress(unsigned w_px, unsigned h_px, unsigned sample_count_sa)
-{
-   assert(sample_count_sa == 1 || sample_count_sa == 2 || sample_count_sa == 4);
-
-   /* Small textures cannot be compressed */
-   return ail_effective_width_sa(w_px, sample_count_sa) >= 16 &&
-          ail_effective_height_sa(h_px, sample_count_sa) >= 16;
 }
 
 static inline bool
@@ -229,47 +194,22 @@ ail_is_compressed(struct ail_layout *layout)
    return layout->tiling == AIL_TILING_TWIDDLED_COMPRESSED;
 }
 
-/*
- * Even when the base mip level is compressed, high levels of the miptree
- * (smaller than 16 pixels on either axis) are not compressed as it would be
- * pointless. This queries this case.
- */
-static inline bool
-ail_is_level_compressed(struct ail_layout *layout, unsigned level)
-{
-   unsigned width_sa = ALIGN(
-      ail_effective_width_sa(layout->width_px, layout->sample_count_sa), 16);
-
-   unsigned height_sa = ALIGN(
-      ail_effective_height_sa(layout->height_px, layout->sample_count_sa), 16);
-
-   return ail_is_compressed(layout) &&
-          u_minify(MAX2(width_sa, height_sa), level) >= 16;
-}
-
-static inline bool
-ail_is_level_twiddled_uncompressed(struct ail_layout *layout, unsigned level)
-{
-   switch (layout->tiling) {
-   case AIL_TILING_TWIDDLED:
-      return true;
-   case AIL_TILING_TWIDDLED_COMPRESSED:
-      return !ail_is_level_compressed(layout, level);
-   default:
-      return false;
-   }
-}
-
 void ail_make_miptree(struct ail_layout *layout);
 
-void ail_detile(void *_tiled, void *_linear, struct ail_layout *tiled_layout,
-                unsigned level, unsigned linear_pitch_B, unsigned sx_px,
-                unsigned sy_px, unsigned width_px, unsigned height_px);
+void
+ail_detile(void *_tiled, void *_linear,
+           struct ail_layout *tiled_layout, unsigned level,
+           unsigned linear_pitch_B, unsigned sx_px, unsigned sy_px,
+           unsigned width_px, unsigned height_px);
 
-void ail_tile(void *_tiled, void *_linear, struct ail_layout *tiled_layout,
-              unsigned level, unsigned linear_pitch_B, unsigned sx_px,
-              unsigned sy_px, unsigned width_px, unsigned height_px);
+void
+ail_tile(void *_tiled, void *_linear,
+         struct ail_layout *tiled_layout, unsigned level,
+         unsigned linear_pitch_B,
+         unsigned sx_px, unsigned sy_px, unsigned width_px, unsigned height_px);
 
 #ifdef __cplusplus
 } /* extern C */
+#endif
+
 #endif

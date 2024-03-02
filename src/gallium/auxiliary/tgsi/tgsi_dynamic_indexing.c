@@ -114,8 +114,7 @@ remove_dynamic_indexes(struct tgsi_transform_context *ctx,
    int imm_index = dc->orig_num_imm;
    struct tgsi_full_instruction inst;
    unsigned INVALID_INDEX = 99999;
-   enum tgsi_file_type file = TGSI_FILE_NULL;
-   unsigned index = INVALID_INDEX;
+   unsigned file = TGSI_FILE_NULL, index = INVALID_INDEX;
    unsigned imm_swz_index = INVALID_INDEX;
 
    /* calculate dynamic array index store it in tmp_arrayIdx.x */
@@ -160,7 +159,7 @@ remove_dynamic_indexes(struct tgsi_transform_context *ctx,
    ctx->emit_instruction(ctx, &inst);
 
    for (i = 0; i < dc->num_iterations; i++) {
-      bool out_of_bound_index = false;
+      boolean out_of_bound_index = FALSE;
       /**
        * Make sure we are not exceeding index limit of constant buffer
        *
@@ -179,7 +178,7 @@ remove_dynamic_indexes(struct tgsi_transform_context *ctx,
       if ((reg->Register.File == TGSI_FILE_CONSTANT) &&
           (!reg->Register.Indirect &&
            (reg->Register.Index > dc->const_buf_range[i]))) {
-         out_of_bound_index = true;
+         out_of_bound_index = TRUE;
       }
 
       if (!out_of_bound_index) {
@@ -280,7 +279,7 @@ dIndexing_inst(struct tgsi_transform_context *ctx,
                struct tgsi_full_instruction *inst)
 {
    int i;
-   bool indexing = false;
+   boolean indexing = FALSE;
    struct dIndexing_transform_context *dc = dIndexing_transform_context(ctx);
 
    for (i = 0; i < inst->Instruction.NumSrcRegs; i++) {
@@ -301,7 +300,7 @@ dIndexing_inst(struct tgsi_transform_context *ctx,
             dc->num_iterations = dc->num_samplers;
 
          remove_dynamic_indexes(ctx, inst, src);
-         indexing = true;
+         indexing = TRUE;
       }
    }
 
@@ -331,8 +330,8 @@ tgsi_remove_dynamic_indexing(const struct tgsi_token *tokens_in,
                              unsigned imm_count)
 {
    struct dIndexing_transform_context transform;
-   const unsigned num_new_tokens = 1000; /* should be enough */
-   const unsigned new_len = tgsi_num_tokens(tokens_in) + num_new_tokens;
+   const uint num_new_tokens = 1000; /* should be enough */
+   const uint new_len = tgsi_num_tokens(tokens_in) + num_new_tokens;
 
    /* setup transformation context */
    memset(&transform, 0, sizeof(transform));

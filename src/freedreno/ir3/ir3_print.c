@@ -137,8 +137,7 @@ print_instr_name(struct log_stream *stream, struct ir3_instruction *instr,
                                 disasm_a3xx_instr_name(instr->opc));
       }
 
-      if (instr->opc == OPC_SCAN_MACRO ||
-          instr->opc == OPC_SCAN_CLUSTERS_MACRO) {
+      if (instr->opc == OPC_SCAN_MACRO) {
          switch (instr->cat1.reduce_op) {
          case REDUCE_OP_ADD_U:
             mesa_log_stream_printf(stream, ".add.u");
@@ -182,8 +181,7 @@ print_instr_name(struct log_stream *stream, struct ir3_instruction *instr,
          }
       }
 
-      if (instr->opc != OPC_MOVMSK && instr->opc != OPC_SCAN_MACRO &&
-          instr->opc != OPC_PUSH_CONSTS_LOAD_MACRO) {
+      if (instr->opc != OPC_MOVMSK && instr->opc != OPC_SCAN_MACRO) {
          mesa_log_stream_printf(stream, ".%s%s",
                                 type_name(instr->cat1.src_type),
                                 type_name(instr->cat1.dst_type));
@@ -359,8 +357,6 @@ print_instr(struct log_stream *stream, struct ir3_instruction *instr, int lvl)
    print_instr_name(stream, instr, true);
 
    if (is_tex(instr)) {
-      if (instr->opc == OPC_BRCST_ACTIVE)
-         mesa_log_stream_printf(stream, ".w%d", instr->cat5.cluster_size);
       mesa_log_stream_printf(stream, " (%s)(", type_name(instr->cat5.type));
       for (unsigned i = 0; i < 4; i++)
          if (instr->dsts[0]->wrmask & (1 << i))
@@ -394,8 +390,7 @@ print_instr(struct log_stream *stream, struct ir3_instruction *instr, int lvl)
       }
    }
 
-   if (is_tex(instr) && !(instr->flags & IR3_INSTR_S2EN) &&
-       !is_tex_shuffle(instr)) {
+   if (is_tex(instr) && !(instr->flags & IR3_INSTR_S2EN)) {
       if (!!(instr->flags & IR3_INSTR_B) && !!(instr->flags & IR3_INSTR_A1EN)) {
          mesa_log_stream_printf(stream, ", s#%d", instr->cat5.samp);
       } else {
@@ -410,11 +405,6 @@ print_instr(struct log_stream *stream, struct ir3_instruction *instr, int lvl)
       mesa_log_stream_printf(stream, ", tex=%d, samp=%d, input_offset=%d",
                              instr->prefetch.tex, instr->prefetch.samp,
                              instr->prefetch.input_offset);
-   } else if (instr->opc == OPC_PUSH_CONSTS_LOAD_MACRO) {
-      mesa_log_stream_printf(
-         stream, " dst_offset=%d, src_offset = %d, src_size = %d",
-         instr->push_consts.dst_base, instr->push_consts.src_base,
-         instr->push_consts.src_size);
    }
 
    if (is_flow(instr) && instr->cat0.target) {
@@ -493,9 +483,7 @@ print_block(struct ir3_block *block, int lvl)
    struct log_stream *stream = mesa_log_streami();
 
    tab(stream, lvl);
-   mesa_log_stream_printf(stream, "%sblock%u {\n",
-                          block->reconvergence_point ? "(jp)" : "",
-                          block_id(block));
+   mesa_log_stream_printf(stream, "block%u {\n", block_id(block));
 
    if (block->predecessors_count > 0) {
       tab(stream, lvl + 1);
@@ -549,9 +537,6 @@ print_block(struct ir3_block *block, int lvl)
       case IR3_BRANCH_GETONE:
          mesa_log_stream_printf(stream, "getone ");
          break;
-      case IR3_BRANCH_GETLAST:
-         mesa_log_stream_printf(stream, "getlast ");
-         break;
       case IR3_BRANCH_SHPS:
          mesa_log_stream_printf(stream, "shps ");
          break;
@@ -567,14 +552,13 @@ print_block(struct ir3_block *block, int lvl)
       mesa_log_stream_printf(stream, "/* succs: block%u; */\n",
                              block_id(block->successors[0]));
    }
-   if (block->physical_successors_count > 0) {
+   if (block->physical_successors[0]) {
       tab(stream, lvl + 1);
-      mesa_log_stream_printf(stream, "/* physical succs: ");
-      for (unsigned i = 0; i < block->physical_successors_count; i++) {
-         mesa_log_stream_printf(stream, "block%u",
-                                block_id(block->physical_successors[i]));
-         if (i < block->physical_successors_count - 1)
-            mesa_log_stream_printf(stream, ", ");
+      mesa_log_stream_printf(stream, "/* physical succs: block%u",
+                             block_id(block->physical_successors[0]));
+      if (block->physical_successors[1]) {
+         mesa_log_stream_printf(stream, ", block%u",
+                                block_id(block->physical_successors[1]));
       }
       mesa_log_stream_printf(stream, " */\n");
    }

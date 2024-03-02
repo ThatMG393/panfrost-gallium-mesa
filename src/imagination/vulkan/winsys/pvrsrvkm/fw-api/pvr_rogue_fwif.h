@@ -31,7 +31,6 @@
 #include "hwdef/rogue_hw_defs.h"
 #include "pvr_rogue_fwif_shared.h"
 #include "pvr_winsys.h"
-#include "util/macros.h"
 
 /**
  * \name Frag DM command flags.
@@ -209,8 +208,8 @@ struct rogue_fwif_cmd_ta {
     */
    struct rogue_fwif_cmd_ta_3d_shared cmd_shared;
 
-   alignas(8) struct rogue_fwif_ta_regs regs;
-   alignas(8) uint32_t flags;
+   struct rogue_fwif_ta_regs ALIGN_ATTR(8) regs;
+   uint32_t ALIGN_ATTR(8) flags;
    /**
     * Holds the TA/3D fence value to allow the 3D partial render command
     * to go through.
@@ -218,8 +217,8 @@ struct rogue_fwif_cmd_ta {
    struct rogue_fwif_ufo partial_render_ta_3d_fence;
 
    /* Only used when BRN 44455 or BRN 63027 present. */
-   alignas(8) struct rogue_fwif_dummy_rgnhdr_init_geom_regs
-      dummy_rgnhdr_init_geom_regs;
+   struct rogue_fwif_dummy_rgnhdr_init_geom_regs
+      ALIGN_ATTR(8) dummy_rgnhdr_init_geom_regs;
 
    /* Only used when BRN 61484 or BRN 66333 present. */
    uint32_t brn61484_66333_live_rt;
@@ -242,7 +241,7 @@ static_assert(
 struct rogue_fwif_3d_regs {
    /**
     * All 32 bit values should be added in the top section. This then requires
-    * only a single alignas(8) to align all the 64 bit values in the second
+    * only a single ALIGN_ATTR(8) to align all the 64 bit values in the second
     * section.
     */
    uint32_t usc_pixel_output_ctrl;
@@ -281,8 +280,8 @@ struct rogue_fwif_3d_regs {
    /* Only used when feature ISP_ZLS_D24_S8_PACKING_OGL_MODE present. */
    uint32_t rgx_cr_blackpearl_fix;
 
-   /* All values below the alignas(8) must be 64 bit. */
-   alignas(8) uint64_t isp_scissor_base;
+   /* All values below the ALIGN_ATTR(8) must be 64 bit. */
+   uint64_t ALIGN_ATTR(8) isp_scissor_base;
    uint64_t isp_dbias_base;
    uint64_t isp_oclqry_base;
    uint64_t isp_zlsctl;
@@ -331,9 +330,9 @@ struct rogue_fwif_cmd_3d {
     * This region must be the first member so Kernel can easily access it.
     * For more info, see rogue_fwif_cmd_ta_3d_shared definition.
     */
-   alignas(8) struct rogue_fwif_cmd_ta_3d_shared cmd_shared;
+   struct rogue_fwif_cmd_ta_3d_shared ALIGN_ATTR(8) cmd_shared;
 
-   alignas(8) struct rogue_fwif_3d_regs regs;
+   struct rogue_fwif_3d_regs ALIGN_ATTR(8) regs;
    /** command control flags. */
    uint32_t flags;
    /** Stride IN BYTES for Z-Buffer in case of RTAs. */
@@ -358,7 +357,7 @@ static_assert(
 struct rogue_fwif_transfer_regs {
    /**
     * All 32 bit values should be added in the top section. This then requires
-    * only a single alignas(8) to align all the 8 byte values in the second
+    * only a single ALIGN_ATTR(8) to align all the 8 byte values in the second
     * section.
     */
    uint32_t isp_bgobjvals;
@@ -373,8 +372,6 @@ struct rogue_fwif_transfer_regs {
    uint32_t isp_render_origin;
    uint32_t isp_ctl;
 
-   /* Only used when feature S7_TOP_INFRASTRUCTURE present. */
-   uint32_t isp_xtp_pipe_enable;
    uint32_t isp_aa;
 
    uint32_t event_pixel_pds_info;
@@ -384,20 +381,22 @@ struct rogue_fwif_transfer_regs {
 
    uint32_t isp_render;
    uint32_t isp_rgn;
-
-   /* Only used when feature GPU_MULTICORE_SUPPORT present. */
-   uint32_t frag_screen;
-
-   /** All values below the alignas(8) must be 64 bit. */
-   alignas(8) uint64_t pds_bgnd0_base;
+   /* FIXME: HIGH: RGX_FEATURE_GPU_MULTICORE_SUPPORT changes the structure's
+    * layout. Commenting out for now as it's not supported by 4.V.2.51.
+    */
+   /* uint32_t frag_screen; */
+   /** All values below the ALIGN_ATTR must be 64 bit. */
+   uint64_t ALIGN_ATTR(8) pds_bgnd0_base;
    uint64_t pds_bgnd1_base;
    uint64_t pds_bgnd3_sizeinfo;
 
    uint64_t isp_mtile_base;
+   /* FIXME: HIGH: RGX_PBE_WORDS_REQUIRED_FOR_TQS changes the structure's
+    * layout.
+    */
    /* TQ_MAX_RENDER_TARGETS * PBE_STATE_SIZE */
-#define ROGUE_PBE_WORDS_REQUIRED_FOR_TQS 3
    uint64_t pbe_wordx_mrty[PVR_TRANSFER_MAX_RENDER_TARGETS *
-                           ROGUE_PBE_WORDS_REQUIRED_FOR_TQS];
+                           ROGUE_NUM_PBESTATE_REG_WORDS];
 };
 
 /**
@@ -405,12 +404,10 @@ struct rogue_fwif_transfer_regs {
  * ROGUE_FWIF_CCB_CMD_TYPE_TQ_3D type client CCB command.
  */
 struct rogue_fwif_cmd_transfer {
-   alignas(8) struct rogue_fwif_cmd_common cmn;
-   alignas(8) struct rogue_fwif_transfer_regs regs;
+   struct rogue_fwif_cmd_common ALIGN_ATTR(8) cmn;
+   struct rogue_fwif_transfer_regs ALIGN_ATTR(8) regs;
 
    uint32_t flags;
-
-   uint32_t padding;
 };
 
 static_assert(
@@ -432,8 +429,8 @@ struct rogue_fwif_2d_regs {
 };
 
 struct rogue_fwif_cmd_2d {
-   alignas(8) struct rogue_fwif_cmd_common cmn;
-   alignas(8) struct rogue_fwif_2d_regs regs;
+   struct rogue_fwif_cmd_common ALIGN_ATTR(8) cmn;
+   struct rogue_fwif_2d_regs ALIGN_ATTR(8) regs;
 
    uint32_t flags;
 };
@@ -448,7 +445,7 @@ static_assert(
 
 /** Command to handle aborts. */
 struct rogue_fwif_cmd_abort {
-   alignas(8) struct rogue_fwif_cmd_ta_3d_shared cmd_shared;
+   struct rogue_fwif_cmd_ta_3d_shared ALIGN_ATTR(8) cmd_shared;
 };
 
 /***********************************************
@@ -499,9 +496,9 @@ struct rogue_fwif_cdm_regs {
  * Rouge Compute command.
  */
 struct rogue_fwif_cmd_compute {
-   alignas(8) struct rogue_fwif_cmd_common cmn;
-   alignas(8) struct rogue_fwif_cdm_regs regs;
-   alignas(8) uint32_t flags;
+   struct rogue_fwif_cmd_common ALIGN_ATTR(8) cmn;
+   struct rogue_fwif_cdm_regs ALIGN_ATTR(8) regs;
+   uint32_t ALIGN_ATTR(8) flags;
 
    /* Only used when feature UNIFIED_STORE_VIRTUAL_PARTITIONING present. */
    uint32_t num_temp_regions;

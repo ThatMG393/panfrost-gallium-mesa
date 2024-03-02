@@ -77,17 +77,7 @@ extern const aco::Info instr_info = {
    },
    {
       % for name in opcode_names:
-      instr_class::${opcodes[name].cls.value},
-      % endfor
-   },
-   {
-      % for name in opcode_names:
-      ${hex(opcodes[name].definitions)},
-      % endfor
-   },
-   {
-      % for name in opcode_names:
-      ${hex(opcodes[name].operands)},
+      (instr_class)${opcodes[name].cls.value},
       % endfor
    },
 };

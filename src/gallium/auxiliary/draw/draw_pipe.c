@@ -36,7 +36,7 @@
 #include "util/u_math.h"
 
 
-bool
+boolean
 draw_pipeline_init(struct draw_context *draw)
 {
    /* create pipeline stages */
@@ -64,16 +64,16 @@ draw_pipeline_init(struct draw_context *draw)
        !draw->pipeline.cull ||
        !draw->pipeline.user_cull ||
        !draw->pipeline.validate)
-      return false;
+      return FALSE;
 
    /* these defaults are oriented toward the needs of softpipe */
    draw->pipeline.wide_point_threshold = 1000000.0f; /* infinity */
    draw->pipeline.wide_line_threshold = 1.0f;
-   draw->pipeline.wide_point_sprites = false;
-   draw->pipeline.line_stipple = true;
-   draw->pipeline.point_sprite = true;
+   draw->pipeline.wide_point_sprites = FALSE;
+   draw->pipeline.line_stipple = TRUE;
+   draw->pipeline.point_sprite = TRUE;
 
-   return true;
+   return TRUE;
 }
 
 
@@ -136,7 +136,7 @@ do_point(struct draw_context *draw,
  */
 static void
 do_line(struct draw_context *draw,
-        uint16_t flags,
+        ushort flags,
         const char *v0,
         const char *v1)
 {
@@ -157,7 +157,7 @@ do_line(struct draw_context *draw,
  */
 static void
 do_triangle(struct draw_context *draw,
-            uint16_t flags,
+            ushort flags,
             char *v0,
             char *v1,
             char *v2)
@@ -204,13 +204,13 @@ do_triangle(struct draw_context *draw,
 #define GET_ELT(idx) (MIN2(elts[idx], max_index))
 
 #define FUNC pipe_run_elts
-#define FUNC_VARS                              \
+#define FUNC_VARS                               \
    struct draw_context *draw,                  \
-   enum mesa_prim prim,                        \
+   enum pipe_prim_type prim,                   \
    unsigned prim_flags,                        \
    struct vertex_header *vertices,             \
    unsigned stride,                            \
-   const uint16_t *elts,                       \
+   const ushort *elts,                         \
    unsigned count,                             \
    unsigned max_index
 
@@ -304,7 +304,7 @@ draw_pipeline_run(struct draw_context *draw,
 #define FUNC pipe_run_linear
 #define FUNC_VARS                     \
    struct draw_context *draw,         \
-   enum mesa_prim prim,          \
+   enum pipe_prim_type prim,          \
    unsigned prim_flags,               \
    struct vertex_header *vertices,    \
    unsigned stride,                   \

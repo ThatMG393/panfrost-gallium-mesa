@@ -34,16 +34,15 @@
 #include "util/u_memory.h"
 #include "util/u_inlines.h"
 #include "draw/draw_context.h"
-#include "draw/draw_gs.h"
 #include "tgsi/tgsi_dump.h"
+#include "tgsi/tgsi_scan.h"
+#include "tgsi/tgsi_parse.h"
 
 
 static void *
 llvmpipe_create_gs_state(struct pipe_context *pipe,
                          const struct pipe_shader_state *templ)
 {
-   llvmpipe_register_shader(pipe, templ);
-
    struct llvmpipe_context *llvmpipe = llvmpipe_context(pipe);
    struct lp_geometry_shader *state;
 
@@ -61,7 +60,7 @@ llvmpipe_create_gs_state(struct pipe_context *pipe,
    if (templ->type == PIPE_SHADER_IR_TGSI)
       state->no_tokens = !templ->tokens;
    else
-      state->no_tokens = false;
+      state->no_tokens = FALSE;
    memcpy(&state->stream_output, &templ->stream_output, sizeof state->stream_output);
 
    if (templ->tokens || templ->type == PIPE_SHADER_IR_NIR) {

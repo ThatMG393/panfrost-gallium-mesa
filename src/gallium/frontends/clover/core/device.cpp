@@ -25,16 +25,13 @@
 #include "core/platform.hpp"
 #include "pipe/p_screen.h"
 #include "pipe/p_state.h"
+#include "spirv/invocation.hpp"
 #include "util/bitscan.h"
-#include "util/disk_cache.h"
 #include "util/u_debug.h"
-#include "nir.h"
-#include <fstream>
-
-#ifdef HAVE_CLOVER_SPIRV
 #include "spirv/invocation.hpp"
 #include "nir/invocation.hpp"
-#endif
+#include "nir.h"
+#include <fstream>
 
 using namespace clover;
 
@@ -435,11 +432,8 @@ device::max_block_size() const {
 
 cl_uint
 device::subgroup_size() const {
-   cl_uint subgroup_sizes =
-      get_compute_param<uint32_t>(pipe, ir_format(), PIPE_COMPUTE_CAP_SUBGROUP_SIZES)[0];
-   if (!subgroup_sizes)
-      return 0;
-   return 1 << (util_last_bit(subgroup_sizes) - 1);
+   return get_compute_param<uint32_t>(pipe, ir_format(),
+                                      PIPE_COMPUTE_CAP_SUBGROUP_SIZE)[0];
 }
 
 cl_uint
@@ -528,11 +522,9 @@ device::supported_extensions() const {
       vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 0, 0), "cl_khr_fp16" } );
    if (svm_support())
       vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 0, 0), "cl_arm_shared_virtual_memory" } );
-#ifdef HAVE_CLOVER_SPIRV
    if (!clover::spirv::supported_versions().empty() &&
        supports_ir(PIPE_SHADER_IR_NIR_SERIALIZED))
       vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 0, 0), "cl_khr_il_program" } );
-#endif
    vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 0, 0), "cl_khr_extended_versioning" } );
    return vec;
 }
@@ -555,11 +547,7 @@ device::supported_extensions_as_string() const {
 
 std::vector<cl_name_version>
 device::supported_il_versions() const {
-#ifdef HAVE_CLOVER_SPIRV
    return clover::spirv::supported_versions();
-#else
-   return {};
-#endif
 }
 
 const void *

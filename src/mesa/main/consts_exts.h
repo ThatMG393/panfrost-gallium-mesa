@@ -55,6 +55,7 @@ struct gl_extensions
    GLboolean ARB_bindless_texture;
    GLboolean ARB_blend_func_extended;
    GLboolean ARB_buffer_storage;
+   GLboolean ARB_clear_texture;
    GLboolean ARB_clip_control;
    GLboolean ARB_color_buffer_float;
    GLboolean ARB_compatibility;
@@ -64,6 +65,7 @@ struct gl_extensions
    GLboolean ARB_conservative_depth;
    GLboolean ARB_copy_image;
    GLboolean ARB_cull_distance;
+   GLboolean EXT_color_buffer_half_float;
    GLboolean ARB_depth_buffer_float;
    GLboolean ARB_depth_clamp;
    GLboolean ARB_derivative_control;
@@ -160,8 +162,6 @@ struct gl_extensions
    GLboolean ARB_vertex_type_2_10_10_10_rev;
    GLboolean ARB_viewport_array;
    GLboolean EXT_blend_equation_separate;
-   GLboolean EXT_color_buffer_float;
-   GLboolean EXT_color_buffer_half_float;
    GLboolean EXT_demote_to_helper_invocation;
    GLboolean EXT_depth_bounds_test;
    GLboolean EXT_disjoint_timer_query;
@@ -225,7 +225,6 @@ struct gl_extensions
    GLboolean AMD_compressed_ATC_texture;
    GLboolean AMD_framebuffer_multisample_advanced;
    GLboolean AMD_depth_clamp_separate;
-   GLboolean AMD_gpu_shader_half_float;
    GLboolean AMD_performance_monitor;
    GLboolean AMD_pinned_memory;
    GLboolean AMD_seamless_cubemap_per_texture;
@@ -251,7 +250,6 @@ struct gl_extensions
    GLboolean KHR_texture_compression_astc_ldr;
    GLboolean KHR_texture_compression_astc_sliced_3d;
    GLboolean MESA_framebuffer_flip_y;
-   GLboolean MESA_texture_const_bandwidth;
    GLboolean MESA_pack_invert;
    GLboolean MESA_tile_raster_order;
    GLboolean EXT_shader_framebuffer_fetch;
@@ -754,8 +752,6 @@ struct gl_constants
     */
    GLboolean GLSLSkipStrictMaxUniformLimitCheck;
 
-   GLboolean GLSLHasHalfFloatPacking;
-
    /**
     * Whether gl_FragCoord, gl_PointCoord and gl_FrontFacing
     * are system values.
@@ -797,21 +793,6 @@ struct gl_constants
     * This variable is mutually exlusive with DisableVaryingPacking.
     */
    GLboolean DisableTransformFeedbackPacking;
-
-   /**
-    * Disable the glsl optimisation that resizes uniform arrays.
-    */
-   bool DisableUniformArrayResize;
-
-   /**
-    * Alias extension e.g. GL_ATI_shader_texture_lod to GL_ARB_shader_texture_lod.
-    */
-   char *AliasShaderExtension;
-
-   /**
-    * Allow fs-only bias argument in vertex shaders.
-    */
-   GLboolean AllowVertexTextureBias;
 
    /**
     * Align varyings to POT in a slot
@@ -922,6 +903,7 @@ struct gl_constants
    GLuint MaxTessGenLevel;
    GLuint MaxTessPatchComponents;
    GLuint MaxTessControlTotalOutputComponents;
+   bool LowerTessLevel; /**< Lower gl_TessLevel* from float[n] to vecn? */
    bool PrimitiveRestartForPatches;
 
    /** GL_OES_primitive_bounding_box */
@@ -936,14 +918,17 @@ struct gl_constants
    /** When drivers are OK with mapped buffers during draw and other calls. */
    bool AllowMappedBuffersDuringExecution;
 
+   /**
+    * Whether buffer creation, unsynchronized mapping, unmapping, and
+    * deletion is thread-safe.
+    */
+   bool BufferCreateMapUnsynchronizedThreadSafe;
+
    /** Override GL_MAP_UNSYNCHRONIZED_BIT */
    bool ForceMapBufferSynchronized;
 
    /** GL_ARB_get_program_binary */
    GLuint NumProgramBinaryFormats;
-
-   /** GL_ARB_gl_spirv */
-   GLuint NumShaderBinaryFormats;
 
    /** GL_NV_conservative_raster */
    GLuint MaxSubpixelPrecisionBiasBits;
@@ -955,15 +940,6 @@ struct gl_constants
    /** Is the drivers uniform storage packed or padded to 16 bytes. */
    bool PackedDriverUniformStorage;
 
-   bool HasFBFetch;
-
-   /** Whether the backend supports reading from outputs */
-   bool SupportsReadingOutputs;
-
-   bool CombinedClipCullDistanceArrays;
-
-   bool PointSizeFixed;
-
    /** Wether or not glBitmap uses red textures rather than alpha */
    bool BitmapUsesRed;
 
@@ -973,11 +949,8 @@ struct gl_constants
    /** Whether out-of-order draw (Begin/End) optimizations are allowed. */
    bool AllowDrawOutOfOrder;
 
-   /** Whether to force the fast path for binding VAOs. It has much lower
-    *  overhead due to not spending CPU cycles on trying to find interleaved
-    *  vertex attribs and binding them.
-    */
-   bool UseVAOFastPath;
+   /** Whether to allow the fast path for frequently updated VAOs. */
+   bool AllowDynamicVAOFastPath;
 
    /** Whether the driver can support primitive restart with a fixed index.
     * This is essentially a subset of NV_primitive_restart with enough support
@@ -1019,12 +992,5 @@ struct gl_constants
 
    /** Use hardware accelerated GL_SELECT */
    bool HardwareAcceleratedSelect;
-
-   /** Allow GLThread to convert glBuffer */
-   bool AllowGLThreadBufferSubDataOpt;
-
-   /** Whether pipe_context::draw_vertex_state is supported. */
-   bool HasDrawVertexState;
 };
-
 #endif

@@ -19,8 +19,6 @@
 # SOFTWARE.
 
 files_vulkan_wsi = files('wsi_common.c')
-links_vulkan_wsi = []
-platform_deps = []
 
 if dep_libdrm.found()
   files_vulkan_wsi += files('wsi_common_drm.c')
@@ -32,17 +30,14 @@ endif
 
 if with_platform_wayland
   files_vulkan_wsi += files('wsi_common_wayland.c')
-  files_vulkan_wsi += wp_files['linux-dmabuf-unstable-v1']
-  files_vulkan_wsi += wp_files['presentation-time']
-  files_vulkan_wsi += wp_files['tearing-control-v1']
-  links_vulkan_wsi += libloader_wayland_helper
+  files_vulkan_wsi += [
+    linux_dmabuf_unstable_v1_client_protocol_h,
+    linux_dmabuf_unstable_v1_protocol_c,
+  ]
 endif
 
 if with_platform_windows
-  files_vulkan_wsi += files('wsi_common_win32.cpp')
-  platform_deps += dep_dxheaders
-else
-  files_vulkan_wsi += files('wsi_common_headless.c')
+  files_vulkan_wsi += files('wsi_common_win32.c')
 endif
 
 if system_has_kms_drm and not with_platform_android
@@ -56,7 +51,6 @@ wsi_entrypoints = custom_target(
   command : [
     prog_python, '@INPUT0@', '--xml', '@INPUT1@', '--proto', '--weak',
     '--out-h', '@OUTPUT0@', '--out-c', '@OUTPUT1@', '--prefix', 'wsi',
-    '--beta', with_vulkan_beta.to_string()
   ],
   depend_files : vk_entrypoints_gen_depend_files,
 )
@@ -64,19 +58,16 @@ wsi_entrypoints = custom_target(
 libvulkan_wsi = static_library(
   'vulkan_wsi',
   [files_vulkan_wsi, wsi_entrypoints],
-  include_directories : [inc_include, inc_src],
+  include_directories : [inc_include, inc_src, inc_gallium],
   dependencies : [
     vulkan_wsi_deps, dep_libdrm, dep_libudev, idep_vulkan_util_headers,
-    idep_vulkan_runtime_headers, idep_xmlconfig, idep_mesautil, platform_deps,
-    idep_blake3
+    idep_vulkan_runtime_headers, idep_xmlconfig,
   ],
-  link_with: links_vulkan_wsi,
   gnu_symbol_visibility : 'hidden',
   build_by_default : false,
 )
 
 idep_vulkan_wsi_headers = declare_dependency(
-  dependencies : idep_vulkan_wsi_defines,
   include_directories : include_directories('.')
 )
 

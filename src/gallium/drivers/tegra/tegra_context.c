@@ -634,8 +634,9 @@ tegra_set_shader_images(struct pipe_context *pcontext, enum pipe_shader_type sha
 }
 
 static void
-tegra_set_vertex_buffers(struct pipe_context *pcontext,
-                         unsigned num_buffers,
+tegra_set_vertex_buffers(struct pipe_context *pcontext, unsigned start_slot,
+                         unsigned num_buffers, unsigned unbind_num_trailing_slots,
+                         bool take_ownership,
                          const struct pipe_vertex_buffer *buffers)
 {
    struct tegra_context *context = to_tegra_context(pcontext);
@@ -653,7 +654,9 @@ tegra_set_vertex_buffers(struct pipe_context *pcontext,
       buffers = buf;
    }
 
-   context->gpu->set_vertex_buffers(context->gpu, num_buffers, buffers);
+   context->gpu->set_vertex_buffers(context->gpu, start_slot, num_buffers,
+                                    unbind_num_trailing_slots,
+                                    take_ownership, buffers);
 }
 
 static struct pipe_stream_output_target *
@@ -997,7 +1000,7 @@ tegra_texture_subdata(struct pipe_context *pcontext,
                       const struct pipe_box *box,
                       const void *data,
                       unsigned stride,
-                      uintptr_t layer_stride)
+                      unsigned layer_stride)
 {
    struct tegra_resource *resource = to_tegra_resource(presource);
    struct tegra_context *context = to_tegra_context(pcontext);

@@ -32,7 +32,9 @@
 #include "intel_aub.h"
 #include "intel_context.h"
 
-#include "util/u_math.h"
+#ifndef ALIGN
+#define ALIGN(x, y) (((x) + (y)-1) & ~((y)-1))
+#endif
 
 #define MI_BATCH_NON_SECURE_I965 (1 << 8)
 
@@ -54,6 +56,12 @@ static void mem_trace_memory_write_header_out(struct aub_file *aub, uint64_t add
                                               const char *desc);
 
 #define fail_if(cond, ...) _fail_if(cond, NULL, __VA_ARGS__)
+
+static inline uint32_t
+align_u32(uint32_t v, uint32_t a)
+{
+   return (v + a - 1) & ~(a - 1);
+}
 
 static void
 aub_ppgtt_table_finish(struct aub_ppgtt_table *table, int level)
@@ -692,7 +700,7 @@ aub_write_trace_block(struct aub_file *aub,
                         type | AUB_TRACE_OP_DATA_WRITE);
          dword_out(aub, subtype);
          dword_out(aub, gtt_offset + offset);
-         dword_out(aub, align(block_size, 4));
+         dword_out(aub, align_u32(block_size, 4));
          if (aub->addr_bits > 32)
             dword_out(aub, (gtt_offset + offset) >> 32);
       }

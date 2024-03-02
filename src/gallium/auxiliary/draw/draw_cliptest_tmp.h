@@ -28,7 +28,7 @@
 #include "util/u_bitcast.h"
 #include <math.h>
 
-static bool
+static boolean
 TAG(do_cliptest)(struct pt_post_vs *pvs,
                  struct draw_vertex_info *info,
                  const struct draw_prim_info *prim_info)

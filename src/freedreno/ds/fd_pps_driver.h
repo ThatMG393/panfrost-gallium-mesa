@@ -31,8 +31,6 @@ public:
    uint64_t next() override;
    uint32_t gpu_clock_id() const override;
    uint64_t gpu_timestamp() const override;
-   bool cpu_gpu_timestamp(uint64_t &cpu_timestamp,
-                          uint64_t &gpu_timestamp) const override;
 
 private:
    struct fd_device *dev;
@@ -61,7 +59,7 @@ private:
     * The number of counters assigned per perfcntr group, the index
     * into this matches the index into perfcntrs
     */
-   std::vector<unsigned> assigned_counters;
+   std::vector<int> assigned_counters;
 
    /*
     * Values that can be used by derived counters evaluation

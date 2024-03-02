@@ -30,7 +30,6 @@
 #include "nine_state.h"
 #include "pipe/p_state.h" /* PIPE_MAX_ATTRIBS */
 #include "util/u_memory.h"
-#include "tgsi/tgsi_ureg.h"
 
 struct NineDevice9;
 struct NineVertexDeclaration9;
@@ -58,8 +57,8 @@ struct nine_shader_info
     uint16_t input_map[PIPE_MAX_ATTRIBS]; /* VS input -> NINE_DECLUSAGE_x */
     uint8_t num_inputs; /* there may be unused inputs (NINE_DECLUSAGE_NONE) */
 
-    bool position_t; /* out, true if VP writes pre-transformed position */
-    bool point_size; /* out, true if VP writes point size */
+    boolean position_t; /* out, true if VP writes pre-transformed position */
+    boolean point_size; /* out, true if VP writes point size */
     float point_size_min;
     float point_size_max;
 
@@ -70,21 +69,16 @@ struct nine_shader_info
 
     uint8_t fog_enable;
     uint8_t fog_mode;
-    uint8_t zfog;
     uint8_t force_color_in_centroid;
-    uint8_t color_flatshade;
     uint8_t projected; /* ps 1.1 to 1.3 */
     uint16_t fetch4;
-    uint8_t alpha_test_emulation;
-    uint8_t clip_plane_emulation;
-    bool emulate_features;
 
     unsigned const_i_base; /* in vec4 (16 byte) units */
     unsigned const_b_base; /* in vec4 (16 byte) units */
     unsigned const_used_size;
 
-    bool int_slots_used[NINE_MAX_CONST_I];
-    bool bool_slots_used[NINE_MAX_CONST_B];
+    boolean int_slots_used[NINE_MAX_CONST_I];
+    boolean bool_slots_used[NINE_MAX_CONST_B];
 
     unsigned const_float_slots;
     unsigned const_int_slots;
@@ -97,13 +91,13 @@ struct nine_shader_info
 
     struct {
         struct nine_shader_constant_combination* c_combination;
-        bool (*int_const_added)[NINE_MAX_CONST_I];
-        bool (*bool_const_added)[NINE_MAX_CONST_B];
+        boolean (*int_const_added)[NINE_MAX_CONST_I];
+        boolean (*bool_const_added)[NINE_MAX_CONST_B];
     } add_constants_defs;
 
-    bool swvp_on;
+    boolean swvp_on;
 
-    bool process_vertices;
+    boolean process_vertices;
     struct NineVertexDeclaration9 *vdecl_out;
     struct pipe_stream_output_info so;
 };
@@ -152,7 +146,7 @@ nine_shader_variant_get(struct nine_shader_variant *list,
     return NULL;
 }
 
-static inline bool
+static inline boolean
 nine_shader_variant_add(struct nine_shader_variant *list,
                         uint64_t key, void *cso,
                         unsigned *const_ranges,
@@ -164,13 +158,13 @@ nine_shader_variant_add(struct nine_shader_variant *list,
     }
     list->next = MALLOC_STRUCT(nine_shader_variant);
     if (!list->next)
-        return false;
+        return FALSE;
     list->next->next = NULL;
     list->next->key = key;
     list->next->cso = cso;
     list->next->const_ranges = const_ranges;
     list->next->const_used_size = const_used_size;
-    return true;
+    return TRUE;
 }
 
 static inline void
@@ -205,7 +199,7 @@ nine_shader_variant_so_get(struct nine_shader_variant_so *list,
     return NULL;
 }
 
-static inline bool
+static inline boolean
 nine_shader_variant_so_add(struct nine_shader_variant_so *list,
                            struct NineVertexDeclaration9 *vdecl,
                            struct pipe_stream_output_info *so, void *cso)
@@ -215,7 +209,7 @@ nine_shader_variant_so_add(struct nine_shader_variant_so *list,
         nine_bind(&list->vdecl, vdecl);
         list->so = *so;
         list->cso = cso;
-        return true;
+        return TRUE;
     }
     while (list->next) {
         assert(list->vdecl != vdecl);
@@ -223,12 +217,12 @@ nine_shader_variant_so_add(struct nine_shader_variant_so *list,
     }
     list->next = MALLOC_STRUCT(nine_shader_variant_so);
     if (!list->next)
-        return false;
+        return FALSE;
     list->next->next = NULL;
     nine_bind(&list->vdecl, vdecl);
     list->next->so = *so;
     list->next->cso = cso;
-    return true;
+    return TRUE;
 }
 
 static inline void
@@ -255,14 +249,14 @@ struct nine_shader_constant_combination
 
 static inline uint8_t
 nine_shader_constant_combination_key(struct nine_shader_constant_combination **list,
-                                     bool *int_slots_used,
-                                     bool *bool_slots_used,
+                                     boolean *int_slots_used,
+                                     boolean *bool_slots_used,
                                      int *const_i,
                                      BOOL *const_b)
 {
     int i;
     uint8_t index = 0;
-    bool match;
+    boolean match;
     struct nine_shader_constant_combination **next_allocate = list, *current = *list;
 
     assert(int_slots_used);
@@ -272,7 +266,7 @@ nine_shader_constant_combination_key(struct nine_shader_constant_combination **l
 
     while (current) {
         index++; /* start at 1. 0 is for the variant without constant replacement */
-        match = true;
+        match = TRUE;
         for (i = 0; i < NINE_MAX_CONST_I; ++i) {
             if (int_slots_used[i])
                 match &= !memcmp(const_i + 4*i, current->const_i[i], sizeof(current->const_i[0]));
@@ -312,7 +306,7 @@ nine_shader_constant_combination_get(struct nine_shader_constant_combination *li
             return list;
         list = list->next;
     }
-    assert(false);
+    assert(FALSE);
     return NULL;
 }
 
@@ -329,23 +323,6 @@ nine_shader_constant_combination_free(struct nine_shader_constant_combination *l
     }
 
     FREE(list);
-}
-
-/* Returns corresponding opposite test */
-static inline unsigned
-pipe_comp_to_tgsi_opposite(BYTE flags)
-{
-    switch (flags) {
-    case PIPE_FUNC_GREATER: return TGSI_OPCODE_SLE;
-    case PIPE_FUNC_EQUAL: return TGSI_OPCODE_SNE;
-    case PIPE_FUNC_GEQUAL: return TGSI_OPCODE_SLT;
-    case PIPE_FUNC_LESS: return TGSI_OPCODE_SGE;
-    case PIPE_FUNC_NOTEQUAL: return TGSI_OPCODE_SEQ;
-    case PIPE_FUNC_LEQUAL: return TGSI_OPCODE_SGT;
-    default:
-        assert(!"invalid comparison flags");
-        return TGSI_OPCODE_SGT;
-    }
 }
 
 #endif /* _NINE_SHADER_H_ */

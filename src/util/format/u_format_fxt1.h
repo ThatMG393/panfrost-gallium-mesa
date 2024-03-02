@@ -30,7 +30,7 @@
 #define U_FORMAT_FXT1_H_
 
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 
 #include "c99_compat.h"
 

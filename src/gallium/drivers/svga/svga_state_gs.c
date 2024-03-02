@@ -27,6 +27,7 @@
 #include "util/u_memory.h"
 #include "util/u_bitmask.h"
 #include "translate/translate.h"
+#include "tgsi/tgsi_ureg.h"
 
 #include "svga_context.h"
 #include "svga_cmd.h"
@@ -180,7 +181,7 @@ emit_hw_gs(struct svga_context *svga, uint64_t dirty)
       if (ret != PIPE_OK)
          goto done;
 
-      svga->rebind.flags.gs = false;
+      svga->rebind.flags.gs = FALSE;
       svga->dirty |= SVGA_NEW_GS_VARIANT;
       svga->state.hw_draw.gs = variant;
    }

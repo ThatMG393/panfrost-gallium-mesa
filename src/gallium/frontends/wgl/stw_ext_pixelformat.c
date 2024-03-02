@@ -41,14 +41,14 @@
 #include <GL/gl.h>
 #include <GL/wglext.h>
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "util/format/u_format.h"
 #include "util/u_memory.h"
 #include "stw_device.h"
 #include "stw_pixelformat.h"
 
 
-static bool
+static boolean
 stw_query_attrib(HDC hdc, int iPixelFormat, int iLayerPlane, int attrib, int *pvalue)
 {
    uint count;
@@ -58,30 +58,30 @@ stw_query_attrib(HDC hdc, int iPixelFormat, int iLayerPlane, int attrib, int *pv
 
    if (attrib == WGL_NUMBER_PIXEL_FORMATS_ARB) {
       *pvalue = (int) count;
-      return true;
+      return TRUE;
    }
 
    pfi = stw_pixelformat_get_info(iPixelFormat);
    if (!pfi) {
-      return false;
+      return FALSE;
    }
 
    switch (attrib) {
    case WGL_DRAW_TO_WINDOW_ARB:
-      *pvalue = pfi->pfd.dwFlags & PFD_DRAW_TO_WINDOW ? true : false;
-      return true;
+      *pvalue = pfi->pfd.dwFlags & PFD_DRAW_TO_WINDOW ? TRUE : FALSE;
+      return TRUE;
 
    case WGL_DRAW_TO_BITMAP_ARB:
-      *pvalue = pfi->pfd.dwFlags & PFD_DRAW_TO_BITMAP ? true : false;
-      return true;
+      *pvalue = pfi->pfd.dwFlags & PFD_DRAW_TO_BITMAP ? TRUE : FALSE;
+      return TRUE;
 
    case WGL_NEED_PALETTE_ARB:
-      *pvalue = pfi->pfd.dwFlags & PFD_NEED_PALETTE ? true : false;
-      return true;
+      *pvalue = pfi->pfd.dwFlags & PFD_NEED_PALETTE ? TRUE : FALSE;
+      return TRUE;
 
    case WGL_NEED_SYSTEM_PALETTE_ARB:
-      *pvalue = pfi->pfd.dwFlags & PFD_NEED_SYSTEM_PALETTE ? true : false;
-      return true;
+      *pvalue = pfi->pfd.dwFlags & PFD_NEED_SYSTEM_PALETTE ? TRUE : FALSE;
+      return TRUE;
 
    case WGL_SWAP_METHOD_ARB:
       if (pfi->pfd.dwFlags & PFD_SWAP_COPY)
@@ -90,33 +90,33 @@ stw_query_attrib(HDC hdc, int iPixelFormat, int iLayerPlane, int attrib, int *pv
          *pvalue = WGL_SWAP_EXCHANGE_EXT;
       else
          *pvalue = WGL_SWAP_UNDEFINED_ARB;
-      return true;
+      return TRUE;
 
    case WGL_SWAP_LAYER_BUFFERS_ARB:
-      *pvalue = false;
-      return true;
+      *pvalue = FALSE;
+      return TRUE;
 
    case WGL_NUMBER_OVERLAYS_ARB:
       *pvalue = 0;
-      return true;
+      return TRUE;
 
    case WGL_NUMBER_UNDERLAYS_ARB:
       *pvalue = 0;
-      return true;
+      return TRUE;
 
    case WGL_BIND_TO_TEXTURE_RGB_ARB:
       /* WGL_ARB_render_texture */
       *pvalue = pfi->bindToTextureRGB;
-      return true;
+      return TRUE;
 
    case WGL_BIND_TO_TEXTURE_RGBA_ARB:
       /* WGL_ARB_render_texture */
       *pvalue = pfi->bindToTextureRGBA;
-      return true;
+      return TRUE;
    }
 
    if (iLayerPlane != 0)
-      return false;
+      return FALSE;
 
    switch (attrib) {
    case WGL_ACCELERATION_ARB:
@@ -124,7 +124,7 @@ stw_query_attrib(HDC hdc, int iPixelFormat, int iLayerPlane, int attrib, int *pv
       break;
 
    case WGL_TRANSPARENT_ARB:
-      *pvalue = false;
+      *pvalue = FALSE;
       break;
 
    case WGL_TRANSPARENT_RED_VALUE_ARB:
@@ -137,23 +137,23 @@ stw_query_attrib(HDC hdc, int iPixelFormat, int iLayerPlane, int attrib, int *pv
    case WGL_SHARE_DEPTH_ARB:
    case WGL_SHARE_STENCIL_ARB:
    case WGL_SHARE_ACCUM_ARB:
-      *pvalue = true;
+      *pvalue = TRUE;
       break;
 
    case WGL_SUPPORT_GDI_ARB:
-      *pvalue = pfi->pfd.dwFlags & PFD_SUPPORT_GDI ? true : false;
+      *pvalue = pfi->pfd.dwFlags & PFD_SUPPORT_GDI ? TRUE : FALSE;
       break;
 
    case WGL_SUPPORT_OPENGL_ARB:
-      *pvalue = pfi->pfd.dwFlags & PFD_SUPPORT_OPENGL ? true : false;
+      *pvalue = pfi->pfd.dwFlags & PFD_SUPPORT_OPENGL ? TRUE : FALSE;
       break;
 
    case WGL_DOUBLE_BUFFER_ARB:
-      *pvalue = pfi->pfd.dwFlags & PFD_DOUBLEBUFFER ? true : false;
+      *pvalue = pfi->pfd.dwFlags & PFD_DOUBLEBUFFER ? TRUE : FALSE;
       break;
 
    case WGL_STEREO_ARB:
-      *pvalue = pfi->pfd.dwFlags & PFD_STEREO ? true : false;
+      *pvalue = pfi->pfd.dwFlags & PFD_STEREO ? TRUE : FALSE;
       break;
 
    case WGL_PIXEL_TYPE_ARB:
@@ -170,7 +170,7 @@ stw_query_attrib(HDC hdc, int iPixelFormat, int iLayerPlane, int attrib, int *pv
          *pvalue = WGL_TYPE_COLORINDEX_ARB;
          break;
       default:
-         return false;
+         return FALSE;
       }
       break;
 
@@ -268,10 +268,10 @@ stw_query_attrib(HDC hdc, int iPixelFormat, int iLayerPlane, int attrib, int *pv
 
 
    default:
-      return false;
+      return FALSE;
    }
 
-   return true;
+   return TRUE;
 }
 
 struct attrib_match_info
@@ -283,44 +283,44 @@ struct attrib_match_info
 
 static const struct attrib_match_info attrib_match[] = {
    /* WGL_ARB_pixel_format */
-   { WGL_DRAW_TO_WINDOW_ARB,      0, true },
-   { WGL_DRAW_TO_BITMAP_ARB,      0, true },
-   { WGL_ACCELERATION_ARB,        0, true },
-   { WGL_NEED_PALETTE_ARB,        0, true },
-   { WGL_NEED_SYSTEM_PALETTE_ARB, 0, true },
-   { WGL_SWAP_LAYER_BUFFERS_ARB,  0, true },
-   { WGL_SWAP_METHOD_ARB,         0, true },
-   { WGL_NUMBER_OVERLAYS_ARB,     4, false },
-   { WGL_NUMBER_UNDERLAYS_ARB,    4, false },
+   { WGL_DRAW_TO_WINDOW_ARB,      0, TRUE },
+   { WGL_DRAW_TO_BITMAP_ARB,      0, TRUE },
+   { WGL_ACCELERATION_ARB,        0, TRUE },
+   { WGL_NEED_PALETTE_ARB,        0, TRUE },
+   { WGL_NEED_SYSTEM_PALETTE_ARB, 0, TRUE },
+   { WGL_SWAP_LAYER_BUFFERS_ARB,  0, TRUE },
+   { WGL_SWAP_METHOD_ARB,         0, TRUE },
+   { WGL_NUMBER_OVERLAYS_ARB,     4, FALSE },
+   { WGL_NUMBER_UNDERLAYS_ARB,    4, FALSE },
    /*{ WGL_SHARE_DEPTH_ARB,         0, TRUE },*/     /* no overlays -- ignore */
    /*{ WGL_SHARE_STENCIL_ARB,       0, TRUE },*/   /* no overlays -- ignore */
    /*{ WGL_SHARE_ACCUM_ARB,         0, TRUE },*/     /* no overlays -- ignore */
-   { WGL_SUPPORT_GDI_ARB,         0, true },
-   { WGL_SUPPORT_OPENGL_ARB,      0, true },
-   { WGL_DOUBLE_BUFFER_ARB,       0, true },
-   { WGL_STEREO_ARB,              0, true },
-   { WGL_PIXEL_TYPE_ARB,          0, true },
-   { WGL_COLOR_BITS_ARB,          1, false },
-   { WGL_RED_BITS_ARB,            1, false },
-   { WGL_GREEN_BITS_ARB,          1, false },
-   { WGL_BLUE_BITS_ARB,           1, false },
-   { WGL_ALPHA_BITS_ARB,          1, false },
-   { WGL_ACCUM_BITS_ARB,          1, false },
-   { WGL_ACCUM_RED_BITS_ARB,      1, false },
-   { WGL_ACCUM_GREEN_BITS_ARB,    1, false },
-   { WGL_ACCUM_BLUE_BITS_ARB,     1, false },
-   { WGL_ACCUM_ALPHA_BITS_ARB,    1, false },
-   { WGL_DEPTH_BITS_ARB,          1, false },
-   { WGL_STENCIL_BITS_ARB,        1, false },
-   { WGL_AUX_BUFFERS_ARB,         2, false },
+   { WGL_SUPPORT_GDI_ARB,         0, TRUE },
+   { WGL_SUPPORT_OPENGL_ARB,      0, TRUE },
+   { WGL_DOUBLE_BUFFER_ARB,       0, TRUE },
+   { WGL_STEREO_ARB,              0, TRUE },
+   { WGL_PIXEL_TYPE_ARB,          0, TRUE },
+   { WGL_COLOR_BITS_ARB,          1, FALSE },
+   { WGL_RED_BITS_ARB,            1, FALSE },
+   { WGL_GREEN_BITS_ARB,          1, FALSE },
+   { WGL_BLUE_BITS_ARB,           1, FALSE },
+   { WGL_ALPHA_BITS_ARB,          1, FALSE },
+   { WGL_ACCUM_BITS_ARB,          1, FALSE },
+   { WGL_ACCUM_RED_BITS_ARB,      1, FALSE },
+   { WGL_ACCUM_GREEN_BITS_ARB,    1, FALSE },
+   { WGL_ACCUM_BLUE_BITS_ARB,     1, FALSE },
+   { WGL_ACCUM_ALPHA_BITS_ARB,    1, FALSE },
+   { WGL_DEPTH_BITS_ARB,          1, FALSE },
+   { WGL_STENCIL_BITS_ARB,        1, FALSE },
+   { WGL_AUX_BUFFERS_ARB,         2, FALSE },
 
    /* WGL_ARB_multisample */
-   { WGL_SAMPLE_BUFFERS_ARB,      2, false },
-   { WGL_SAMPLES_ARB,             2, false },
+   { WGL_SAMPLE_BUFFERS_ARB,      2, FALSE },
+   { WGL_SAMPLES_ARB,             2, FALSE },
 
    /* WGL_ARB_render_texture */
-   { WGL_BIND_TO_TEXTURE_RGB_ARB, 0, false },
-   { WGL_BIND_TO_TEXTURE_RGBA_ARB, 0, false },
+   { WGL_BIND_TO_TEXTURE_RGB_ARB, 0, FALSE },
+   { WGL_BIND_TO_TEXTURE_RGBA_ARB, 0, FALSE },
 };
 
 struct stw_pixelformat_score
@@ -350,7 +350,7 @@ score_pixelformats(HDC hdc,
       }
    }
    if (ami == NULL)
-      return true;
+      return TRUE;
 
    /* Iterate all pixelformats, query the requested attribute and calculate
     * score points.
@@ -359,7 +359,7 @@ score_pixelformats(HDC hdc,
       int actual_value;
 
       if (!stw_query_attrib(hdc, index + 1, 0, attribute, &actual_value))
-         return false;
+         return FALSE;
 
       if (ami->exact) {
          /* For an exact match criteria, if the actual and expected values
@@ -384,7 +384,7 @@ score_pixelformats(HDC hdc,
       }
    }
 
-   return true;
+   return TRUE;
 }
 
 
@@ -408,7 +408,7 @@ wglChoosePixelFormatARB(HDC hdc, const int *piAttribIList,
    scores = (struct stw_pixelformat_score *)
       MALLOC(count * sizeof(struct stw_pixelformat_score));
    if (scores == NULL)
-      return false;
+      return FALSE;
    for (i = 0; i < count; i++) {
       scores[i].points = 0x7fffffff;
       scores[i].index = i;
@@ -421,7 +421,7 @@ wglChoosePixelFormatARB(HDC hdc, const int *piAttribIList,
          if (!score_pixelformats(hdc, scores, count, piAttribIList[0],
                                  piAttribIList[1])) {
             FREE(scores);
-            return false;
+            return FALSE;
          }
          piAttribIList += 2;
       }
@@ -431,7 +431,7 @@ wglChoosePixelFormatARB(HDC hdc, const int *piAttribIList,
          if (!score_pixelformats(hdc, scores, count, (int) pfAttribFList[0],
                                  (int) pfAttribFList[1])) {
             FREE(scores);
-            return false;
+            return FALSE;
          }
          pfAttribFList += 2;
       }
@@ -442,17 +442,17 @@ wglChoosePixelFormatARB(HDC hdc, const int *piAttribIList,
     */
    if (count > 1) {
       uint n = count;
-      bool swapped;
+      boolean swapped;
 
       do {
-         swapped = false;
+         swapped = FALSE;
          for (i = 1; i < n; i++) {
             if (scores[i - 1].points < scores[i].points) {
                struct stw_pixelformat_score score = scores[i - 1];
 
                scores[i - 1] = scores[i];
                scores[i] = score;
-               swapped = true;
+               swapped = TRUE;
             }
          }
          n--;
@@ -474,7 +474,7 @@ wglChoosePixelFormatARB(HDC hdc, const int *piAttribIList,
    }
 
    FREE(scores);
-   return true;
+   return TRUE;
 }
 
 
@@ -490,11 +490,11 @@ wglGetPixelFormatAttribfvARB(HDC hdc, int iPixelFormat, int iLayerPlane,
 
       if (!stw_query_attrib(hdc, iPixelFormat, iLayerPlane,
                              piAttributes[i], &value))
-         return false;
+         return FALSE;
       pfValues[i] = (FLOAT) value;
    }
 
-   return true;
+   return TRUE;
 }
 
 
@@ -508,8 +508,8 @@ wglGetPixelFormatAttribivARB(HDC hdc, int iPixelFormat, int iLayerPlane,
    for (i = 0; i < nAttributes; i++) {
       if (!stw_query_attrib(hdc, iPixelFormat, iLayerPlane,
                             piAttributes[i], &piValues[i]))
-         return false;
+         return FALSE;
    }
 
-   return true;
+   return TRUE;
 }

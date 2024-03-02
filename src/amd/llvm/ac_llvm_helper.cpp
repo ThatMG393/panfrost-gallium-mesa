@@ -1,25 +1,36 @@
 /*
  * Copyright 2014 Advanced Micro Devices, Inc.
  *
- * SPDX-License-Identifier: MIT
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sub license, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. IN NO EVENT SHALL
+ * THE COPYRIGHT HOLDERS, AUTHORS AND/OR ITS SUPPLIERS BE LIABLE FOR ANY CLAIM,
+ * DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+ * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+ * USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ * The above copyright notice and this permission notice (including the
+ * next paragraph) shall be included in all copies or substantial portions
+ * of the Software.
+ *
  */
 
 #include <llvm-c/Core.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LegacyPassManager.h>
-#include <llvm/IR/Verifier.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/MC/MCSubtargetInfo.h>
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Transforms/IPO.h>
-#include <llvm/Transforms/Scalar.h>
-#include <llvm/Transforms/Utils.h>
-#include <llvm/CodeGen/Passes.h>
-#include <llvm/Transforms/IPO/AlwaysInliner.h>
-#include <llvm/Transforms/InstCombine/InstCombine.h>
-#include <llvm/Transforms/IPO/SCCP.h>
-#include "llvm/CodeGen/SelectionDAGNodes.h"
 
 #include <cstring>
 
@@ -34,73 +45,44 @@
 #include "ac_llvm_build.h"
 #include "util/macros.h"
 
-using namespace llvm;
-
-class RunAtExitForStaticDestructors : public SDNode
-{
-public:
-   /* getSDVTList (protected) calls getValueTypeList (private), which contains static variables. */
-   RunAtExitForStaticDestructors(): SDNode(0, 0, DebugLoc(), getSDVTList(MVT::Other))
-   {
-   }
-};
-
-void ac_llvm_run_atexit_for_destructors(void)
-{
-   /* LLVM >= 16 registers static variable destructors on the first compile, which gcc
-    * implements by calling atexit there. Before that, u_queue registers its atexit
-    * handler to kill all threads. Since exit() runs atexit handlers in the reverse order,
-    * the LLVM destructors are called first while shader compiler threads may still be
-    * running, which crashes in LLVM in SelectionDAG.cpp.
-    *
-    * The solution is to run the code that declares the LLVM static variables first,
-    * so that atexit for LLVM is registered first and u_queue is registered after that,
-    * which ensures that all u_queue threads are terminated before LLVM destructors are
-    * called.
-    *
-    * This just executes the code that declares static variables.
-    */
-   RunAtExitForStaticDestructors();
-}
-
 bool ac_is_llvm_processor_supported(LLVMTargetMachineRef tm, const char *processor)
 {
-   TargetMachine *TM = reinterpret_cast<TargetMachine *>(tm);
+   llvm::TargetMachine *TM = reinterpret_cast<llvm::TargetMachine *>(tm);
    return TM->getMCSubtargetInfo()->isCPUStringValid(processor);
 }
 
-void ac_reset_llvm_all_options_occurrences()
+void ac_reset_llvm_all_options_occurences()
 {
-   cl::ResetAllOptionOccurrences();
+   llvm::cl::ResetAllOptionOccurrences();
 }
 
 void ac_add_attr_dereferenceable(LLVMValueRef val, uint64_t bytes)
 {
-   Argument *A = unwrap<Argument>(val);
-   A->addAttr(Attribute::getWithDereferenceableBytes(A->getContext(), bytes));
+   llvm::Argument *A = llvm::unwrap<llvm::Argument>(val);
+   A->addAttr(llvm::Attribute::getWithDereferenceableBytes(A->getContext(), bytes));
 }
 
 void ac_add_attr_alignment(LLVMValueRef val, uint64_t bytes)
 {
-   Argument *A = unwrap<Argument>(val);
-   A->addAttr(Attribute::getWithAlignment(A->getContext(), Align(bytes)));
+   llvm::Argument *A = llvm::unwrap<llvm::Argument>(val);
+   A->addAttr(llvm::Attribute::getWithAlignment(A->getContext(), llvm::Align(bytes)));
 }
 
 bool ac_is_sgpr_param(LLVMValueRef arg)
 {
-   Argument *A = unwrap<Argument>(arg);
-   AttributeList AS = A->getParent()->getAttributes();
+   llvm::Argument *A = llvm::unwrap<llvm::Argument>(arg);
+   llvm::AttributeList AS = A->getParent()->getAttributes();
    unsigned ArgNo = A->getArgNo();
-   return AS.hasParamAttr(ArgNo, Attribute::InReg);
+   return AS.hasParamAttr(ArgNo, llvm::Attribute::InReg);
 }
 
 LLVMModuleRef ac_create_module(LLVMTargetMachineRef tm, LLVMContextRef ctx)
 {
-   TargetMachine *TM = reinterpret_cast<TargetMachine *>(tm);
+   llvm::TargetMachine *TM = reinterpret_cast<llvm::TargetMachine *>(tm);
    LLVMModuleRef module = LLVMModuleCreateWithNameInContext("mesa-shader", ctx);
 
-   unwrap(module)->setTargetTriple(TM->getTargetTriple().getTriple());
-   unwrap(module)->setDataLayout(TM->createDataLayout());
+   llvm::unwrap(module)->setTargetTriple(TM->getTargetTriple().getTriple());
+   llvm::unwrap(module)->setDataLayout(TM->createDataLayout());
    return module;
 }
 
@@ -108,7 +90,7 @@ LLVMBuilderRef ac_create_builder(LLVMContextRef ctx, enum ac_float_mode float_mo
 {
    LLVMBuilderRef builder = LLVMCreateBuilderInContext(ctx);
 
-   FastMathFlags flags;
+   llvm::FastMathFlags flags;
 
    switch (float_mode) {
    case AC_FLOAT_MODE_DEFAULT:
@@ -126,7 +108,7 @@ LLVMBuilderRef ac_create_builder(LLVMContextRef ctx, enum ac_float_mode float_mo
        */
       flags.setAllowReciprocal(); /* arcp */
 
-      unwrap(builder)->setFastMathFlags(flags);
+      llvm::unwrap(builder)->setFastMathFlags(flags);
       break;
    }
 
@@ -136,8 +118,8 @@ LLVMBuilderRef ac_create_builder(LLVMContextRef ctx, enum ac_float_mode float_mo
 void ac_enable_signed_zeros(struct ac_llvm_context *ctx)
 {
    if (ctx->float_mode == AC_FLOAT_MODE_DEFAULT_OPENGL) {
-      auto *b = unwrap(ctx->builder);
-      FastMathFlags flags = b->getFastMathFlags();
+      auto *b = llvm::unwrap(ctx->builder);
+      llvm::FastMathFlags flags = b->getFastMathFlags();
 
       /* This disables the optimization of (x + 0), which is used
        * to convert negative zero to positive zero.
@@ -150,8 +132,8 @@ void ac_enable_signed_zeros(struct ac_llvm_context *ctx)
 void ac_disable_signed_zeros(struct ac_llvm_context *ctx)
 {
    if (ctx->float_mode == AC_FLOAT_MODE_DEFAULT_OPENGL) {
-      auto *b = unwrap(ctx->builder);
-      FastMathFlags flags = b->getFastMathFlags();
+      auto *b = llvm::unwrap(ctx->builder);
+      llvm::FastMathFlags flags = b->getFastMathFlags();
 
       flags.setNoSignedZeros();
       b->setFastMathFlags(flags);
@@ -161,17 +143,17 @@ void ac_disable_signed_zeros(struct ac_llvm_context *ctx)
 LLVMTargetLibraryInfoRef ac_create_target_library_info(const char *triple)
 {
    return reinterpret_cast<LLVMTargetLibraryInfoRef>(
-      new TargetLibraryInfoImpl(Triple(triple)));
+      new llvm::TargetLibraryInfoImpl(llvm::Triple(triple)));
 }
 
 void ac_dispose_target_library_info(LLVMTargetLibraryInfoRef library_info)
 {
-   delete reinterpret_cast<TargetLibraryInfoImpl *>(library_info);
+   delete reinterpret_cast<llvm::TargetLibraryInfoImpl *>(library_info);
 }
 
 /* Implementation of raw_pwrite_stream that works on malloc()ed memory for
  * better compatibility with C code. */
-struct raw_memory_ostream : public raw_pwrite_stream {
+struct raw_memory_ostream : public llvm::raw_pwrite_stream {
    char *buffer;
    size_t written;
    size_t bufsize;
@@ -238,7 +220,7 @@ struct raw_memory_ostream : public raw_pwrite_stream {
  */
 struct ac_compiler_passes {
    raw_memory_ostream ostream;        /* ELF shader binary stream */
-   legacy::PassManager passmgr; /* list of passes */
+   llvm::legacy::PassManager passmgr; /* list of passes */
 };
 
 struct ac_compiler_passes *ac_create_llvm_passes(LLVMTargetMachineRef tm)
@@ -247,14 +229,10 @@ struct ac_compiler_passes *ac_create_llvm_passes(LLVMTargetMachineRef tm)
    if (!p)
       return NULL;
 
-   TargetMachine *TM = reinterpret_cast<TargetMachine *>(tm);
+   llvm::TargetMachine *TM = reinterpret_cast<llvm::TargetMachine *>(tm);
 
    if (TM->addPassesToEmitFile(p->passmgr, p->ostream, nullptr,
-#if LLVM_VERSION_MAJOR >= 18
-                               CodeGenFileType::ObjectFile)) {
-#else
-                               CGFT_ObjectFile)) {
-#endif
+                               llvm::CGFT_ObjectFile)) {
       fprintf(stderr, "amd: TargetMachine can't emit a file of this type!\n");
       delete p;
       return NULL;
@@ -271,108 +249,80 @@ void ac_destroy_llvm_passes(struct ac_compiler_passes *p)
 bool ac_compile_module_to_elf(struct ac_compiler_passes *p, LLVMModuleRef module,
                               char **pelf_buffer, size_t *pelf_size)
 {
-   p->passmgr.run(*unwrap(module));
+   p->passmgr.run(*llvm::unwrap(module));
    p->ostream.take(*pelf_buffer, *pelf_size);
    return true;
 }
 
-LLVMPassManagerRef ac_create_passmgr(LLVMTargetLibraryInfoRef target_library_info,
-                                     bool check_ir)
+void ac_llvm_add_barrier_noop_pass(LLVMPassManagerRef passmgr)
 {
-   LLVMPassManagerRef passmgr = LLVMCreatePassManager();
-   if (!passmgr)
-      return NULL;
-
-   if (target_library_info)
-      LLVMAddTargetLibraryInfo(target_library_info, passmgr);
-
-   if (check_ir)
-      unwrap(passmgr)->add(createVerifierPass());
-
-   unwrap(passmgr)->add(createAlwaysInlinerLegacyPass());
-
-   /* Normally, the pass manager runs all passes on one function before
-    * moving onto another. Adding a barrier no-op pass forces the pass
-    * manager to run the inliner on all functions first, which makes sure
-    * that the following passes are only run on the remaining non-inline
-    * function, so it removes useless work done on dead inline functions.
-    */
-   unwrap(passmgr)->add(createBarrierNoopPass());
-
-   #if LLVM_VERSION_MAJOR >= 16
-   unwrap(passmgr)->add(createSROAPass(true));
-   #else
-   unwrap(passmgr)->add(createSROAPass());
-   #endif
-   /* TODO: restore IPSCCP */
-   unwrap(passmgr)->add(createLICMPass());
-   unwrap(passmgr)->add(createCFGSimplificationPass());
-   /* This is recommended by the instruction combining pass. */
-   unwrap(passmgr)->add(createEarlyCSEPass(true));
-   unwrap(passmgr)->add(createInstructionCombiningPass());
-   return passmgr;
+   llvm::unwrap(passmgr)->add(llvm::createBarrierNoopPass());
 }
 
 LLVMValueRef ac_build_atomic_rmw(struct ac_llvm_context *ctx, LLVMAtomicRMWBinOp op,
                                  LLVMValueRef ptr, LLVMValueRef val, const char *sync_scope)
 {
-   AtomicRMWInst::BinOp binop;
+   llvm::AtomicRMWInst::BinOp binop;
    switch (op) {
    case LLVMAtomicRMWBinOpXchg:
-      binop = AtomicRMWInst::Xchg;
+      binop = llvm::AtomicRMWInst::Xchg;
       break;
    case LLVMAtomicRMWBinOpAdd:
-      binop = AtomicRMWInst::Add;
+      binop = llvm::AtomicRMWInst::Add;
       break;
    case LLVMAtomicRMWBinOpSub:
-      binop = AtomicRMWInst::Sub;
+      binop = llvm::AtomicRMWInst::Sub;
       break;
    case LLVMAtomicRMWBinOpAnd:
-      binop = AtomicRMWInst::And;
+      binop = llvm::AtomicRMWInst::And;
       break;
    case LLVMAtomicRMWBinOpNand:
-      binop = AtomicRMWInst::Nand;
+      binop = llvm::AtomicRMWInst::Nand;
       break;
    case LLVMAtomicRMWBinOpOr:
-      binop = AtomicRMWInst::Or;
+      binop = llvm::AtomicRMWInst::Or;
       break;
    case LLVMAtomicRMWBinOpXor:
-      binop = AtomicRMWInst::Xor;
+      binop = llvm::AtomicRMWInst::Xor;
       break;
    case LLVMAtomicRMWBinOpMax:
-      binop = AtomicRMWInst::Max;
+      binop = llvm::AtomicRMWInst::Max;
       break;
    case LLVMAtomicRMWBinOpMin:
-      binop = AtomicRMWInst::Min;
+      binop = llvm::AtomicRMWInst::Min;
       break;
    case LLVMAtomicRMWBinOpUMax:
-      binop = AtomicRMWInst::UMax;
+      binop = llvm::AtomicRMWInst::UMax;
       break;
    case LLVMAtomicRMWBinOpUMin:
-      binop = AtomicRMWInst::UMin;
+      binop = llvm::AtomicRMWInst::UMin;
       break;
    case LLVMAtomicRMWBinOpFAdd:
-      binop = AtomicRMWInst::FAdd;
+      binop = llvm::AtomicRMWInst::FAdd;
       break;
    default:
       unreachable("invalid LLVMAtomicRMWBinOp");
       break;
    }
-   unsigned SSID = unwrap(ctx->context)->getOrInsertSyncScopeID(sync_scope);
-   return wrap(unwrap(ctx->builder)
-                        ->CreateAtomicRMW(binop, unwrap(ptr), unwrap(val),
-                                          MaybeAlign(0),
-                                          AtomicOrdering::SequentiallyConsistent, SSID));
+   unsigned SSID = llvm::unwrap(ctx->context)->getOrInsertSyncScopeID(sync_scope);
+   return llvm::wrap(llvm::unwrap(ctx->builder)
+                        ->CreateAtomicRMW(binop, llvm::unwrap(ptr), llvm::unwrap(val),
+#if LLVM_VERSION_MAJOR >= 13
+                                          llvm::MaybeAlign(0),
+#endif
+                                          llvm::AtomicOrdering::SequentiallyConsistent, SSID));
 }
 
 LLVMValueRef ac_build_atomic_cmp_xchg(struct ac_llvm_context *ctx, LLVMValueRef ptr,
                                       LLVMValueRef cmp, LLVMValueRef val, const char *sync_scope)
 {
-   unsigned SSID = unwrap(ctx->context)->getOrInsertSyncScopeID(sync_scope);
-   return wrap(unwrap(ctx->builder)
-                        ->CreateAtomicCmpXchg(unwrap(ptr), unwrap(cmp),
-                                              unwrap(val),
-                                              MaybeAlign(0),
-                                              AtomicOrdering::SequentiallyConsistent,
-                                              AtomicOrdering::SequentiallyConsistent, SSID));
+   unsigned SSID = llvm::unwrap(ctx->context)->getOrInsertSyncScopeID(sync_scope);
+   return llvm::wrap(llvm::unwrap(ctx->builder)
+                        ->CreateAtomicCmpXchg(llvm::unwrap(ptr), llvm::unwrap(cmp),
+                                              llvm::unwrap(val),
+#if LLVM_VERSION_MAJOR >= 13
+                                              llvm::MaybeAlign(0),
+#endif
+                                              llvm::AtomicOrdering::SequentiallyConsistent,
+                                              llvm::AtomicOrdering::SequentiallyConsistent, SSID));
 }

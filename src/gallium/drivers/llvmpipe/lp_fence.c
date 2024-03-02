@@ -108,7 +108,7 @@ lp_fence_signal(struct lp_fence *fence)
 }
 
 
-bool
+boolean
 lp_fence_signalled(struct lp_fence *f)
 {
    return f->count == f->rank;
@@ -130,7 +130,7 @@ lp_fence_wait(struct lp_fence *f)
 }
 
 
-bool
+boolean
 lp_fence_timedwait(struct lp_fence *f, uint64_t timeout)
 {
    struct timespec ts, abs_ts;
@@ -154,7 +154,7 @@ lp_fence_timedwait(struct lp_fence *f, uint64_t timeout)
          break;
    }
 
-   const bool result = (f->count >= f->rank);
+   const boolean result = (f->count >= f->rank);
    mtx_unlock(&f->mutex);
 
    return result;

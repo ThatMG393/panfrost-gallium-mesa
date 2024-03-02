@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import sphinx_rtd_theme
+
 #
 # The Mesa 3D Graphics Library documentation build configuration file, created by
 # sphinx-quickstart on Wed Mar 29 14:08:51 2017.
@@ -21,8 +23,6 @@
 import os
 import sys
 
-from hawkmoth.util import compiler
-
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
@@ -38,14 +38,7 @@ sys.path.append(os.path.abspath('_exts'))
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
-extensions = [
-    'bootstrap',
-    'formatting',
-    'hawkmoth',
-    'nir',
-    'redirects',
-    'sphinx.ext.graphviz',
-]
+extensions = ['sphinx.ext.graphviz', 'breathe', 'formatting', 'nir', 'redirects']
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -65,7 +58,7 @@ copyright = '1995-2018, Brian Paul'
 author = 'Brian Paul'
 html_show_copyright = False
 
-html_theme_path = ['.']
+html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -86,7 +79,10 @@ language = 'en'
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This patterns also effect to html_static_path and html_extra_path
-exclude_patterns = ['header-stubs']
+exclude_patterns = []
+
+# The name of the Pygments (syntax highlighting) style to use.
+pygments_style = 'sphinx'
 
 # If true, `todo` and `todoList` produce output, else they produce nothing.
 todo_include_todos = False
@@ -102,17 +98,36 @@ default_role = 'c:expr'
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = 'mesa3d_theme'
+html_theme = 'sphinx_rtd_theme'
 
 html_favicon = 'favicon.ico'
+
+# Theme options are theme-specific and customize the look and feel of a theme
+# further.  For a list of options available for each theme, see the
+# documentation.
+#
+html_theme_options = {
+  'display_version': False,
+}
+
+html_context = {
+  'display_gitlab': True,
+  'gitlab_host': 'gitlab.freedesktop.org',
+  'gitlab_user': 'mesa',
+  'gitlab_repo': 'mesa',
+  'gitlab_version': 'main',
+  'conf_py_path': '/docs/',
+}
 
 html_copy_source = False
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
-html_static_path = [
-  '_static/',
+html_static_path = []
+
+html_extra_path = [
+  '_extra/',
   'release-maintainers-keys.asc',
   'features.txt',
   'libGL.txt',
@@ -120,12 +135,8 @@ html_static_path = [
   'README.VCE',
 ]
 
-html_extra_path = []
-
 html_redirects = [
   ('webmaster', 'https://www.mesa3d.org/website/'),
-  ('developers', 'https://www.mesa3d.org/developers/'),
-  ('thanks', 'https://gitlab.freedesktop.org/mesa/mesa/-/blob/amber/docs/thanks.rst'),
 ]
 
 
@@ -140,20 +151,6 @@ linkcheck_ignore = [
   r'https://github.com/.*#.*', # needs JS eval
 ]
 linkcheck_exclude_documents = [r'relnotes/.*']
-
-linkcheck_allowed_redirects = {
-    # Pages that forward the front-page to a wiki or some explore-page
-    'https://www.freedesktop.org': 'https://www.freedesktop.org/wiki/',
-    'https://x.org': 'https://x.org/wiki/',
-    'https://perf.wiki.kernel.org/': 'https://perf.wiki.kernel.org/index.php/Main_Page',
-    'https://dri.freedesktop.org/': 'https://dri.freedesktop.org/wiki/',
-    'https://gitlab.freedesktop.org/': 'https://gitlab.freedesktop.org/explore/groups',
-    'https://www.sphinx-doc.org/': 'https://www.sphinx-doc.org/en/master/',
-
-    # Pages that requires authentication
-    'https://gitlab.freedesktop.org/admin/runners': 'https://gitlab.freedesktop.org/users/sign_in',
-    'https://gitlab.freedesktop.org/profile/personal_access_tokens': 'https://gitlab.freedesktop.org/users/sign_in',
-}
 
 
 # -- Options for HTMLHelp output ------------------------------------------
@@ -216,25 +213,10 @@ texinfo_documents = [
 
 graphviz_output_format = 'svg'
 
-# -- Options for hawkmoth -------------------------------------------------
-
-hawkmoth_root = os.path.abspath('..')
-hawkmoth_clang = [
-  '-Idocs/header-stubs/',
-  '-Iinclude/',
-  '-Isrc/',
-  '-Isrc/gallium/include/',
-  '-Isrc/intel/',
-  '-Isrc/mesa/',
-  '-DHAVE_STRUCT_TIMESPEC',
-  '-DHAVE_PTHREAD',
-  '-DHAVE_ENDIAN_H',
-]
-hawkmoth_clang.extend(compiler.get_include_args())
-
-# helpers for definining parameter direction
-rst_prolog = '''
-.. |in| replace:: **[in]**
-.. |out| replace:: **[out]**
-.. |inout| replace:: **[inout]**
-'''
+# -- Options for breathe --------------------------------------------------
+breathe_projects = {
+    'mesa' : 'doxygen_xml',
+}
+breathe_default_project = 'mesa'
+breathe_show_define_initializer = True
+breathe_show_enumvalue_initializer = True

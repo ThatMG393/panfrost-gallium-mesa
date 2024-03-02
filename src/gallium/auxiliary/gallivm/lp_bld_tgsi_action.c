@@ -50,6 +50,8 @@
 #include "lp_bld_logic.h"
 #include "lp_bld_pack.h"
 
+#include "tgsi/tgsi_exec.h"
+
 /* XXX: The CPU only defaults should be repaced by generic ones.  In most
  * cases, the CPU defaults are just wrappers around a function in
  * lp_build_arit.c and these functions should be inlined here and the CPU
@@ -1627,7 +1629,7 @@ log_emit_cpu(
    LLVMValueRef src0 = emit_data->args[0];
 
    lp_build_log2_approx(&bld_base->base, src0,
-                        &p_exp, &p_floor_log2, &p_log2, false);
+                        &p_exp, &p_floor_log2, &p_log2, FALSE);
 
    emit_data->output[TGSI_CHAN_X] = p_floor_log2;
 

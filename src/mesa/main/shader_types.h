@@ -90,12 +90,12 @@ struct gl_shader_info
        * GL_TRIANGLES_ADJACENCY, or PRIM_UNKNOWN if it's not set in this
        * shader.
        */
-      enum mesa_prim InputType;
+      enum shader_prim InputType;
        /**
         * GL_POINTS, GL_LINE_STRIP or GL_TRIANGLE_STRIP, or PRIM_UNKNOWN if
         * it's not set in this shader.
         */
-      enum mesa_prim OutputType;
+      enum shader_prim OutputType;
    } Geom;
 
    /**
@@ -345,6 +345,8 @@ struct gl_shader_program_data
    enum gl_link_status LinkStatus;   /**< GL_LINK_STATUS */
    GLchar *InfoLog;
 
+   unsigned Version;       /**< GLSL version used for linking */
+
    /* Mask of stages this program was linked against */
    unsigned linked_stages;
 
@@ -482,7 +484,11 @@ struct gl_shader_program
     */
    struct gl_linked_shader *_LinkedShaders[MESA_SHADER_STAGES];
 
-   unsigned GLSL_Version; /**< GLSL version used for linking */
+   /**
+    * True if any of the fragment shaders attached to this program use:
+    * #extension ARB_fragment_coord_conventions: enable
+    */
+   GLboolean ARB_fragment_coord_conventions_enable;
 };
 
 /**
@@ -508,6 +514,9 @@ struct gl_program
    /* Saved and restored with metadata. Freed with ralloc. */
    void *driver_cache_blob;
    size_t driver_cache_blob_size;
+
+   /** Is this program written to on disk shader cache */
+   bool program_written_to_cache;
 
    /** whether to skip VARYING_SLOT_PSIZ in st_translate_stream_output_info() */
    bool skip_pointsize_xfb;
@@ -595,9 +604,16 @@ struct gl_program
           */
          GLubyte ImageUnits[MAX_IMAGE_UNIFORMS];
 
-         /** Access qualifier from linked shader
+         /**
+          * Access qualifier specified in the shader for each image uniform
+          * index.  Either \c GL_READ_ONLY, \c GL_WRITE_ONLY, \c
+          * GL_READ_WRITE, or \c GL_NONE to indicate both read-only and
+          * write-only.
+          *
+          * It may be different, though only more strict than the value of
+          * \c gl_image_unit::Access for the corresponding image unit.
           */
-         enum gl_access_qualifier image_access[MAX_IMAGE_UNIFORMS];
+         GLenum16 ImageAccess[MAX_IMAGE_UNIFORMS];
 
          GLuint NumUniformBlocks;
          struct gl_uniform_block **UniformBlocks;
@@ -676,9 +692,6 @@ struct gl_program
           * programs.
           */
          GLboolean IsPositionInvariant;
-
-         /** Used by ARB_fp programs, enum gl_fog_mode */
-         unsigned Fog;
       } arb;
    };
 };
@@ -691,10 +704,10 @@ struct gl_vertex_program
    struct gl_program Base;
 
    uint32_t vert_attrib_mask; /**< mask of sourced vertex attribs */
-   uint8_t num_inputs;
+   ubyte num_inputs;
 
    /** Maps VARYING_SLOT_x to slot */
-   uint8_t result_to_output[VARYING_SLOT_MAX];
+   ubyte result_to_output[VARYING_SLOT_MAX];
 };
 
 /**
@@ -911,9 +924,10 @@ struct gl_bindless_image
    /** Whether this bindless image is bound to a unit. */
    GLboolean bound;
 
-   /** Access qualifier from linked shader
+   /** Access qualifier (GL_READ_WRITE, GL_READ_ONLY, GL_WRITE_ONLY, or
+    * GL_NONE to indicate both read-only and write-only)
     */
-   enum gl_access_qualifier image_access;
+   GLenum16 access;
 
    /** Pointer to the base of the data. */
    GLvoid *data;

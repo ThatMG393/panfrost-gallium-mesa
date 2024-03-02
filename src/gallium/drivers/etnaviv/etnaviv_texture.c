@@ -92,11 +92,10 @@ etna_configure_sampler_ts(struct etna_sampler_ts *sts, struct pipe_sampler_view 
    struct etna_resource *rsc = etna_resource(pview->texture);
    struct etna_resource_level *lev = &rsc->levels[0];
 
-   if ((lev->clear_value & 0xffffffff) != sts->TS_SAMPLER_CLEAR_VALUE ||
-       (lev->clear_value >> 32) != sts->TS_SAMPLER_CLEAR_VALUE2)
+   if (lev->clear_value != sts->TS_SAMPLER_CLEAR_VALUE)
       dirty = true;
 
-   assert(rsc->ts_bo && etna_resource_level_ts_valid(lev));
+   assert(rsc->ts_bo && lev->ts_valid);
 
    sts->mode = lev->ts_mode;
    sts->comp = lev->ts_compress_fmt >= 0;
@@ -125,10 +124,6 @@ etna_can_use_sampler_ts(struct pipe_sampler_view *view, int num)
 
    /* Sampler TS can be used under the following conditions: */
 
-   /* The resource TS is valid for level 0. */
-   if (!etna_resource_level_ts_valid(&rsc->levels[0]))
-      return false;
-
    /* The hardware supports it. */
    if (!VIV_FEATURE(screen, chipMinorFeatures2, TEXTURE_TILED_READ))
       return false;
@@ -154,6 +149,10 @@ etna_can_use_sampler_ts(struct pipe_sampler_view *view, int num)
        MIN2(view->u.tex.last_level, rsc->base.last_level) != 0)
       return false;
 
+   /* The resource TS is valid for level 0. */
+   if (!rsc->levels[0].ts_valid)
+      return false;
+
    return true;
 }
 
@@ -165,14 +164,6 @@ etna_update_sampler_source(struct pipe_sampler_view *view, int num)
    struct etna_context *ctx = etna_context(view->context);
    bool enable_sampler_ts = false;
 
-   if (base->shared && !_mesa_set_search(ctx->updated_resources, view->texture)) {
-      for (int i = view->u.tex.first_level; i <= view->u.tex.last_level; i++)
-         etna_resource_level_mark_changed(&base->levels[i]);
-
-      pipe_reference(NULL, &view->texture->reference);
-      _mesa_set_add(ctx->updated_resources, view->texture);
-   }
-
    if (base->render && etna_resource_newer(etna_resource(base->render), base))
       from = etna_resource(base->render);
 
@@ -180,18 +171,19 @@ etna_update_sampler_source(struct pipe_sampler_view *view, int num)
       to = etna_resource(base->texture);
 
    if ((to != from) && etna_resource_older(to, from)) {
-      etna_copy_resource(view->context, &to->base, &from->base,
-                         view->u.tex.first_level,
-                         MIN2(view->texture->last_level, view->u.tex.last_level));
+      etna_copy_resource(view->context, &to->base, &from->base, 0,
+                         view->texture->last_level);
+      to->seqno = from->seqno;
       ctx->dirty |= ETNA_DIRTY_TEXTURE_CACHES;
-   } else if (to == from) {
+   } else if ((to == from) && etna_resource_needs_flush(to)) {
       if (etna_can_use_sampler_ts(view, num)) {
          enable_sampler_ts = true;
-      } else if (etna_resource_needs_flush(to)) {
+         /* Do not set flush_seqno because the resolve-to-self was bypassed */
+      } else {
          /* Resolve TS if needed */
-         etna_copy_resource(view->context, &to->base, &from->base,
-                            view->u.tex.first_level,
-                            MIN2(view->texture->last_level, view->u.tex.last_level));
+         etna_copy_resource(view->context, &to->base, &from->base, 0,
+                            view->texture->last_level);
+         to->flush_seqno = from->seqno;
          ctx->dirty |= ETNA_DIRTY_TEXTURE_CACHES;
       }
    }
@@ -344,13 +336,9 @@ static void
 etna_texture_barrier(struct pipe_context *pctx, unsigned flags)
 {
    struct etna_context *ctx = etna_context(pctx);
-
-   etna_set_state(ctx->stream, VIVS_GL_FLUSH_CACHE,
-                  VIVS_GL_FLUSH_CACHE_COLOR | VIVS_GL_FLUSH_CACHE_DEPTH |
-                  VIVS_GL_FLUSH_CACHE_TEXTURE);
-   etna_set_state(ctx->stream, VIVS_GL_FLUSH_CACHE,
-                  VIVS_GL_FLUSH_CACHE_TEXTUREVS);
-   etna_stall(ctx->stream, SYNC_RECIPIENT_RA, SYNC_RECIPIENT_PE);
+   /* clear color and texture cache to make sure that texture unit reads
+    * what has been written */
+   etna_set_state(ctx->stream, VIVS_GL_FLUSH_CACHE, VIVS_GL_FLUSH_CACHE_COLOR | VIVS_GL_FLUSH_CACHE_TEXTURE);
 }
 
 uint32_t

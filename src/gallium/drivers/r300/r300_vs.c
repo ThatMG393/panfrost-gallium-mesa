@@ -29,6 +29,8 @@
 #include "r300_reg.h"
 
 #include "tgsi/tgsi_dump.h"
+#include "tgsi/tgsi_parse.h"
+#include "tgsi/tgsi_ureg.h"
 
 #include "compiler/radeon_compiler.h"
 
@@ -65,12 +67,6 @@ static void r300_shader_read_vs_outputs(
             case TGSI_SEMANTIC_BCOLOR:
                 assert(index < ATTR_COLOR_COUNT);
                 vs_outputs->bcolor[index] = i;
-                break;
-
-            case TGSI_SEMANTIC_TEXCOORD:
-                assert(index < ATTR_TEXCOORD_COUNT);
-                vs_outputs->texcoord[index] = i;
-                vs_outputs->num_texcoord++;
                 break;
 
             case TGSI_SEMANTIC_GENERIC:
@@ -113,8 +109,8 @@ static void set_vertex_inputs_outputs(struct r300_vertex_program_compiler * c)
     struct r300_shader_semantics* outputs = &vs->outputs;
     struct tgsi_shader_info* info = &vs->info;
     int i, reg = 0;
-    bool any_bcolor_used = outputs->bcolor[0] != ATTR_UNUSED ||
-                           outputs->bcolor[1] != ATTR_UNUSED;
+    boolean any_bcolor_used = outputs->bcolor[0] != ATTR_UNUSED ||
+                              outputs->bcolor[1] != ATTR_UNUSED;
 
     /* Fill in the input mapping */
     for (i = 0; i < info->num_inputs; i++)
@@ -158,17 +154,10 @@ static void set_vertex_inputs_outputs(struct r300_vertex_program_compiler * c)
         }
     }
 
-    /* Generics. */
+    /* Texture coordinates. */
     for (i = 0; i < ATTR_GENERIC_COUNT; i++) {
         if (outputs->generic[i] != ATTR_UNUSED) {
             c->code->outputs[outputs->generic[i]] = reg++;
-        }
-    }
-
-    /* Texture coordinates. */
-    for (i = 0; i < ATTR_TEXCOORD_COUNT; i++) {
-        if (outputs->texcoord[i] != ATTR_UNUSED) {
-            c->code->outputs[outputs->texcoord[i]] = reg++;
         }
     }
 
@@ -199,12 +188,6 @@ void r300_translate_vertex_shader(struct r300_context *r300,
 
     r300_init_vs_outputs(r300, shader);
 
-    /* Nothing to do if the shader does not write gl_Position. */
-    if (vs->outputs.pos == ATTR_UNUSED) {
-        vs->dummy = true;
-        return;
-    }
-
     /* Setup the compiler */
     memset(&compiler, 0, sizeof(compiler));
     rc_init(&compiler.Base, &r300->vs_regalloc_state);
@@ -215,9 +198,10 @@ void r300_translate_vertex_shader(struct r300_context *r300,
     compiler.Base.debug = &r300->context.debug;
     compiler.Base.is_r500 = r300->screen->caps.is_r500;
     compiler.Base.disable_optimizations = DBG_ON(r300, DBG_NO_OPT);
-    compiler.Base.has_half_swizzles = false;
-    compiler.Base.has_presub = false;
-    compiler.Base.has_omod = false;
+    compiler.Base.has_half_swizzles = FALSE;
+    compiler.Base.has_presub = FALSE;
+    compiler.Base.has_omod = FALSE;
+    compiler.Base.needs_trig_input_transform = DBG_ON(r300, DBG_USE_TGSI);
     compiler.Base.max_temp_regs = 32;
     compiler.Base.max_constants = 256;
     compiler.Base.max_alu_insts = r300->screen->caps.is_r500 ? 1024 : 256;
@@ -230,18 +214,19 @@ void r300_translate_vertex_shader(struct r300_context *r300,
     /* Translate TGSI to our internal representation */
     ttr.compiler = &compiler.Base;
     ttr.info = &vs->info;
+    ttr.use_half_swizzles = FALSE;
 
     r300_tgsi_to_rc(&ttr, shader->state.tokens);
 
     if (ttr.error) {
         fprintf(stderr, "r300 VP: Cannot translate a shader. "
                 "Corresponding draws will be skipped.\n");
-        vs->dummy = true;
+        vs->dummy = TRUE;
         return;
     }
 
     if (compiler.Base.Program.Constants.Count > 200) {
-        compiler.Base.remove_unused_constants = true;
+        compiler.Base.remove_unused_constants = TRUE;
     }
 
     compiler.RequiredOutputs = ~(~0U << (vs->info.num_outputs + (vs->wpos ? 1 : 0)));
@@ -258,7 +243,7 @@ void r300_translate_vertex_shader(struct r300_context *r300,
                 " skipped.\n", compiler.Base.ErrorMsg);
 
         rc_destroy(&compiler.Base);
-        vs->dummy = true;
+        vs->dummy = TRUE;
         return;
     }
 

@@ -25,16 +25,14 @@
 
 #include "st_interop.h"
 #include "st_cb_texture.h"
-#include "st_cb_flush.h"
 #include "st_texture.h"
 
 #include "bufferobj.h"
 #include "texobj.h"
-#include "teximage.h"
 #include "syncobj.h"
 
 int
-st_interop_query_device_info(struct st_context *st,
+st_interop_query_device_info(struct st_context_iface *st,
                              struct mesa_glinterop_device_info *out)
 {
    struct pipe_screen *screen = st->pipe->screen;
@@ -43,13 +41,10 @@ st_interop_query_device_info(struct st_context *st,
    if (out->version == 0)
       return MESA_GLINTEROP_INVALID_VERSION;
 
-   /* PCI values are obsolete on version >= 4 of the interface */
-   if (out->version < 4) {
-      out->pci_segment_group = screen->get_param(screen, PIPE_CAP_PCI_GROUP);
-      out->pci_bus = screen->get_param(screen, PIPE_CAP_PCI_BUS);
-      out->pci_device = screen->get_param(screen, PIPE_CAP_PCI_DEVICE);
-      out->pci_function = screen->get_param(screen, PIPE_CAP_PCI_FUNCTION);
-   }
+   out->pci_segment_group = screen->get_param(screen, PIPE_CAP_PCI_GROUP);
+   out->pci_bus = screen->get_param(screen, PIPE_CAP_PCI_BUS);
+   out->pci_device = screen->get_param(screen, PIPE_CAP_PCI_DEVICE);
+   out->pci_function = screen->get_param(screen, PIPE_CAP_PCI_FUNCTION);
 
    out->vendor_id = screen->get_param(screen, PIPE_CAP_VENDOR_ID);
    out->device_id = screen->get_param(screen, PIPE_CAP_DEVICE_ID);
@@ -59,11 +54,8 @@ st_interop_query_device_info(struct st_context *st,
                                                                 out->driver_data_size,
                                                                 out->driver_data);
 
-   if (out->version >= 3 && screen->get_device_uuid)
-      screen->get_device_uuid(screen, out->device_uuid);
-
-   /* Instruct the caller that we support up-to version four of the interface */
-   out->version = MIN2(out->version, 4);
+   /* Instruct the caller that we support up-to version two of the interface */
+   out->version = MIN2(out->version, 2);
 
    return MESA_GLINTEROP_SUCCESS;
 }
@@ -171,12 +163,6 @@ lookup_object(struct gl_context *ctx,
          out->view_numlevels = 1;
          out->view_minlayer = 0;
          out->view_numlayers = 1;
-
-         if (out->version >= 2) {
-           out->width = rb->Width;
-           out->height = rb->Height;
-           out->depth = MAX2(1, rb->Depth);
-         }
       }
    } else {
       /* Texture objects.
@@ -244,15 +230,6 @@ lookup_object(struct gl_context *ctx,
             out->view_numlevels = obj->Attrib.NumLevels;
             out->view_minlayer = obj->Attrib.MinLayer;
             out->view_numlayers = obj->Attrib.NumLayers;
-
-            if (out->version >= 2) {
-               const GLuint face = _mesa_tex_target_to_face(in->target);;
-               struct gl_texture_image *image = obj->Image[face][in->miplevel];
-
-               out->width = image->Width;
-               out->height = image->Height;
-               out->depth = image->Depth;
-            }
          }
       }
    }
@@ -260,16 +237,16 @@ lookup_object(struct gl_context *ctx,
 }
 
 int
-st_interop_export_object(struct st_context *st,
+st_interop_export_object(struct st_context_iface *st,
                          struct mesa_glinterop_export_in *in,
                          struct mesa_glinterop_export_out *out)
 {
    struct pipe_screen *screen = st->pipe->screen;
-   struct gl_context *ctx = st->ctx;
+   struct gl_context *ctx = ((struct st_context *)st)->ctx;
    struct pipe_resource *res = NULL;
    struct winsys_handle whandle;
    unsigned usage;
-   bool success;
+   boolean success;
    bool need_export_dmabuf = true;
 
    /* There is no version 0, thus we do not support it */
@@ -277,7 +254,8 @@ st_interop_export_object(struct st_context *st,
       return MESA_GLINTEROP_INVALID_VERSION;
 
    /* Wait for glthread to finish to get up-to-date GL object lookups. */
-   _mesa_glthread_finish(st->ctx);
+   if (st->thread_finish)
+      st->thread_finish(st);
 
    /* Validate the OpenGL object and get pipe_resource. */
    simple_mtx_lock(&ctx->Shared->Mutex);
@@ -310,14 +288,9 @@ st_interop_export_object(struct st_context *st,
                                                                    &need_export_dmabuf);
    }
 
-   memset(&whandle, 0, sizeof(whandle));
-
    if (need_export_dmabuf) {
+      memset(&whandle, 0, sizeof(whandle));
       whandle.type = WINSYS_HANDLE_TYPE_FD;
-
-      /* OpenCL requires explicit flushes. */
-      if (out->version >= 2)
-         usage |= PIPE_HANDLE_USAGE_EXPLICIT_FLUSH;
 
       success = screen->resource_get_handle(screen, st->pipe, res, &whandle,
                                             usage);
@@ -332,11 +305,6 @@ st_interop_export_object(struct st_context *st,
 #else
       out->win32_handle = whandle.handle;
 #endif
-
-      if (out->version >= 2) {
-         out->modifier = whandle.modifier;
-         out->stride = whandle.stride;
-      }
    }
 
    simple_mtx_unlock(&ctx->Shared->Mutex);
@@ -344,9 +312,9 @@ st_interop_export_object(struct st_context *st,
    if (res->target == PIPE_BUFFER)
       out->buf_offset += whandle.offset;
 
-   /* Instruct the caller of the version of the interface we support */
-   in->version = MIN2(in->version, 2);
-   out->version = MIN2(out->version, 2);
+   /* Instruct the caller that we support up-to version one of the interface */
+   in->version = 1;
+   out->version = 1;
 
    return MESA_GLINTEROP_SUCCESS;
 }
@@ -366,30 +334,27 @@ flush_object(struct gl_context *ctx,
 
    ctx->pipe->flush_resource(ctx->pipe, res);
 
-   /* Instruct the caller of the version of the interface we support */
-   in->version = MIN2(in->version, 2);
+   /* Instruct the caller that we support up-to version one of the interface */
+   in->version = 1;
 
    return MESA_GLINTEROP_SUCCESS;
 }
 
 int
-st_interop_flush_objects(struct st_context *st,
+st_interop_flush_objects(struct st_context_iface *st,
                          unsigned count, struct mesa_glinterop_export_in *objects,
-                         struct mesa_glinterop_flush_out *out)
+                         GLsync *sync)
 {
-   struct gl_context *ctx = st->ctx;
-   bool flush_out_struct = false;
+   struct gl_context *ctx = ((struct st_context *)st)->ctx;
 
    /* Wait for glthread to finish to get up-to-date GL object lookups. */
-   _mesa_glthread_finish(st->ctx);
+   if (st->thread_finish)
+      st->thread_finish(st);
 
    simple_mtx_lock(&ctx->Shared->Mutex);
 
    for (unsigned i = 0; i < count; ++i) {
       int ret = flush_object(ctx, &objects[i]);
-
-      if (objects[i].version >= 2)
-         flush_out_struct = true;
 
       if (ret != MESA_GLINTEROP_SUCCESS) {
          simple_mtx_unlock(&ctx->Shared->Mutex);
@@ -399,21 +364,8 @@ st_interop_flush_objects(struct st_context *st,
 
    simple_mtx_unlock(&ctx->Shared->Mutex);
 
-   if (count > 0 && out) {
-      if (flush_out_struct) {
-         if (out->sync) {
-            *out->sync = _mesa_fence_sync(ctx, GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-         }
-         if (out->fence_fd) {
-            struct pipe_fence_handle *fence = NULL;
-            ctx->pipe->flush(ctx->pipe, &fence, PIPE_FLUSH_FENCE_FD | PIPE_FLUSH_ASYNC);
-            *out->fence_fd = ctx->screen->fence_get_fd(ctx->screen, fence);
-         }
-         out->version = MIN2(out->version, 1);
-      } else {
-         GLsync *sync = (GLsync *)out;
-         *sync = _mesa_fence_sync(ctx, GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-      }
+   if (count > 0 && sync) {
+      *sync = _mesa_fence_sync(ctx, GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
    }
 
    return MESA_GLINTEROP_SUCCESS;

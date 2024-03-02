@@ -24,7 +24,7 @@ libpowervr_pds_files = files(
   'pvr_pds.c',
   'pvr_pds_disasm.c',
   'pvr_pds_printer.c',
-  'pvr_pipeline_pds.c',
+  'pvr_xgl_pds.c',
 )
 
 libpowervr_pds_includes = include_directories(
@@ -43,7 +43,6 @@ libpowervr_pds = static_library(
     inc_imagination,
   ],
   c_args : [
-    imagination_c_args,
     no_override_init_args,
   ],
   gnu_symbol_visibility : 'hidden',

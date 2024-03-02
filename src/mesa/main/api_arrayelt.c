@@ -66,11 +66,11 @@ TYPE_IDX(GLenum t)
 static inline int
 vertex_format_to_index(const struct gl_vertex_format *vformat)
 {
-   if (vformat->User.Doubles)
+   if (vformat->Doubles)
       return 3;
-   else if (vformat->User.Integer)
+   else if (vformat->Integer)
       return 2;
-   else if (vformat->User.Normalized)
+   else if (vformat->Normalized)
       return 1;
    else
       return 0;
@@ -83,7 +83,7 @@ static struct _glapi_table *
 get_dispatch(void)
 {
    GET_CURRENT_CONTEXT(ctx);
-   return ctx->Dispatch.Current;
+   return ctx->CurrentServerDispatch;
 }
 
 
@@ -1395,8 +1395,8 @@ static const attrib_func AttribFuncsARB[4][4][NUM_TYPES] = {
 static inline attrib_func
 func_nv(const struct gl_vertex_format *vformat)
 {
-   return AttribFuncsNV[vformat->User.Normalized][vformat->User.Size-1]
-      [TYPE_IDX(vformat->User.Type)];
+   return AttribFuncsNV[vformat->Normalized][vformat->Size-1]
+      [TYPE_IDX(vformat->Type)];
 }
 
 
@@ -1406,8 +1406,8 @@ func_nv(const struct gl_vertex_format *vformat)
 static inline attrib_func
 func_arb(const struct gl_vertex_format *vformat)
 {
-   return AttribFuncsARB[vertex_format_to_index(vformat)][vformat->User.Size-1]
-      [TYPE_IDX(vformat->User.Type)];
+   return AttribFuncsARB[vertex_format_to_index(vformat)][vformat->Size-1]
+      [TYPE_IDX(vformat->Type)];
 }
 
 
@@ -1487,7 +1487,7 @@ _mesa_ArrayElement(GLint elt)
     * then we call PrimitiveRestartNV and return.
     */
    if (ctx->Array.PrimitiveRestart && (elt == ctx->Array.RestartIndex)) {
-      CALL_PrimitiveRestartNV(ctx->Dispatch.Current, ());
+      CALL_PrimitiveRestartNV(ctx->CurrentServerDispatch, ());
       return;
    }
 

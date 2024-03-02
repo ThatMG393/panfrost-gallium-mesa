@@ -27,6 +27,7 @@
 #include "util/u_memory.h"
 #include "util/u_bitmask.h"
 #include "translate/translate.h"
+#include "tgsi/tgsi_ureg.h"
 
 #include "svga_context.h"
 #include "svga_cmd.h"
@@ -109,7 +110,7 @@ emit_hw_cs(struct svga_context *svga, uint64_t dirty)
       if (ret != PIPE_OK)
          goto done;
 
-      svga->rebind.flags.cs = false;
+      svga->rebind.flags.cs = FALSE;
       svga->dirty |= SVGA_NEW_CS_VARIANT;
       svga->state.hw_draw.cs = variant;
    }

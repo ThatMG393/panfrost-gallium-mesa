@@ -35,7 +35,6 @@
 
 #include "glapi/glapi.h"
 #include "stw_device.h"
-#include "stw_gdishim.h"
 #include "gldrv.h"
 #include "stw_nopfuncs.h"
 

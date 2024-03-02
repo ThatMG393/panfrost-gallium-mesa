@@ -48,7 +48,7 @@
 # include <io.h>
 #endif
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "util/u_thread.h"
 #include "util/os_time.h"
 #include "util/simple_mtx.h"
@@ -284,7 +284,7 @@ trace_dump_trace_begin(void)
       atexit(trace_dump_trace_close);
 
       const char *trigger = debug_get_option("GALLIUM_TRACE_TRIGGER", NULL);
-      if (trigger && __normal_user()) {
+      if (trigger) {
          trigger_filename = strdup(trigger);
          trigger_active = false;
       } else
@@ -444,7 +444,7 @@ void trace_dump_ret_end(void)
    trace_dump_newline();
 }
 
-void trace_dump_bool(bool value)
+void trace_dump_bool(int value)
 {
    if (!dumping)
       return;
@@ -452,20 +452,20 @@ void trace_dump_bool(bool value)
    trace_dump_writef("<bool>%c</bool>", value ? '1' : '0');
 }
 
-void trace_dump_int(int64_t value)
+void trace_dump_int(long long int value)
 {
    if (!dumping)
       return;
 
-   trace_dump_writef("<int>%" PRIi64 "</int>", value);
+   trace_dump_writef("<int>%lli</int>", value);
 }
 
-void trace_dump_uint(uint64_t value)
+void trace_dump_uint(long long unsigned value)
 {
    if (!dumping)
       return;
 
-   trace_dump_writef("<uint>%" PRIu64 "</uint>", value);
+   trace_dump_writef("<uint>%llu</uint>", value);
 }
 
 void trace_dump_float(double value)
@@ -501,18 +501,17 @@ void trace_dump_box_bytes(const void *data,
                           struct pipe_resource *resource,
 			  const struct pipe_box *box,
 			  unsigned stride,
-			  uint64_t slice_stride)
+			  unsigned slice_stride)
 {
    enum pipe_format format = resource->format;
-   uint64_t size;
+   size_t size;
 
    assert(box->height > 0);
    assert(box->depth > 0);
 
-   size = util_format_get_nblocksx(format, box->width ) *
-          (uint64_t)util_format_get_blocksize(format) +
-          (util_format_get_nblocksy(format, box->height) - 1) *
-          (uint64_t)stride + (box->depth - 1) * slice_stride;
+   size =  util_format_get_nblocksx(format, box->width )      * util_format_get_blocksize(format)
+        + (util_format_get_nblocksy(format, box->height) - 1) * stride
+        +                                  (box->depth   - 1) * slice_stride;
 
    /*
     * Only dump buffer transfers to avoid huge files.
@@ -522,7 +521,6 @@ void trace_dump_box_bytes(const void *data,
       size = 0;
    }
 
-   assert(size <= SIZE_MAX);
    trace_dump_bytes(data, size);
 }
 
@@ -660,8 +658,14 @@ void trace_dump_nir(void *nir)
    if (!dumping)
       return;
 
-   if (--nir_count < 0) {
+   if (nir_count < 0) {
       fputs("<string>...</string>", stream);
+      return;
+   }
+
+   if ((nir_count--) == 0) {
+      fputs("<string>Set GALLIUM_TRACE_NIR to a sufficiently big number "
+            "to enable NIR shader dumping.</string>", stream);
       return;
    }
 

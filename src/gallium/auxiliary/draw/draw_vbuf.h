@@ -37,7 +37,7 @@
 #define DRAW_VBUF_H_
 
 
-#include "util/compiler.h"
+#include "pipe/p_compiler.h"
 #include "pipe/p_defines.h"
 
 
@@ -65,9 +65,9 @@ struct vbuf_render {
     *
     * Currently optional.
     */
-   bool (*need_pipeline)(const struct vbuf_render *render,
-                         const struct pipe_rasterizer_state *rasterizer,
-                         unsigned int prim);
+   boolean (*need_pipeline)(const struct vbuf_render *render,
+                            const struct pipe_rasterizer_state *rasterizer,
+                            unsigned int prim);
 
 
    /**
@@ -82,14 +82,14 @@ struct vbuf_render {
     * Hardware renderers will use ttm memory, others will just malloc
     * something.
     */
-   bool (*allocate_vertices)(struct vbuf_render *,
-                             uint16_t vertex_size,
-                             uint16_t nr_vertices);
+   boolean (*allocate_vertices)(struct vbuf_render *,
+                                ushort vertex_size,
+                                ushort nr_vertices);
 
    void *(*map_vertices)(struct vbuf_render *);
    void (*unmap_vertices)(struct vbuf_render *,
-                          uint16_t min_index,
-                          uint16_t max_index);
+                          ushort min_index,
+                          ushort max_index);
 
    /**
     * Notify the renderer of the current primitive when it changes.
@@ -97,7 +97,7 @@ struct vbuf_render {
     * the discretion of the driver, for the benefit of the passthrough
     * path.
     */
-   void (*set_primitive)(struct vbuf_render *, enum mesa_prim prim);
+   void (*set_primitive)(struct vbuf_render *, enum pipe_prim_type prim);
 
    /**
     * Notify the renderer of the current view index.
@@ -109,14 +109,14 @@ struct vbuf_render {
     * must complete this call, if necessary splitting the index list itself.
     */
    void (*draw_elements)(struct vbuf_render *,
-                         const uint16_t *indices,
-                         unsigned nr_indices);
+                         const ushort *indices,
+                         uint nr_indices);
 
    /* Draw non-indexed primitives.
     */
    void (*draw_arrays)(struct vbuf_render *,
                        unsigned start,
-                       unsigned nr);
+                       uint nr);
 
    /**
     * Called when vbuf is done with this set of vertices:

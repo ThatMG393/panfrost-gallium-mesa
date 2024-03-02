@@ -30,17 +30,17 @@
 #include "st_context.h"
 
 int
-st_interop_query_device_info(struct st_context *st,
+st_interop_query_device_info(struct st_context_iface *st,
                              struct mesa_glinterop_device_info *out);
 
 int
-st_interop_export_object(struct st_context *st,
+st_interop_export_object(struct st_context_iface *st,
                          struct mesa_glinterop_export_in *in,
                          struct mesa_glinterop_export_out *out);
 
 int
-st_interop_flush_objects(struct st_context *st,
+st_interop_flush_objects(struct st_context_iface *st,
                          unsigned count, struct mesa_glinterop_export_in *objects,
-                         struct mesa_glinterop_flush_out *out);
+                         GLsync *sync);
 
 #endif /* ST_INTEROP_H */
