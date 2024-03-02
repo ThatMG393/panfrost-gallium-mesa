@@ -39,8 +39,12 @@
 extern "C" {
 #endif
 
-struct cso_context;
-struct u_vbuf;
+struct cso_context {
+   struct pipe_context *pipe;
+
+   /* This is equal to either pipe_context::draw_vbo or u_vbuf_draw_vbo. */
+   pipe_draw_func draw_vbo;
+};
 
 #define CSO_NO_USER_VERTEX_BUFFERS (1 << 0)
 #define CSO_NO_64B_VERTEX_BUFFERS  (1 << 1)
@@ -54,9 +58,6 @@ cso_unbind_context(struct cso_context *ctx);
 
 void
 cso_destroy_context(struct cso_context *cso);
-
-struct pipe_context *
-cso_get_pipe_context(struct cso_context *cso);
 
 enum pipe_error
 cso_set_blend(struct cso_context *cso, const struct pipe_blend_state *blend);
@@ -96,8 +97,7 @@ cso_set_vertex_elements(struct cso_context *ctx,
                         const struct cso_velems_state *velems);
 
 void cso_set_vertex_buffers(struct cso_context *ctx,
-                            unsigned start_slot, unsigned count,
-                            unsigned unbind_trailing_count,
+                            unsigned count,
                             bool take_ownership,
                             const struct pipe_vertex_buffer *buffers);
 
@@ -113,7 +113,6 @@ enum cso_unbind_flags {
    CSO_UNBIND_FS_IMAGE0 = (1 << 2),
    CSO_UNBIND_VS_CONSTANTS = (1 << 3),
    CSO_UNBIND_FS_CONSTANTS = (1 << 4),
-   CSO_UNBIND_VERTEX_BUFFER0 = (1 << 5),
 };
 
 /*
@@ -141,7 +140,7 @@ cso_set_viewport(struct cso_context *cso,
 
 void
 cso_set_viewport_dims(struct cso_context *ctx,
-                      float width, float height, boolean invert);
+                      float width, float height, bool invert);
 
 void
 cso_set_sample_mask(struct cso_context *cso, unsigned stencil_mask);
@@ -156,7 +155,7 @@ cso_set_stencil_ref(struct cso_context *cso,
 void
 cso_set_render_condition(struct cso_context *cso,
                          struct pipe_query *query,
-                         boolean condition,
+                         bool condition,
                          enum pipe_render_cond_flag mode);
 
 /* gap */
@@ -207,33 +206,42 @@ void
 cso_set_vertex_buffers_and_elements(struct cso_context *ctx,
                                     const struct cso_velems_state *velems,
                                     unsigned vb_count,
-                                    unsigned unbind_trailing_vb_count,
-                                    bool take_ownership,
                                     bool uses_user_vertex_buffers,
                                     const struct pipe_vertex_buffer *vbuffers);
 
 void
+cso_draw_arrays_instanced(struct cso_context *cso, unsigned mode,
+                          unsigned start, unsigned count,
+                          unsigned start_instance, unsigned instance_count);
+
+void
+cso_draw_arrays(struct cso_context *cso, unsigned mode, unsigned start, unsigned count);
+
+/* Inline functions. */
+
+static ALWAYS_INLINE void
 cso_draw_vbo(struct cso_context *cso,
              const struct pipe_draw_info *info,
              unsigned drawid_offset,
              const struct pipe_draw_indirect_info *indirect,
-             const struct pipe_draw_start_count_bias draw);
+             const struct pipe_draw_start_count_bias *draws,
+             unsigned num_draws)
+{
+   /* We can't have both indirect drawing and SO-vertex-count drawing */
+   assert(!indirect ||
+          indirect->buffer == NULL ||
+          indirect->count_from_stream_output == NULL);
 
-/* info->draw_id can be changed by the callee if increment_draw_id is true. */
-void
-cso_multi_draw(struct cso_context *cso,
-               struct pipe_draw_info *info,
-               unsigned drawid_offset,
-               const struct pipe_draw_start_count_bias *draws,
-               unsigned num_draws);
+   /* We can't have SO-vertex-count drawing with an index buffer */
+   assert(info->index_size == 0 ||
+          !indirect ||
+          indirect->count_from_stream_output == NULL);
 
-void
-cso_draw_arrays_instanced(struct cso_context *cso, uint mode,
-                          uint start, uint count,
-                          uint start_instance, uint instance_count);
+   /* Indirect only uses indirect->draw_count, not num_draws. */
+   assert(!indirect || num_draws == 1);
 
-void
-cso_draw_arrays(struct cso_context *cso, uint mode, uint start, uint count);
+   cso->draw_vbo(cso->pipe, info, drawid_offset, indirect, draws, num_draws);
+}
 
 #ifdef __cplusplus
 }

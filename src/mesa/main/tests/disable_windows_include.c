@@ -22,6 +22,9 @@
  */
 
 /* find | grep .*h$ >../headers.txt */
+#include <indices/u_indices.h>
+#include <indices/u_indices_priv.h>
+#include <indices/u_primconvert.h>
 #include <mesa/main/accum.h>
 #include <mesa/main/api_arrayelt.h>
 #include <mesa/main/arrayobj.h>
@@ -135,9 +138,7 @@
 #include <mesa/math/m_eval.h>
 #include <mesa/math/m_matrix.h>
 #include <mesa/program/arbprogparse.h>
-#include <mesa/program/link_program.h>
 #include <mesa/program/program.h>
-#include <mesa/program/programopt.h>
 #include <mesa/program/program_parser.h>
 #include <mesa/program/prog_cache.h>
 #include <mesa/program/prog_instruction.h>
@@ -168,7 +169,7 @@
 #include <mesa/state_tracker/st_extensions.h>
 #include <mesa/state_tracker/st_format.h>
 #include <mesa/state_tracker/st_gen_mipmap.h>
-#include <mesa/state_tracker/st_glsl_to_ir.h>
+#include <mesa/state_tracker/st_glsl_to_nir.h>
 #include <mesa/state_tracker/st_manager.h>
 #include <mesa/state_tracker/st_nir.h>
 #include <mesa/state_tracker/st_pbo.h>
@@ -224,9 +225,6 @@
 #include <util/glheader.h>
 #include <util/half_float.h>
 #include <util/hash_table.h>
-#include <util/indices/u_indices.h>
-#include <util/indices/u_indices_priv.h>
-#include <util/indices/u_primconvert.h>
 #include <util/list.h>
 #include <util/log.h>
 #include <util/macros.h>

@@ -30,13 +30,13 @@ Write-Output installdir:$installdir
 Write-Output sourcedir:$sourcedir
 
 $MyPath = $MyInvocation.MyCommand.Path | Split-Path -Parent
-. "$MyPath\mesa_vs_init.ps1"
+. "$MyPath\mesa_init_msvc.ps1"
 
 $depsInstallPath="C:\mesa-deps"
 
 Push-Location $builddir
 
-meson `
+meson setup `
 --default-library=shared `
 --buildtype=release `
 --wrap-mode=nodownload `
@@ -49,8 +49,8 @@ meson `
 -Dshared-llvm=disabled `
 -Dvulkan-drivers="swrast,amd,microsoft-experimental" `
 -Dgallium-drivers="swrast,d3d12,zink" `
--Dgallium-va=true `
--Dvideo-codecs="h264dec,h264enc,h265dec,h265enc,vc1dec" `
+-Dgallium-va=enabled `
+-Dvideo-codecs="all" `
 -Dshared-glapi=enabled `
 -Dgles1=enabled `
 -Dgles2=enabled `
@@ -83,6 +83,5 @@ Copy-Item ".\.gitlab-ci\windows\spirv2dxil_check.ps1" -Destination $installdir
 Copy-Item ".\.gitlab-ci\windows\spirv2dxil_run.ps1" -Destination $installdir
 
 Copy-Item ".\.gitlab-ci\windows\deqp_runner_run.ps1" -Destination $installdir
-Copy-Item ".\src\microsoft\ci\deqp-dozen.toml" -Destination $installdir
 
-Get-ChildItem -Recurse -Filter "ci" | Get-ChildItem -Filter "*.txt" | Copy-Item -Destination $installdir
+Get-ChildItem -Recurse -Filter "ci" | Get-ChildItem -Include "*.txt","*.toml" | Copy-Item -Destination $installdir

@@ -25,6 +25,7 @@
 
 #include "vk_object.h"
 
+#include "util/detect_os.h"
 #include "util/u_math.h"
 
 #ifdef __cplusplus
@@ -36,13 +37,20 @@ struct vk_image {
 
    VkImageCreateFlags create_flags;
    VkImageType image_type;
+
+   /* format is from VkImageCreateInfo::format or
+    * VkExternalFormatANDROID::externalFormat.  This works because only one of
+    * them can be defined and the runtime uses VkFormat for external formats.
+    */
    VkFormat format;
+
    VkExtent3D extent;
    uint32_t mip_levels;
    uint32_t array_layers;
    VkSampleCountFlagBits samples;
    VkImageTiling tiling;
    VkImageUsageFlags usage;
+   VkSharingMode sharing_mode;
 
    /* Derived from format */
    VkImageAspectFlags aspects;
@@ -56,7 +64,7 @@ struct vk_image {
    /* wsi_image_create_info::scanout */
    bool wsi_legacy_scanout;
 
-#ifndef _WIN32
+#if DETECT_OS_LINUX || DETECT_OS_BSD
    /* VK_EXT_drm_format_modifier
     *
     * Initialized by vk_image_create/init() to DRM_FORMAT_MOD_INVALID.  It's
@@ -69,9 +77,13 @@ struct vk_image {
    uint64_t drm_format_mod;
 #endif
 
-#ifdef ANDROID
-   /* VK_ANDROID_external_memory_android_hardware_buffer */
-   uint64_t android_external_format;
+#if DETECT_OS_ANDROID
+   /* AHARDWAREBUFFER_FORMAT for this image or 0
+    *
+    * A default is provided by the Vulkan runtime code based on the VkFormat
+    * but it may be overridden by the driver as needed.
+    */
+   uint32_t ahb_format;
 #endif
 };
 VK_DEFINE_NONDISP_HANDLE_CASTS(vk_image, base, VkImage,
@@ -202,6 +214,14 @@ struct vk_image_buffer_layout
 vk_image_buffer_copy_layout(const struct vk_image *image,
                             const VkBufferImageCopy2* region);
 
+struct vk_image_buffer_layout
+vk_memory_to_image_copy_layout(const struct vk_image *image,
+                               const VkMemoryToImageCopyEXT* region);
+
+struct vk_image_buffer_layout
+vk_image_to_memory_copy_layout(const struct vk_image *image,
+                               const VkImageToMemoryCopyEXT* region);
+
 struct vk_image_view {
    struct vk_object_base base;
 
@@ -209,7 +229,7 @@ struct vk_image_view {
    struct vk_image *image;
    VkImageViewType view_type;
 
-   /** VkImageViewCreateInfo::format */
+   /** VkImageViewCreateInfo::format or vk_image::format */
    VkFormat format;
 
    /** Image view format, relative to the selected aspects
@@ -225,7 +245,8 @@ struct vk_image_view {
     * For color images, we have three cases:
     *
     *  1. It's a single-plane image in which case this is the unmodified
-    *     format provided to VkImageViewCreateInfo::format.
+    *     format provided to VkImageViewCreateInfo::format or
+    *     vk_image::format.
     *
     *  2. It's a YCbCr view of a multi-plane image in which case the
     *     client will have asked for VK_IMAGE_ASPECT_COLOR_BIT and the
@@ -278,6 +299,25 @@ struct vk_image_view {
    uint32_t level_count;
    uint32_t base_array_layer;
    uint32_t layer_count;
+
+   /* VK_EXT_sliced_view_of_3d */
+   struct {
+      /* VkImageViewSlicedCreateInfoEXT::sliceOffset
+       *
+       * This field will be 0 for 1D and 2D images, 2D views of 3D images, or
+       * when no VkImageViewSlicedCreateInfoEXT is provided.
+       */
+      uint32_t z_slice_offset;
+
+      /* VkImageViewSlicedCreateInfoEXT::sliceCount
+       *
+       * This field will be 1 for 1D and 2D images or 2D views of 3D images.
+       * For 3D views, it will be VkImageViewSlicedCreateInfoEXT::sliceCount
+       * or image view depth (see vk_image_view::extent) when no
+       * VkImageViewSlicedCreateInfoEXT is provided.
+       */
+      uint32_t z_slice_count;
+   } storage;
 
    /* VK_EXT_image_view_min_lod */
    float min_lod;

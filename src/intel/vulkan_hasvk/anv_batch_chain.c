@@ -781,7 +781,7 @@ anv_cmd_buffer_alloc_binding_table(struct anv_cmd_buffer *cmd_buffer,
 {
    struct anv_state *bt_block = u_vector_head(&cmd_buffer->bt_block_states);
 
-   uint32_t bt_size = align_u32(entries * 4, 32);
+   uint32_t bt_size = align(entries * 4, 32);
 
    struct anv_state state = cmd_buffer->bt_next;
    if (bt_size > state.alloc_size)
@@ -1616,7 +1616,7 @@ anv_execbuf_add_syncobj(struct anv_device *device,
       .handle = syncobj,
       .flags = flags,
    };
-   if (timeline_value)
+   if (exec->syncobj_values)
       exec->syncobj_values[exec->syncobj_count] = timeline_value;
 
    exec->syncobj_count++;
@@ -1684,9 +1684,11 @@ setup_execbuf_for_cmd_buffer(struct anv_execbuf *execbuf,
          return result;
    } else {
       /* Add surface dependencies (BOs) to the execbuf */
-      anv_execbuf_add_bo_bitset(cmd_buffer->device, execbuf,
-                                cmd_buffer->surface_relocs.dep_words,
-                                cmd_buffer->surface_relocs.deps, 0);
+      result = anv_execbuf_add_bo_bitset(cmd_buffer->device, execbuf,
+                                         cmd_buffer->surface_relocs.dep_words,
+                                         cmd_buffer->surface_relocs.deps, 0);
+      if (result != VK_SUCCESS)
+         return result;
    }
 
    /* First, we walk over all of the bos we've seen and add them and their
@@ -1897,15 +1899,17 @@ setup_execbuf_for_cmd_buffers(struct anv_execbuf *execbuf,
       anv_cmd_buffer_process_relocs(cmd_buffers[0], &cmd_buffers[0]->surface_relocs);
    }
 
-   if (device->physical->memory.need_clflush) {
+#ifdef SUPPORT_INTEL_INTEGRATED_GPUS
+   if (device->physical->memory.need_flush) {
       __builtin_ia32_mfence();
       for (uint32_t i = 0; i < num_cmd_buffers; i++) {
          u_vector_foreach(bbo, &cmd_buffers[i]->seen_bbos) {
-            for (uint32_t l = 0; l < (*bbo)->length; l += CACHELINE_SIZE)
-               __builtin_ia32_clflush((*bbo)->bo->map + l);
+            intel_flush_range_no_fence((*bbo)->bo->map, (*bbo)->length);
          }
       }
+      __builtin_ia32_mfence();
    }
+#endif
 
    struct anv_batch *batch = &cmd_buffers[0]->batch;
    execbuf->execbuf = (struct drm_i915_gem_execbuffer2) {
@@ -1984,8 +1988,10 @@ setup_utrace_execbuf(struct anv_execbuf *execbuf, struct anv_queue *queue,
       flush->batch_bo->exec_obj_index = last_idx;
    }
 
-   if (device->physical->memory.need_clflush)
+#ifdef SUPPORT_INTEL_INTEGRATED_GPUS
+   if (device->physical->memory.need_flush)
       intel_flush_range(flush->batch_bo->map, flush->batch_bo->size);
+#endif
 
    execbuf->execbuf = (struct drm_i915_gem_execbuffer2) {
       .buffers_ptr = (uintptr_t) execbuf->objects,
@@ -2383,14 +2389,14 @@ anv_queue_submit(struct vk_queue *vk_queue,
       return VK_SUCCESS;
    }
 
-   uint64_t start_ts = intel_ds_begin_submit(queue->ds);
+   uint64_t start_ts = intel_ds_begin_submit(&queue->ds);
 
    pthread_mutex_lock(&device->mutex);
    result = anv_queue_submit_locked(queue, submit);
    /* Take submission ID under lock */
    pthread_mutex_unlock(&device->mutex);
 
-   intel_ds_end_submit(queue->ds, start_ts);
+   intel_ds_end_submit(&queue->ds, start_ts);
 
    return result;
 }
@@ -2411,7 +2417,7 @@ anv_queue_submit_simple_batch(struct anv_queue *queue,
     */
    assert(vk_queue_is_empty(&queue->vk));
 
-   uint32_t batch_size = align_u32(batch->next - batch->start, 8);
+   uint32_t batch_size = align(batch->next - batch->start, 8);
 
    struct anv_bo *batch_bo = NULL;
    result = anv_bo_pool_alloc(&device->batch_bo_pool, batch_size, &batch_bo);
@@ -2419,8 +2425,10 @@ anv_queue_submit_simple_batch(struct anv_queue *queue,
       return result;
 
    memcpy(batch_bo->map, batch->start, batch_size);
-   if (device->physical->memory.need_clflush)
+#ifdef SUPPORT_INTEL_INTEGRATED_GPUS
+   if (device->physical->memory.need_flush)
       intel_flush_range(batch_bo->map, batch_size);
+#endif
 
    struct anv_execbuf execbuf = {
       .alloc = &queue->device->vk.alloc,

@@ -81,7 +81,7 @@ get_named_matrix_stack(struct gl_context *ctx, GLenum mode, const char* caller)
    case GL_MATRIX5_ARB:
    case GL_MATRIX6_ARB:
    case GL_MATRIX7_ARB:
-      if (ctx->API == API_OPENGL_COMPAT
+      if (_mesa_is_desktop_gl_compat(ctx)
           && (ctx->Extensions.ARB_vertex_program ||
               ctx->Extensions.ARB_fragment_program)) {
          const GLuint m = mode - GL_MATRIX0_ARB;
@@ -568,15 +568,10 @@ _mesa_MatrixLoadfEXT( GLenum matrixMode, const GLfloat *m )
 static void
 matrix_mult(struct gl_matrix_stack *stack, const GLfloat *m, const char* caller)
 {
-   static float identity[16] = {
-      1, 0, 0, 0,
-      0, 1, 0, 0,
-      0, 0, 1, 0,
-      0, 0, 0, 1,
-   };
-
    GET_CURRENT_CONTEXT(ctx);
-   if (!m || !memcmp(m, identity, sizeof(identity)))
+
+   /* glthread filters out identity matrices, so don't do it again. */
+   if (!m || (!ctx->GLThread.enabled && _mesa_matrix_is_identity(m)))
       return;
 
    if (MESA_VERBOSE & VERBOSE_API)

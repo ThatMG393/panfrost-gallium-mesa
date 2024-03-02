@@ -31,14 +31,13 @@ _mesa_glthread_ProgramChanged(struct gl_context *ctx)
 {
    struct glthread_state *glthread = &ctx->GLThread;
 
-   /* Track the last change. */
-   p_atomic_set(&glthread->LastProgramChangeBatch, glthread->next);
-   _mesa_glthread_flush_batch(ctx);
+   /* Track the last change to shader programs. */
+   _mesa_glthread_fence_call(ctx, &glthread->LastProgramChangeBatch);
 }
 
 uint32_t
 _mesa_unmarshal_GetActiveUniform(struct gl_context *ctx,
-                                 const struct marshal_cmd_GetActiveUniform *cmd)
+                                 const struct marshal_cmd_GetActiveUniform *restrict cmd)
 {
    unreachable("never executed");
    return 0;
@@ -48,11 +47,7 @@ static void
 wait_for_glLinkProgram(struct gl_context *ctx)
 {
    /* Wait for the last glLinkProgram call. */
-   int batch = p_atomic_read(&ctx->GLThread.LastProgramChangeBatch);
-   if (batch != -1) {
-      util_queue_fence_wait(&ctx->GLThread.batches[batch].fence);
-      assert(p_atomic_read(&ctx->GLThread.LastProgramChangeBatch) == -1);
-   }
+   _mesa_glthread_wait_for_call(ctx, &ctx->GLThread.LastProgramChangeBatch);
 }
 
 void GLAPIENTRY
@@ -65,7 +60,7 @@ _mesa_marshal_GetActiveUniform(GLuint program, GLuint index, GLsizei bufSize,
    /* This will generate GL_INVALID_OPERATION, as it should. */
    if (ctx->GLThread.inside_begin_end) {
       _mesa_glthread_finish_before(ctx, "GetActiveUniform");
-      CALL_GetActiveUniform(ctx->CurrentServerDispatch,
+      CALL_GetActiveUniform(ctx->Dispatch.Current,
                             (program, index, bufSize, length, size, type,
                              name));
       return;
@@ -86,7 +81,7 @@ _mesa_marshal_GetActiveUniform(GLuint program, GLuint index, GLsizei bufSize,
 
 uint32_t
 _mesa_unmarshal_GetUniformLocation(struct gl_context *ctx,
-                                   const struct marshal_cmd_GetUniformLocation *cmd)
+                                   const struct marshal_cmd_GetUniformLocation *restrict cmd)
 {
    unreachable("never executed");
    return 0;
@@ -100,7 +95,7 @@ _mesa_marshal_GetUniformLocation(GLuint program, const GLchar *name)
    /* This will generate GL_INVALID_OPERATION, as it should. */
    if (ctx->GLThread.inside_begin_end) {
       _mesa_glthread_finish_before(ctx, "GetUniformLocation");
-      return CALL_GetUniformLocation(ctx->CurrentServerDispatch, (program, name));
+      return CALL_GetUniformLocation(ctx->Dispatch.Current, (program, name));
    }
 
    wait_for_glLinkProgram(ctx);

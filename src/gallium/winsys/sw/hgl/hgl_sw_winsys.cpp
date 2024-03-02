@@ -27,7 +27,7 @@
 
 #include <stdio.h>
 
-#include "pipe/p_compiler.h"
+#include "util/compiler.h"
 #include "pipe/p_defines.h"
 #include "util/format/u_formats.h"
 #include "util/u_inlines.h"
@@ -132,6 +132,7 @@ hgl_winsys_displaytarget_create(struct sw_winsys* winsys,
 		haikuDisplayTarget->data = NULL;
 		haikuDisplayTarget->bitmap = new BBitmap(
 			BRect(0, 0, width - 1, height - 1),
+			0,
 			haikuDisplayTarget->colorSpace,
 			haikuDisplayTarget->stride);
 	} else {
@@ -210,15 +211,16 @@ hgl_winsys_displaytarget_unmap(struct sw_winsys* winsys,
 static void
 hgl_winsys_displaytarget_display(struct sw_winsys* winsys,
 	struct sw_displaytarget* displayTarget, void* contextPrivate,
-	struct pipe_box *box)
+   unsigned nboxes,
+   struct pipe_box *box)
 {
 	assert(contextPrivate);
 
 	struct haiku_displaytarget* haikuDisplayTarget
 		= hgl_sw_displaytarget(displayTarget);
 
-	HGLWinsysContext *context = (HGLWinsysContext*)contextPrivate;
-	context->Display(haikuDisplayTarget->bitmap, NULL);
+	BitmapHook *context = (BitmapHook*)contextPrivate;
+	context->SetBitmap(haikuDisplayTarget->bitmap);
 }
 
 

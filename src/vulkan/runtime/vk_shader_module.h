@@ -24,8 +24,9 @@
 #ifndef VK_SHADER_MODULE_H
 #define VK_SHADER_MODULE_H
 
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_core.h>
 
+#include "util/mesa-blake3.h"
 #include "compiler/shader_enums.h"
 #include "vk_object.h"
 
@@ -40,7 +41,7 @@ struct spirv_to_nir_options;
 struct vk_shader_module {
    struct vk_object_base base;
    struct nir_shader *nir;
-   unsigned char sha1[20];
+   blake3_hash hash;
    uint32_t size;
    char data[0];
 };
@@ -49,6 +50,10 @@ extern const uint8_t vk_shaderModuleIdentifierAlgorithmUUID[VK_UUID_SIZE];
 
 VK_DEFINE_NONDISP_HANDLE_CASTS(vk_shader_module, base, VkShaderModule,
                                VK_OBJECT_TYPE_SHADER_MODULE)
+
+void vk_shader_module_init(struct vk_device *device,
+                           struct vk_shader_module *module,
+                           const VkShaderModuleCreateInfo *create_info);
 
 uint32_t vk_shader_module_spirv_version(const struct vk_shader_module *mod);
 

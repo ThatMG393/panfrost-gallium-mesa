@@ -26,96 +26,6 @@
 #include "util/timespec.h"
 #include "compiler/nir/nir_builder.h"
 
-static const char *v3dv_counters[][3] = {
-   {"FEP", "FEP-valid-primitives-no-rendered-pixels", "[FEP] Valid primitives that result in no rendered pixels, for all rendered tiles"},
-   {"FEP", "FEP-valid-primitives-rendered-pixels", "[FEP] Valid primitives for all rendered tiles (primitives may be counted in more than one tile)"},
-   {"FEP", "FEP-clipped-quads", "[FEP] Early-Z/Near/Far clipped quads"},
-   {"FEP", "FEP-valid-quads", "[FEP] Valid quads"},
-   {"TLB", "TLB-quads-not-passing-stencil-test", "[TLB] Quads with no pixels passing the stencil test"},
-   {"TLB", "TLB-quads-not-passing-z-and-stencil-test", "[TLB] Quads with no pixels passing the Z and stencil tests"},
-   {"TLB", "TLB-quads-passing-z-and-stencil-test", "[TLB] Quads with any pixels passing the Z and stencil tests"},
-   {"TLB", "TLB-quads-with-zero-coverage", "[TLB] Quads with all pixels having zero coverage"},
-   {"TLB", "TLB-quads-with-non-zero-coverage", "[TLB] Quads with any pixels having non-zero coverage"},
-   {"TLB", "TLB-quads-written-to-color-buffer", "[TLB] Quads with valid pixels written to colour buffer"},
-   {"PTB", "PTB-primitives-discarded-outside-viewport", "[PTB] Primitives discarded by being outside the viewport"},
-   {"PTB", "PTB-primitives-need-clipping", "[PTB] Primitives that need clipping"},
-   {"PTB", "PTB-primitives-discared-reversed", "[PTB] Primitives that are discarded because they are reversed"},
-   {"QPU", "QPU-total-idle-clk-cycles", "[QPU] Total idle clock cycles for all QPUs"},
-   {"QPU", "QPU-total-active-clk-cycles-vertex-coord-shading", "[QPU] Total active clock cycles for all QPUs doing vertex/coordinate/user shading (counts only when QPU is not stalled)"},
-   {"QPU", "QPU-total-active-clk-cycles-fragment-shading", "[QPU] Total active clock cycles for all QPUs doing fragment shading (counts only when QPU is not stalled)"},
-   {"QPU", "QPU-total-clk-cycles-executing-valid-instr", "[QPU] Total clock cycles for all QPUs executing valid instructions"},
-   {"QPU", "QPU-total-clk-cycles-waiting-TMU", "[QPU] Total clock cycles for all QPUs stalled waiting for TMUs only (counter won't increment if QPU also stalling for another reason)"},
-   {"QPU", "QPU-total-clk-cycles-waiting-scoreboard", "[QPU] Total clock cycles for all QPUs stalled waiting for Scoreboard only (counter won't increment if QPU also stalling for another reason)"},
-   {"QPU", "QPU-total-clk-cycles-waiting-varyings", "[QPU] Total clock cycles for all QPUs stalled waiting for Varyings only (counter won't increment if QPU also stalling for another reason)"},
-   {"QPU", "QPU-total-instr-cache-hit", "[QPU] Total instruction cache hits for all slices"},
-   {"QPU", "QPU-total-instr-cache-miss", "[QPU] Total instruction cache misses for all slices"},
-   {"QPU", "QPU-total-uniform-cache-hit", "[QPU] Total uniforms cache hits for all slices"},
-   {"QPU", "QPU-total-uniform-cache-miss", "[QPU] Total uniforms cache misses for all slices"},
-   {"TMU", "TMU-total-text-quads-access", "[TMU] Total texture cache accesses"},
-   {"TMU", "TMU-total-text-cache-miss", "[TMU] Total texture cache misses (number of fetches from memory/L2cache)"},
-   {"VPM", "VPM-total-clk-cycles-VDW-stalled", "[VPM] Total clock cycles VDW is stalled waiting for VPM access"},
-   {"VPM", "VPM-total-clk-cycles-VCD-stalled", "[VPM] Total clock cycles VCD is stalled waiting for VPM access"},
-   {"CLE", "CLE-bin-thread-active-cycles", "[CLE] Bin thread active cycles"},
-   {"CLE", "CLE-render-thread-active-cycles", "[CLE] Render thread active cycles"},
-   {"L2T", "L2T-total-cache-hit", "[L2T] Total Level 2 cache hits"},
-   {"L2T", "L2T-total-cache-miss", "[L2T] Total Level 2 cache misses"},
-   {"CORE", "cycle-count", "[CORE] Cycle counter"},
-   {"QPU", "QPU-total-clk-cycles-waiting-vertex-coord-shading", "[QPU] Total stalled clock cycles for all QPUs doing vertex/coordinate/user shading"},
-   {"QPU", "QPU-total-clk-cycles-waiting-fragment-shading", "[QPU] Total stalled clock cycles for all QPUs doing fragment shading"},
-   {"PTB", "PTB-primitives-binned", "[PTB] Total primitives binned"},
-   {"AXI", "AXI-writes-seen-watch-0", "[AXI] Writes seen by watch 0"},
-   {"AXI", "AXI-reads-seen-watch-0", "[AXI] Reads seen by watch 0"},
-   {"AXI", "AXI-writes-stalled-seen-watch-0", "[AXI] Write stalls seen by watch 0"},
-   {"AXI", "AXI-reads-stalled-seen-watch-0", "[AXI] Read stalls seen by watch 0"},
-   {"AXI", "AXI-write-bytes-seen-watch-0", "[AXI] Total bytes written seen by watch 0"},
-   {"AXI", "AXI-read-bytes-seen-watch-0", "[AXI] Total bytes read seen by watch 0"},
-   {"AXI", "AXI-writes-seen-watch-1", "[AXI] Writes seen by watch 1"},
-   {"AXI", "AXI-reads-seen-watch-1", "[AXI] Reads seen by watch 1"},
-   {"AXI", "AXI-writes-stalled-seen-watch-1", "[AXI] Write stalls seen by watch 1"},
-   {"AXI", "AXI-reads-stalled-seen-watch-1", "[AXI] Read stalls seen by watch 1"},
-   {"AXI", "AXI-write-bytes-seen-watch-1", "[AXI] Total bytes written seen by watch 1"},
-   {"AXI", "AXI-read-bytes-seen-watch-1", "[AXI] Total bytes read seen by watch 1"},
-   {"TLB", "TLB-partial-quads-written-to-color-buffer", "[TLB] Partial quads written to the colour buffer"},
-   {"TMU", "TMU-total-config-access", "[TMU] Total config accesses"},
-   {"L2T", "L2T-no-id-stalled", "[L2T] No ID stall"},
-   {"L2T", "L2T-command-queue-stalled", "[L2T] Command queue full stall"},
-   {"L2T", "L2T-TMU-writes", "[L2T] TMU write accesses"},
-   {"TMU", "TMU-active-cycles", "[TMU] Active cycles"},
-   {"TMU", "TMU-stalled-cycles", "[TMU] Stalled cycles"},
-   {"CLE", "CLE-thread-active-cycles", "[CLE] Bin or render thread active cycles"},
-   {"L2T", "L2T-TMU-reads", "[L2T] TMU read accesses"},
-   {"L2T", "L2T-CLE-reads", "[L2T] CLE read accesses"},
-   {"L2T", "L2T-VCD-reads", "[L2T] VCD read accesses"},
-   {"L2T", "L2T-TMU-config-reads", "[L2T] TMU CFG read accesses"},
-   {"L2T", "L2T-SLC0-reads", "[L2T] SLC0 read accesses"},
-   {"L2T", "L2T-SLC1-reads", "[L2T] SLC1 read accesses"},
-   {"L2T", "L2T-SLC2-reads", "[L2T] SLC2 read accesses"},
-   {"L2T", "L2T-TMU-write-miss", "[L2T] TMU write misses"},
-   {"L2T", "L2T-TMU-read-miss", "[L2T] TMU read misses"},
-   {"L2T", "L2T-CLE-read-miss", "[L2T] CLE read misses"},
-   {"L2T", "L2T-VCD-read-miss", "[L2T] VCD read misses"},
-   {"L2T", "L2T-TMU-config-read-miss", "[L2T] TMU CFG read misses"},
-   {"L2T", "L2T-SLC0-read-miss", "[L2T] SLC0 read misses"},
-   {"L2T", "L2T-SLC1-read-miss", "[L2T] SLC1 read misses"},
-   {"L2T", "L2T-SLC2-read-miss", "[L2T] SLC2 read misses"},
-   {"CORE", "core-memory-writes", "[CORE] Total memory writes"},
-   {"L2T", "L2T-memory-writes", "[L2T] Total memory writes"},
-   {"PTB", "PTB-memory-writes", "[PTB] Total memory writes"},
-   {"TLB", "TLB-memory-writes", "[TLB] Total memory writes"},
-   {"CORE", "core-memory-reads", "[CORE] Total memory reads"},
-   {"L2T", "L2T-memory-reads", "[L2T] Total memory reads"},
-   {"PTB", "PTB-memory-reads", "[PTB] Total memory reads"},
-   {"PSE", "PSE-memory-reads", "[PSE] Total memory reads"},
-   {"TLB", "TLB-memory-reads", "[TLB] Total memory reads"},
-   {"GMP", "GMP-memory-reads", "[GMP] Total memory reads"},
-   {"PTB", "PTB-memory-words-writes", "[PTB] Total memory words written"},
-   {"TLB", "TLB-memory-words-writes", "[TLB] Total memory words written"},
-   {"PSE", "PSE-memory-words-reads", "[PSE] Total memory words read"},
-   {"TLB", "TLB-memory-words-reads", "[TLB] Total memory words read"},
-   {"TMU", "TMU-MRU-hits", "[TMU] Total MRU hits"},
-   {"CORE", "compute-active-cycles", "[CORE] Compute active cycles"},
-};
-
 static void
 kperfmon_create(struct v3dv_device *device,
                 struct v3dv_query_pool *pool,
@@ -137,7 +47,7 @@ kperfmon_create(struct v3dv_device *device,
                            DRM_IOCTL_V3D_PERFMON_CREATE,
                            &req);
       if (ret)
-         fprintf(stderr, "Failed to create perfmon: %s\n", strerror(ret));
+         fprintf(stderr, "Failed to create perfmon for query %d: %s\n", query, strerror(ret));
 
       pool->queries[query].perf.kperfmon_ids[i] = req.id;
    }
@@ -392,7 +302,6 @@ v3dv_CreateQueryPool(VkDevice _device,
                               QUERY_POOL_PERFORMANCE_CREATE_INFO_KHR);
 
       assert(pq_info);
-      assert(pq_info->counterIndexCount <= V3D_PERFCNT_NUM);
 
       pool->perfmon.ncounters = pq_info->counterIndexCount;
       for (uint32_t i = 0; i < pq_info->counterIndexCount; i++)
@@ -404,8 +313,22 @@ v3dv_CreateQueryPool(VkDevice _device,
       assert(pool->perfmon.nperfmons <= V3DV_MAX_PERFMONS);
       break;
    }
-   case VK_QUERY_TYPE_TIMESTAMP:
+   case VK_QUERY_TYPE_TIMESTAMP: {
+      /* 8 bytes per query used for the timestamp value. We have all
+       * timestamps tightly packed first in the buffer.
+       */
+      const uint32_t bo_size = pool->query_count * 8;
+      pool->timestamp.bo = v3dv_bo_alloc(device, bo_size, "query:t", true);
+      if (!pool->timestamp.bo) {
+         result = vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+         goto fail;
+      }
+      if (!v3dv_bo_map(device, pool->timestamp.bo, bo_size)) {
+         result = vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+         goto fail;
+      }
       break;
+   }
    default:
       unreachable("Unsupported query type");
    }
@@ -421,7 +344,12 @@ v3dv_CreateQueryPool(VkDevice _device,
          break;
          }
       case VK_QUERY_TYPE_TIMESTAMP:
-         pool->queries[query_idx].value = 0;
+         pool->queries[query_idx].timestamp.offset = query_idx * 8;
+         result = vk_sync_create(&device->vk,
+                                 &device->pdevice->drm_syncobj_type, 0, 0,
+                                 &pool->queries[query_idx].timestamp.sync);
+         if (result != VK_SUCCESS)
+            goto fail;
          break;
       case VK_QUERY_TYPE_PERFORMANCE_QUERY_KHR: {
          result = vk_sync_create(&device->vk,
@@ -430,8 +358,7 @@ v3dv_CreateQueryPool(VkDevice _device,
          if (result != VK_SUCCESS)
             goto fail;
 
-         for (uint32_t j = 0; j < pool->perfmon.nperfmons; j++)
-            pool->queries[query_idx].perf.kperfmon_ids[j] = 0;
+         kperfmon_create(device, pool, query_idx);
          break;
          }
       default:
@@ -449,6 +376,11 @@ v3dv_CreateQueryPool(VkDevice _device,
    return VK_SUCCESS;
 
 fail:
+   if (pool->query_type == VK_QUERY_TYPE_TIMESTAMP) {
+      for (uint32_t j = 0; j < query_idx; j++)
+         vk_sync_destroy(&device->vk, pool->queries[j].timestamp.sync);
+   }
+
    if (pool->query_type == VK_QUERY_TYPE_PERFORMANCE_QUERY_KHR) {
       for (uint32_t j = 0; j < query_idx; j++)
          vk_sync_destroy(&device->vk, pool->queries[j].perf.last_job_sync);
@@ -456,6 +388,8 @@ fail:
 
    if (pool->occlusion.bo)
       v3dv_bo_free(device, pool->occlusion.bo);
+   if (pool->timestamp.bo)
+      v3dv_bo_free(device, pool->timestamp.bo);
    if (pool->queries)
       vk_free2(&device->vk.alloc, pAllocator, pool->queries);
    pool_destroy_meta_resources(device, pool);
@@ -477,6 +411,14 @@ v3dv_DestroyQueryPool(VkDevice _device,
 
    if (pool->occlusion.bo)
       v3dv_bo_free(device, pool->occlusion.bo);
+
+   if (pool->timestamp.bo)
+      v3dv_bo_free(device, pool->timestamp.bo);
+
+   if (pool->query_type == VK_QUERY_TYPE_TIMESTAMP) {
+      for (uint32_t i = 0; i < pool->query_count; i++)
+         vk_sync_destroy(&device->vk, pool->queries[i].timestamp.sync);
+   }
 
    if (pool->query_type == VK_QUERY_TYPE_PERFORMANCE_QUERY_KHR) {
       for (uint32_t i = 0; i < pool->query_count; i++) {
@@ -512,9 +454,9 @@ query_wait_available(struct v3dv_device *device,
                      uint32_t query_idx)
 {
    /* For occlusion queries we prefer to poll the availability BO in a loop
-    * to waiting on the occlusion query results BO, because the latter would
-    * make us wait for any job running occlusion queries, even if those queries
-    * do not involve the one we want to wait on.
+    * to waiting on the query results BO, because the latter would
+    * make us wait for any job running queries from the pool, even if those
+    * queries do not involve the one we want to wait on.
     */
    if (pool->query_type == VK_QUERY_TYPE_OCCLUSION) {
       uint8_t *q_addr = ((uint8_t *) pool->occlusion.bo->map) +
@@ -524,12 +466,19 @@ query_wait_available(struct v3dv_device *device,
       return VK_SUCCESS;
    }
 
-   /* For other queries we need to wait for the queue to signal that
+   if (pool->query_type == VK_QUERY_TYPE_TIMESTAMP) {
+      if (vk_sync_wait(&device->vk, q->timestamp.sync,
+                       0, VK_SYNC_WAIT_COMPLETE, UINT64_MAX) != VK_SUCCESS) {
+         return vk_device_set_lost(&device->vk, "Query job wait failed");
+      }
+      return VK_SUCCESS;
+   }
+
+   assert(pool->query_type == VK_QUERY_TYPE_PERFORMANCE_QUERY_KHR);
+
+   /* For performance queries we need to wait for the queue to signal that
     * the query has been submitted for execution before anything else.
     */
-   assert(pool->query_type == VK_QUERY_TYPE_PERFORMANCE_QUERY_KHR ||
-          pool->query_type == VK_QUERY_TYPE_TIMESTAMP);
-
    VkResult result = VK_SUCCESS;
    if (!q->maybe_available) {
       struct timespec timeout;
@@ -576,18 +525,28 @@ query_check_available(struct v3dv_device *device,
                       struct v3dv_query *q,
                       uint32_t query_idx)
 {
-   /* For occlusion and performance queries we check the availability BO */
+   /* For occlusion we check the availability BO */
    if (pool->query_type == VK_QUERY_TYPE_OCCLUSION) {
       const uint8_t *q_addr = ((uint8_t *) pool->occlusion.bo->map) +
                               pool->occlusion.avail_offset + query_idx;
       return (*q_addr != 0) ? VK_SUCCESS : VK_NOT_READY;
    }
 
+   /* For timestamp queries, we need to check if the relevant job
+    * has completed.
+    */
+   if (pool->query_type == VK_QUERY_TYPE_TIMESTAMP) {
+      if (vk_sync_wait(&device->vk, q->timestamp.sync,
+                       0, VK_SYNC_WAIT_COMPLETE, 0) != VK_SUCCESS) {
+         return VK_NOT_READY;
+      }
+      return VK_SUCCESS;
+   }
+
    /* For other queries we need to check if the queue has submitted the query
     * for execution at all.
     */
-   assert(pool->query_type == VK_QUERY_TYPE_PERFORMANCE_QUERY_KHR ||
-          pool->query_type == VK_QUERY_TYPE_TIMESTAMP);
+   assert(pool->query_type == VK_QUERY_TYPE_PERFORMANCE_QUERY_KHR);
    if (!q->maybe_available)
       return VK_NOT_READY;
 
@@ -611,9 +570,6 @@ query_is_available(struct v3dv_device *device,
                    bool *available)
 {
    struct v3dv_query *q = &pool->queries[query];
-
-   assert(pool->query_type != VK_QUERY_TYPE_OCCLUSION ||
-          (pool->occlusion.bo && pool->occlusion.bo->map));
 
    if (do_wait) {
       VkResult result = query_wait_available(device, pool, q, query);
@@ -666,7 +622,10 @@ write_timestamp_query_result(struct v3dv_device *device,
 
    struct v3dv_query *q = &pool->queries[query];
 
-   write_to_buffer(data, slot, do_64bit, q->value);
+   const uint8_t *query_addr =
+      ((uint8_t *) pool->timestamp.bo->map) + q->timestamp.offset;
+
+   write_to_buffer(data, slot, do_64bit, *((uint64_t *)query_addr));
    return VK_SUCCESS;
 }
 
@@ -681,7 +640,7 @@ write_performance_query_result(struct v3dv_device *device,
    assert(pool && pool->query_type == VK_QUERY_TYPE_PERFORMANCE_QUERY_KHR);
 
    struct v3dv_query *q = &pool->queries[query];
-   uint64_t counter_values[V3D_PERFCNT_NUM];
+   uint64_t counter_values[V3D_MAX_PERFCNT];
 
    for (uint32_t i = 0; i < pool->perfmon.nperfmons; i++) {
       struct drm_v3d_perfmon_get_values req = {
@@ -887,7 +846,7 @@ v3dv_cmd_buffer_emit_set_query_availability(struct v3dv_cmd_buffer *cmd_buffer,
                          0, sizeof(push_data), &push_data);
    cmd_buffer_emit_dispatch_queries(cmd_buffer, count);
 
-   v3dv_cmd_buffer_meta_state_pop(cmd_buffer, 0, false);
+   v3dv_cmd_buffer_meta_state_pop(cmd_buffer, false);
 }
 
 static void
@@ -936,7 +895,7 @@ cmd_buffer_emit_reset_occlusion_query_pool(struct v3dv_cmd_buffer *cmd_buffer,
 
    cmd_buffer_emit_dispatch_queries(cmd_buffer, count);
 
-   v3dv_cmd_buffer_meta_state_pop(cmd_buffer, 0, false);
+   v3dv_cmd_buffer_meta_state_pop(cmd_buffer, false);
 
    /* Ensure future work in the graphics queue using the queries doesn't start
     * before the reset completed.
@@ -1217,7 +1176,7 @@ cmd_buffer_emit_copy_query_pool_results(struct v3dv_cmd_buffer *cmd_buffer,
 
    cmd_buffer_emit_dispatch_queries(cmd_buffer, count);
 
-   v3dv_cmd_buffer_meta_state_pop(cmd_buffer, 0, false);
+   v3dv_cmd_buffer_meta_state_pop(cmd_buffer, false);
 }
 
 static void
@@ -1318,6 +1277,24 @@ v3dv_reset_query_pool_cpu(struct v3dv_device *device,
 {
    mtx_lock(&device->query_mutex);
 
+   if (pool->query_type == VK_QUERY_TYPE_TIMESTAMP) {
+      assert(first + count <= pool->query_count);
+
+      /* Reset timestamp */
+      uint8_t *base_addr;
+      base_addr  = ((uint8_t *) pool->timestamp.bo->map) +
+                    pool->queries[first].timestamp.offset;
+      memset(base_addr, 0, 8 * count);
+
+      for (uint32_t i = first; i < first + count; i++) {
+         if (vk_sync_reset(&device->vk, pool->queries[i].timestamp.sync) != VK_SUCCESS)
+            fprintf(stderr, "Failed to reset sync");
+      }
+
+      mtx_unlock(&device->query_mutex);
+      return;
+   }
+
    for (uint32_t i = first; i < first + count; i++) {
       assert(i < pool->query_count);
       struct v3dv_query *q = &pool->queries[i];
@@ -1336,9 +1313,6 @@ v3dv_reset_query_pool_cpu(struct v3dv_device *device,
          *counter = 0;
          break;
       }
-      case VK_QUERY_TYPE_TIMESTAMP:
-         q->value = 0;
-         break;
       case VK_QUERY_TYPE_PERFORMANCE_QUERY_KHR:
          kperfmon_destroy(device, pool, i);
          kperfmon_create(device, pool, i);
@@ -1373,39 +1347,11 @@ v3dv_EnumeratePhysicalDeviceQueueFamilyPerformanceQueryCountersKHR(
    VkPerformanceCounterKHR *pCounters,
    VkPerformanceCounterDescriptionKHR *pCounterDescriptions)
 {
-   uint32_t desc_count = *pCounterCount;
+   V3DV_FROM_HANDLE(v3dv_physical_device, pDevice, physicalDevice);
 
-   VK_OUTARRAY_MAKE_TYPED(VkPerformanceCounterKHR,
-                          out, pCounters, pCounterCount);
-   VK_OUTARRAY_MAKE_TYPED(VkPerformanceCounterDescriptionKHR,
-                          out_desc, pCounterDescriptions, &desc_count);
-
-   for (int i = 0; i < ARRAY_SIZE(v3dv_counters); i++) {
-      vk_outarray_append_typed(VkPerformanceCounterKHR, &out, counter) {
-         counter->unit = VK_PERFORMANCE_COUNTER_UNIT_GENERIC_KHR;
-         counter->scope = VK_PERFORMANCE_COUNTER_SCOPE_COMMAND_KHR;
-         counter->storage = VK_PERFORMANCE_COUNTER_STORAGE_UINT64_KHR;
-
-         unsigned char sha1_result[20];
-         _mesa_sha1_compute(v3dv_counters[i][1], strlen(v3dv_counters[i][1]),
-                            sha1_result);
-
-         memcpy(counter->uuid, sha1_result, sizeof(counter->uuid));
-      }
-
-      vk_outarray_append_typed(VkPerformanceCounterDescriptionKHR,
-                               &out_desc, desc) {
-         desc->flags = 0;
-         snprintf(desc->name, sizeof(desc->name), "%s",
-            v3dv_counters[i][1]);
-         snprintf(desc->category, sizeof(desc->category), "%s",
-            v3dv_counters[i][0]);
-         snprintf(desc->description, sizeof(desc->description), "%s",
-            v3dv_counters[i][2]);
-      }
-   }
-
-   return vk_outarray_status(&out);
+   return v3dv_X(pDevice, enumerate_performance_query_counters)(pCounterCount,
+                                                                pCounters,
+                                                                pCounterDescriptions);
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -1433,23 +1379,23 @@ v3dv_ReleaseProfilingLockKHR(VkDevice device)
 
 static inline void
 nir_set_query_availability(nir_builder *b,
-                           nir_ssa_def *buf,
-                           nir_ssa_def *offset,
-                           nir_ssa_def *query_idx,
-                           nir_ssa_def *avail)
+                           nir_def *buf,
+                           nir_def *offset,
+                           nir_def *query_idx,
+                           nir_def *avail)
 {
    offset = nir_iadd(b, offset, query_idx); /* we use 1B per query */
    nir_store_ssbo(b, avail, buf, offset, .write_mask = 0x1, .align_mul = 1);
 }
 
-static inline nir_ssa_def *
+static inline nir_def *
 nir_get_query_availability(nir_builder *b,
-                           nir_ssa_def *buf,
-                           nir_ssa_def *offset,
-                           nir_ssa_def *query_idx)
+                           nir_def *buf,
+                           nir_def *offset,
+                           nir_def *query_idx)
 {
    offset = nir_iadd(b, offset, query_idx); /* we use 1B per query */
-   nir_ssa_def *avail = nir_load_ssbo(b, 1, 8, buf, offset, .align_mul = 1);
+   nir_def *avail = nir_load_ssbo(b, 1, 8, buf, offset, .align_mul = 1);
    return nir_i2i32(b, avail);
 }
 
@@ -1460,12 +1406,7 @@ get_set_query_availability_cs()
    nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_COMPUTE, options,
                                                   "set query availability cs");
 
-   /* We rely on supergroup packing to maximize SIMD lane occupancy */
-   b.shader->info.workgroup_size[0] = 1;
-   b.shader->info.workgroup_size[1] = 1;
-   b.shader->info.workgroup_size[2] = 1;
-
-   nir_ssa_def *buf =
+   nir_def *buf =
       nir_vulkan_resource_index(&b, 2, 32, nir_imm_int(&b, 0),
                                 .desc_set = 0,
                                 .binding = 0,
@@ -1475,15 +1416,15 @@ get_set_query_availability_cs()
     * ever change any of these parameters we need to update how we compute the
     * query index here.
     */
-   nir_ssa_def *wg_id = nir_channel(&b, nir_load_workgroup_id(&b, 32), 0);
+   nir_def *wg_id = nir_channel(&b, nir_load_workgroup_id(&b), 0);
 
-   nir_ssa_def *offset =
+   nir_def *offset =
       nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 0, .range = 4);
 
-   nir_ssa_def *query_idx =
+   nir_def *query_idx =
       nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 4, .range = 4);
 
-   nir_ssa_def *avail =
+   nir_def *avail =
       nir_load_push_constant(&b, 1, 8, nir_imm_int(&b, 0), .base = 8, .range = 1);
 
    query_idx = nir_iadd(&b, query_idx, wg_id);
@@ -1492,33 +1433,33 @@ get_set_query_availability_cs()
    return b.shader;
 }
 
-static inline nir_ssa_def *
-nir_get_occlusion_counter_offset(nir_builder *b, nir_ssa_def *query_idx)
+static inline nir_def *
+nir_get_occlusion_counter_offset(nir_builder *b, nir_def *query_idx)
 {
-   nir_ssa_def *query_group = nir_udiv(b, query_idx, nir_imm_int(b, 16));
-   nir_ssa_def *query_group_offset = nir_umod(b, query_idx, nir_imm_int(b, 16));
-   nir_ssa_def *offset =
-      nir_iadd(b, nir_imul(b, query_group, nir_imm_int(b, 1024)),
-                  nir_imul(b, query_group_offset, nir_imm_int(b, 4)));
+   nir_def *query_group = nir_udiv_imm(b, query_idx, 16);
+   nir_def *query_group_offset = nir_umod_imm(b, query_idx, 16);
+   nir_def *offset =
+      nir_iadd(b, nir_imul_imm(b, query_group, 1024),
+                  nir_imul_imm(b, query_group_offset, 4));
    return offset;
 }
 
 static inline void
 nir_reset_occlusion_counter(nir_builder *b,
-                            nir_ssa_def *buf,
-                            nir_ssa_def *query_idx)
+                            nir_def *buf,
+                            nir_def *query_idx)
 {
-   nir_ssa_def *offset = nir_get_occlusion_counter_offset(b, query_idx);
-   nir_ssa_def *zero = nir_imm_int(b, 0);
+   nir_def *offset = nir_get_occlusion_counter_offset(b, query_idx);
+   nir_def *zero = nir_imm_int(b, 0);
    nir_store_ssbo(b, zero, buf, offset, .write_mask = 0x1, .align_mul = 4);
 }
 
-static inline nir_ssa_def *
+static inline nir_def *
 nir_read_occlusion_counter(nir_builder *b,
-                           nir_ssa_def *buf,
-                           nir_ssa_def *query_idx)
+                           nir_def *buf,
+                           nir_def *query_idx)
 {
-   nir_ssa_def *offset = nir_get_occlusion_counter_offset(b, query_idx);
+   nir_def *offset = nir_get_occlusion_counter_offset(b, query_idx);
    return nir_load_ssbo(b, 1, 32, buf, offset, .access = 0, .align_mul = 4);
 }
 
@@ -1529,12 +1470,7 @@ get_reset_occlusion_query_cs()
    nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_COMPUTE, options,
                                                   "reset occlusion query cs");
 
-   /* We rely on supergroup packing to maximize SIMD lane occupancy */
-   b.shader->info.workgroup_size[0] = 1;
-   b.shader->info.workgroup_size[1] = 1;
-   b.shader->info.workgroup_size[2] = 1;
-
-   nir_ssa_def *buf =
+   nir_def *buf =
       nir_vulkan_resource_index(&b, 2, 32, nir_imm_int(&b, 0),
                                 .desc_set = 0,
                                 .binding = 0,
@@ -1544,15 +1480,15 @@ get_reset_occlusion_query_cs()
     * ever change any of these parameters we need to update how we compute the
     * query index here.
     */
-   nir_ssa_def *wg_id = nir_channel(&b, nir_load_workgroup_id(&b, 32), 0);
+   nir_def *wg_id = nir_channel(&b, nir_load_workgroup_id(&b), 0);
 
-   nir_ssa_def *avail_offset =
+   nir_def *avail_offset =
       nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 0, .range = 4);
 
-   nir_ssa_def *base_query_idx =
+   nir_def *base_query_idx =
       nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 4, .range = 4);
 
-   nir_ssa_def *query_idx = nir_iadd(&b, base_query_idx, wg_id);
+   nir_def *query_idx = nir_iadd(&b, base_query_idx, wg_id);
 
    nir_set_query_availability(&b, buf, avail_offset, query_idx,
                               nir_imm_intN_t(&b, 0, 8));
@@ -1563,21 +1499,21 @@ get_reset_occlusion_query_cs()
 
 static void
 write_query_buffer(nir_builder *b,
-                   nir_ssa_def *buf,
-                   nir_ssa_def **offset,
-                   nir_ssa_def *value,
+                   nir_def *buf,
+                   nir_def **offset,
+                   nir_def *value,
                    bool flag_64bit)
 {
    if (flag_64bit) {
       /* Create a 64-bit value using a vec2 with the .Y component set to 0
        * so we can write a 64-bit value in a single store.
        */
-      nir_ssa_def *value64 = nir_vec2(b, value, nir_imm_int(b, 0));
+      nir_def *value64 = nir_vec2(b, value, nir_imm_int(b, 0));
       nir_store_ssbo(b, value64, buf, *offset, .write_mask = 0x3, .align_mul = 8);
-      *offset = nir_iadd(b, *offset, nir_imm_int(b, 8));
+      *offset = nir_iadd_imm(b, *offset, 8);
    } else {
       nir_store_ssbo(b, value, buf, *offset, .write_mask = 0x1, .align_mul = 4);
-      *offset = nir_iadd(b, *offset, nir_imm_int(b, 4));
+      *offset = nir_iadd_imm(b, *offset, 4);
    }
 }
 
@@ -1592,60 +1528,55 @@ get_copy_query_results_cs(VkQueryResultFlags flags)
    nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_COMPUTE, options,
                                                   "copy query results cs");
 
-   /* We rely on supergroup packing to maximize SIMD lane occupancy */
-   b.shader->info.workgroup_size[0] = 1;
-   b.shader->info.workgroup_size[1] = 1;
-   b.shader->info.workgroup_size[2] = 1;
-
-   nir_ssa_def *buf =
+   nir_def *buf =
       nir_vulkan_resource_index(&b, 2, 32, nir_imm_int(&b, 0),
                                 .desc_set = 0,
                                 .binding = 0,
                                 .desc_type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
-   nir_ssa_def *buf_out =
+   nir_def *buf_out =
       nir_vulkan_resource_index(&b, 2, 32, nir_imm_int(&b, 0),
                                 .desc_set = 1,
                                 .binding = 0,
                                 .desc_type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
    /* Read push constants */
-   nir_ssa_def *avail_offset =
+   nir_def *avail_offset =
       nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 0, .range = 4);
 
-   nir_ssa_def *base_query_idx =
+   nir_def *base_query_idx =
       nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 4, .range = 4);
 
-   nir_ssa_def *base_offset_out =
+   nir_def *base_offset_out =
       nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 8, .range = 4);
 
-   nir_ssa_def *stride =
+   nir_def *stride =
       nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 0), .base = 12, .range = 4);
 
    /* This assumes a local size of 1 and a horizontal-only dispatch. If we
     * ever change any of these parameters we need to update how we compute the
     * query index here.
     */
-   nir_ssa_def *wg_id = nir_channel(&b, nir_load_workgroup_id(&b, 32), 0);
-   nir_ssa_def *query_idx = nir_iadd(&b, base_query_idx, wg_id);
+   nir_def *wg_id = nir_channel(&b, nir_load_workgroup_id(&b), 0);
+   nir_def *query_idx = nir_iadd(&b, base_query_idx, wg_id);
 
    /* Read query availability if needed */
-   nir_ssa_def *avail = NULL;
+   nir_def *avail = NULL;
    if (flag_avail || !flag_partial)
       avail = nir_get_query_availability(&b, buf, avail_offset, query_idx);
 
    /* Write occusion query result... */
-   nir_ssa_def *offset =
+   nir_def *offset =
       nir_iadd(&b, base_offset_out, nir_imul(&b, wg_id, stride));
 
    /* ...if partial is requested, we always write */
    if(flag_partial) {
-      nir_ssa_def *query_res = nir_read_occlusion_counter(&b, buf, query_idx);
+      nir_def *query_res = nir_read_occlusion_counter(&b, buf, query_idx);
       write_query_buffer(&b, buf_out, &offset, query_res, flag_64bit);
    } else {
       /*...otherwise, we only write if the query is available */
       nir_if *if_stmt = nir_push_if(&b, nir_ine_imm(&b, avail, 0));
-         nir_ssa_def *query_res = nir_read_occlusion_counter(&b, buf, query_idx);
+         nir_def *query_res = nir_read_occlusion_counter(&b, buf, query_idx);
          write_query_buffer(&b, buf_out, &offset, query_res, flag_64bit);
       nir_pop_if(&b, if_stmt);
    }

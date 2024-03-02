@@ -38,18 +38,24 @@
 #include <getopt.h>
 #include <zlib.h>
 
-#include "common/intel_decoder.h"
+#include "aubinator_error_decode_lib.h"
+#include "aubinator_error_decode_xe.h"
 #include "compiler/brw_compiler.h"
+#include "compiler/elk/elk_compiler.h"
+#include "decoder/intel_decoder.h"
 #include "dev/intel_debug.h"
 #include "util/macros.h"
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
+
+#define XE_KMD_ERROR_DUMP_IDENTIFIER "**** Xe Device Coredump ****"
 
 /* options */
 
 static bool option_full_decode = true;
 static bool option_print_all_bb = false;
 static bool option_print_offsets = true;
+static bool option_dump_kernels = false;
 static enum { COLOR_AUTO, COLOR_ALWAYS, COLOR_NEVER } option_color;
 static char *xml_path = NULL;
 
@@ -100,45 +106,6 @@ static const struct ring_register_mapping fault_registers[] = {
    { INTEL_ENGINE_CLASS_RENDER, 0, "RCS_FAULT_REG" },
    { INTEL_ENGINE_CLASS_VIDEO_ENHANCE, 0, "VECS_FAULT_REG" },
 };
-
-static int ring_name_to_class(const char *ring_name,
-                              enum intel_engine_class *class)
-{
-   static const char *class_names[] = {
-      [INTEL_ENGINE_CLASS_RENDER] = "rcs",
-      [INTEL_ENGINE_CLASS_COPY] = "bcs",
-      [INTEL_ENGINE_CLASS_VIDEO] = "vcs",
-      [INTEL_ENGINE_CLASS_VIDEO_ENHANCE] = "vecs",
-   };
-   for (size_t i = 0; i < ARRAY_SIZE(class_names); i++) {
-      if (strncmp(ring_name, class_names[i], strlen(class_names[i])))
-         continue;
-
-      *class = i;
-      return atoi(ring_name + strlen(class_names[i]));
-   }
-
-   static const struct {
-      const char *name;
-      unsigned int class;
-      int instance;
-   } legacy_names[] = {
-      { "render", INTEL_ENGINE_CLASS_RENDER, 0 },
-      { "blt", INTEL_ENGINE_CLASS_COPY, 0 },
-      { "bsd", INTEL_ENGINE_CLASS_VIDEO, 0 },
-      { "bsd2", INTEL_ENGINE_CLASS_VIDEO, 1 },
-      { "vebox", INTEL_ENGINE_CLASS_VIDEO_ENHANCE, 0 },
-   };
-   for (size_t i = 0; i < ARRAY_SIZE(legacy_names); i++) {
-      if (strcmp(ring_name, legacy_names[i].name))
-         continue;
-
-      *class = legacy_names[i].class;
-      return legacy_names[i].instance;
-   }
-
-   return -1;
-}
 
 static const char *
 register_name_from_ring(const struct ring_register_mapping *mapping,
@@ -289,7 +256,7 @@ struct section {
    size_t data_offset;
 };
 
-#define MAX_SECTIONS 256
+#define MAX_SECTIONS 1024
 static unsigned num_sections;
 static struct section sections[MAX_SECTIONS];
 
@@ -359,16 +326,7 @@ static int ascii85_decode(const char *in, uint32_t **out, bool inflate)
             return 0;
       }
 
-      if (*in == 'z') {
-         in++;
-      } else {
-         v += in[0] - 33; v *= 85;
-         v += in[1] - 33; v *= 85;
-         v += in[2] - 33; v *= 85;
-         v += in[3] - 33; v *= 85;
-         v += in[4] - 33;
-         in += 5;
-      }
+      in = ascii85_decode_char(in, &v);
       (*out)[len++] = v;
    }
 
@@ -407,7 +365,7 @@ get_intel_batch_bo(void *user_data, bool ppgtt, uint64_t address)
 }
 
 static void
-read_data_file(FILE *file)
+read_i915_data_file(FILE *file, enum intel_batch_decode_flags batch_flags)
 {
    struct intel_spec *spec = NULL;
    long long unsigned fence;
@@ -419,7 +377,8 @@ read_data_file(FILE *file)
    bool ring_wraps = false;
    char *ring_name = NULL;
    struct intel_device_info devinfo;
-   struct brw_isa_info isa;
+   struct brw_isa_info brw;
+   struct elk_isa_info elk;
    uint64_t acthd = 0;
 
    while (getline(&line, &line_size, file) > 0) {
@@ -512,7 +471,10 @@ read_data_file(FILE *file)
 
             printf("Detected GEN%i chipset\n", devinfo.ver);
 
-            brw_init_isa_info(&isa, &devinfo);
+            if (devinfo.ver >= 9)
+               brw_init_isa_info(&brw, &devinfo);
+            else
+               elk_init_isa_info(&elk, &devinfo);
 
             if (xml_path == NULL)
                spec = intel_spec_load(&devinfo);
@@ -547,6 +509,14 @@ read_data_file(FILE *file)
          if (matched == 2)
             acthd = ((uint64_t)reg << 32) | reg2;
 
+         matched = sscanf(line, "  ACTHD_LDW: 0x%08x\n", &reg);
+         if (matched == 1)
+            acthd = reg;
+
+         matched = sscanf(line, "  ACTHD_UDW: 0x%08x\n", &reg);
+         if (matched == 1)
+            acthd |= (uint64_t)reg << 32;
+
          matched = sscanf(line, "  PGTBL_ER: 0x%08x\n", &reg);
          if (matched == 1 && reg)
             print_pgtbl_err(reg, &devinfo);
@@ -564,7 +534,15 @@ read_data_file(FILE *file)
                print_register(spec, reg_name, reg);
          }
 
+         matched = sscanf(line, "  GAM_DONE: 0x%08x\n", &reg);
+         if (matched == 1)
+            print_register(spec, "GAM_DONE", reg);
+
          matched = sscanf(line, "  SC_INSTDONE: 0x%08x\n", &reg);
+         if (matched == 1)
+            print_register(spec, "SC_INSTDONE", reg);
+
+         matched = sscanf(line, "  GEN7_SC_INSTDONE: 0x%08x\n", &reg);
          if (matched == 1)
             print_register(spec, "SC_INSTDONE", reg);
 
@@ -572,7 +550,15 @@ read_data_file(FILE *file)
          if (matched == 1)
             print_register(spec, "SC_INSTDONE_EXTRA", reg);
 
+         matched = sscanf(line, "  GEN12_SC_INSTDONE_EXTRA: 0x%08x\n", &reg);
+         if (matched == 1)
+            print_register(spec, "SC_INSTDONE_EXTRA", reg);
+
          matched = sscanf(line, "  SC_INSTDONE_EXTRA2: 0x%08x\n", &reg);
+         if (matched == 1)
+            print_register(spec, "SC_INSTDONE_EXTRA2", reg);
+
+         matched = sscanf(line, "  GEN12_SC_INSTDONE_EXTRA2: 0x%08x\n", &reg);
          if (matched == 1)
             print_register(spec, "SC_INSTDONE_EXTRA2", reg);
 
@@ -580,11 +566,23 @@ read_data_file(FILE *file)
          if (matched == 1)
             print_register(spec, "SAMPLER_INSTDONE", reg);
 
+         matched = sscanf(line, "  GEN8_SAMPLER_INSTDONE[%*d][%*d]: 0x%08x\n", &reg);
+         if (matched == 1)
+            print_register(spec, "SAMPLER_INSTDONE", reg);
+
          matched = sscanf(line, "  ROW_INSTDONE[%*d][%*d]: 0x%08x\n", &reg);
          if (matched == 1)
             print_register(spec, "ROW_INSTDONE", reg);
 
+         matched = sscanf(line, "  GEN8_ROW_INSTDONE[%*d][%*d]: 0x%08x\n", &reg);
+         if (matched == 1)
+            print_register(spec, "ROW_INSTDONE", reg);
+
          matched = sscanf(line, "  GEOM_SVGUNIT_INSTDONE[%*d][%*d]: 0x%08x\n", &reg);
+         if (matched == 1)
+            print_register(spec, "INSTDONE_GEOM", reg);
+
+         matched = sscanf(line, "  XEHPG_INSTDONE_GEOM_SVG[%*d][%*d]: 0x%08x\n", &reg);
          if (matched == 1)
             print_register(spec, "INSTDONE_GEOM", reg);
 
@@ -668,21 +666,20 @@ read_data_file(FILE *file)
       }
    }
 
-   enum intel_batch_decode_flags batch_flags = 0;
-   if (option_color == COLOR_ALWAYS)
-      batch_flags |= INTEL_BATCH_DECODE_IN_COLOR;
-   if (option_full_decode)
-      batch_flags |= INTEL_BATCH_DECODE_FULL;
-   if (option_print_offsets)
-      batch_flags |= INTEL_BATCH_DECODE_OFFSETS;
-   batch_flags |= INTEL_BATCH_DECODE_FLOATS;
-
    struct intel_batch_decode_ctx batch_ctx;
-   intel_batch_decode_ctx_init(&batch_ctx, &isa, &devinfo, stdout,
-                               batch_flags, xml_path, get_intel_batch_bo,
-                               NULL, NULL);
+   if (devinfo.ver >= 9) {
+      intel_batch_decode_ctx_init_brw(&batch_ctx, &brw, &devinfo, stdout,
+                                      batch_flags, xml_path, get_intel_batch_bo,
+                                      NULL, NULL);
+   } else {
+      intel_batch_decode_ctx_init_elk(&batch_ctx, &elk, &devinfo, stdout,
+                                      batch_flags, xml_path, get_intel_batch_bo,
+                                      NULL, NULL);
+   }
    batch_ctx.acthd = acthd;
 
+   if (option_dump_kernels)
+      batch_ctx.shader_binary = dump_shader_binary;
 
    for (int s = 0; s < num_sections; s++) {
       enum intel_engine_class class;
@@ -760,50 +757,78 @@ print_help(const char *progname, FILE *file)
            "      --no-pager      don't launch pager\n"
            "      --no-offsets    don't print instruction offsets\n"
            "      --xml=DIR       load hardware xml description from directory DIR\n"
-           "      --all-bb        print out all batchbuffers\n",
+           "      --all-bb        print out all batchbuffers\n"
+           "      --kernels       dump out all kernels (in current directory)\n",
            progname);
 }
 
 static FILE *
-open_error_state_file(const char *path)
+try_open_file(const char *format, ...)
 {
+   ASSERTED int ret;
+   char *filename;
    FILE *file;
+   va_list args;
+
+   va_start(args, format);
+   ret = vasprintf(&filename, format, args);
+   va_end(args);
+
+   assert(ret > 0);
+   file = fopen(filename, "r");
+   free(filename);
+
+   return file;
+}
+
+static FILE *
+open_xe_error_state_file(const char *path)
+{
+   FILE *file = NULL;
+
+   if (path) {
+      struct stat st;
+
+      if (stat(path, &st))
+         return NULL;
+
+      if (S_ISDIR(st.st_mode)) {
+         file = try_open_file("%s/data", path);
+      } else {
+         file = fopen(path, "r");
+      }
+   } else {
+      for (int minor = 0; minor < 64; minor++) {
+         file = try_open_file("/sys/class/drm/card%i/device/devcoredump/data", minor);
+         if (file)
+            break;
+      }
+   }
+
+   return file;
+}
+
+static FILE *
+open_i915_error_state_file(const char *path)
+{
+   FILE *file = NULL;
    struct stat st;
 
    if (stat(path, &st))
       return NULL;
 
    if (S_ISDIR(st.st_mode)) {
-      ASSERTED int ret;
-      char *filename;
-
-      ret = asprintf(&filename, "%s/i915_error_state", path);
-      assert(ret > 0);
-      file = fopen(filename, "r");
-      free(filename);
+      file = try_open_file("%s/i915_error_state", path);
       if (!file) {
          int minor;
          for (minor = 0; minor < 64; minor++) {
-            ret = asprintf(&filename, "%s/%d/i915_error_state", path, minor);
-            assert(ret > 0);
-
-            file = fopen(filename, "r");
-            free(filename);
+            file = try_open_file("%s/%d/i915_error_state", path, minor);
             if (file)
                break;
          }
       }
-      if (!file) {
-         fprintf(stderr, "Failed to find i915_error_state beneath %s\n",
-                 path);
-         exit(EXIT_FAILURE);
-      }
    } else {
       file = fopen(path, "r");
-      if (!file) {
-         fprintf(stderr, "Failed to open %s: %s\n", path, strerror(errno));
-         exit(EXIT_FAILURE);
-      }
    }
 
    return file;
@@ -812,9 +837,13 @@ open_error_state_file(const char *path)
 int
 main(int argc, char *argv[])
 {
+   enum intel_batch_decode_flags batch_flags = 0;
    FILE *file;
    int c, i;
    bool help = false, pager = true;
+   char *line = NULL;
+   size_t line_size;
+
    const struct option aubinator_opts[] = {
       { "help",       no_argument,       (int *) &help,                 true },
       { "no-pager",   no_argument,       (int *) &pager,                false },
@@ -823,6 +852,7 @@ main(int argc, char *argv[])
       { "color",      optional_argument, NULL,                          'c' },
       { "xml",        required_argument, NULL,                          'x' },
       { "all-bb",     no_argument,       (int *) &option_print_all_bb,  true },
+      { "kernels",    no_argument,       (int *) &option_dump_kernels,  true },
       { NULL,         0,                 NULL,                          0 }
    };
 
@@ -859,15 +889,16 @@ main(int argc, char *argv[])
 
    if (optind >= argc) {
       if (isatty(0)) {
-         file = open_error_state_file("/sys/class/drm/card0/error");
+         file = open_i915_error_state_file("/sys/class/drm/card0/error");
          if (!file)
-            file = open_error_state_file("/debug/dri");
+            file = open_i915_error_state_file("/debug/dri");
          if (!file)
-            file = open_error_state_file("/sys/kernel/debug/dri");
-
+            file = open_i915_error_state_file("/sys/kernel/debug/dri");
+         if (!file)
+            file = open_xe_error_state_file(NULL);
          if (file == NULL) {
             errx(1,
-                 "Couldn't find i915 debugfs directory.\n\n"
+                 "Couldn't find i915 or Xe error dump.\n\n"
                  "Is debugfs mounted? You might try mounting it with a command such as:\n\n"
                  "\tsudo mount -t debugfs debugfs /sys/kernel/debug\n");
          }
@@ -879,11 +910,17 @@ main(int argc, char *argv[])
       if (strcmp(path, "-") == 0) {
          file = stdin;
       } else {
-         file = open_error_state_file(path);
-         if (file == NULL) {
+         FILE *i915, *xe;
+
+         i915 = open_i915_error_state_file(path);
+         xe = open_xe_error_state_file(path);
+
+         if (i915 == NULL && xe == NULL) {
             fprintf(stderr, "Error opening %s: %s\n", path, strerror(errno));
             exit(EXIT_FAILURE);
          }
+
+         file = i915 ? i915 : xe;
       }
    }
 
@@ -893,7 +930,21 @@ main(int argc, char *argv[])
    if (isatty(1) && pager)
       setup_pager();
 
-   read_data_file(file);
+   if (option_color == COLOR_ALWAYS)
+      batch_flags |= INTEL_BATCH_DECODE_IN_COLOR;
+   if (option_full_decode)
+      batch_flags |= INTEL_BATCH_DECODE_FULL;
+   if (option_print_offsets)
+      batch_flags |= INTEL_BATCH_DECODE_OFFSETS;
+   batch_flags |= INTEL_BATCH_DECODE_FLOATS;
+
+   getline(&line, &line_size, file);
+   rewind(file);
+   if (strncmp(line, XE_KMD_ERROR_DUMP_IDENTIFIER, strlen(XE_KMD_ERROR_DUMP_IDENTIFIER)) == 0)
+      read_xe_data_file(file, batch_flags, xml_path, option_dump_kernels, option_print_all_bb);
+   else
+      read_i915_data_file(file, batch_flags);
+   free(line);
    fclose(file);
 
    /* close the stdout which is opened to write the output */

@@ -80,6 +80,20 @@ st_convert_sampler(const struct st_context *st,
    if (texobj->Target == GL_TEXTURE_RECTANGLE_ARB && !st->lower_rect_tex)
       sampler->unnormalized_coords = 1;
 
+   /*
+    * The spec says that "texture wrap modes are ignored" for seamless cube
+    * maps, so normalize the CSO. This works around Apple hardware which honours
+    * REPEAT modes even for seamless cube maps.
+    */
+   if ((texobj->Target == GL_TEXTURE_CUBE_MAP ||
+        texobj->Target == GL_TEXTURE_CUBE_MAP_ARRAY) &&
+       sampler->seamless_cube_map) {
+
+      sampler->wrap_s = PIPE_TEX_WRAP_CLAMP_TO_EDGE;
+      sampler->wrap_t = PIPE_TEX_WRAP_CLAMP_TO_EDGE;
+      sampler->wrap_r = PIPE_TEX_WRAP_CLAMP_TO_EDGE;
+   }
+
    sampler->lod_bias += tex_unit_lod_bias;
 
    /* Check that only wrap modes using the border color have the first bit
@@ -98,11 +112,20 @@ st_convert_sampler(const struct st_context *st,
        /* This is true if wrap modes are using the border color: */
        (sampler->wrap_s | sampler->wrap_t | sampler->wrap_r) & 0x1) {
       GLenum texBaseFormat = _mesa_base_tex_image(texobj)->_BaseFormat;
+
+      /* From OpenGL 4.3 spec, "Combined Depth/Stencil Textures":
+       *
+       *    "The DEPTH_STENCIL_TEXTURE_MODE is ignored for non
+       *     depth/stencil textures.
+       */
+      const bool has_combined_ds = texBaseFormat == GL_DEPTH_STENCIL;
+
       const GLboolean is_integer =
-         texobj->_IsIntegerFormat || texobj->StencilSampling ||
+         texobj->_IsIntegerFormat ||
+         (texobj->StencilSampling && has_combined_ds) ||
          texBaseFormat == GL_STENCIL_INDEX;
 
-      if (texobj->StencilSampling)
+      if (texobj->StencilSampling && has_combined_ds)
          texBaseFormat = GL_STENCIL_INDEX;
 
       if (st->apply_texture_swizzle_to_border_color ||
@@ -223,10 +246,10 @@ update_shader_samplers(struct st_context *st,
        * states that are NULL.
        */
       if (samplers_used & 1 &&
-          (ctx->Texture.Unit[tex_unit]._Current->Target != GL_TEXTURE_BUFFER ||
-           st->texture_buffer_sampler)) {
-         st_convert_sampler_from_unit(st, sampler, tex_unit,
-                                      prog->sh.data && prog->sh.data->Version >= 130);
+          (ctx->Texture.Unit[tex_unit]._Current->Target != GL_TEXTURE_BUFFER)) {
+         st_convert_sampler_from_unit(
+            st, sampler, tex_unit,
+            prog->shader_program && prog->shader_program->GLSL_Version >= 130);
          states[unit] = sampler;
       } else {
          states[unit] = NULL;
@@ -255,6 +278,11 @@ update_shader_samplers(struct st_context *st,
             /* no additional views needed */
             break;
          FALLTHROUGH;
+      case PIPE_FORMAT_NV21:
+         if (stObj->pt->format == PIPE_FORMAT_R8_B8G8_420_UNORM)
+            /* no additional views needed */
+            break;
+         FALLTHROUGH;
       case PIPE_FORMAT_P010:
       case PIPE_FORMAT_P012:
       case PIPE_FORMAT_P016:
@@ -263,8 +291,12 @@ update_shader_samplers(struct st_context *st,
       case PIPE_FORMAT_Y212:
       case PIPE_FORMAT_Y216:
       case PIPE_FORMAT_YUYV:
+      case PIPE_FORMAT_YVYU:
       case PIPE_FORMAT_UYVY:
+      case PIPE_FORMAT_VYUY:
          if (stObj->pt->format == PIPE_FORMAT_R8G8_R8B8_UNORM ||
+             stObj->pt->format == PIPE_FORMAT_R8B8_R8G8_UNORM ||
+             stObj->pt->format == PIPE_FORMAT_B8R8_G8R8_UNORM ||
              stObj->pt->format == PIPE_FORMAT_G8R8_B8R8_UNORM) {
             /* no additional views needed */
             break;
@@ -275,6 +307,11 @@ update_shader_samplers(struct st_context *st,
          states[extra] = sampler;
          break;
       case PIPE_FORMAT_IYUV:
+         if (stObj->pt->format == PIPE_FORMAT_R8_G8_B8_420_UNORM ||
+             stObj->pt->format == PIPE_FORMAT_R8_B8_G8_420_UNORM) {
+            /* no additional views needed */
+            break;
+         }
          /* we need two additional samplers: */
          extra = u_bit_scan(&free_slots);
          states[extra] = sampler;

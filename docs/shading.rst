@@ -131,30 +131,29 @@ Stand-alone GLSL Compiler
 -------------------------
 
 The stand-alone GLSL compiler program can be used to compile GLSL
-shaders into low-level GPU code.
+shaders into GLSL IR code.
 
 This tool is useful for:
 
--  Inspecting GPU code to gain insight into compilation
--  Generating initial GPU code for subsequent hand-tuning
+-  Inspecting GLSL frontend behavior to gain insight into compilation
 -  Debugging the GLSL compiler itself
 
-After building Mesa, the compiler can be found at
-src/compiler/glsl/glsl_compiler
+After building Mesa with the ``-Dtools=glsl`` meson option, the compiler will be
+installed as the binary ``glsl_compiler``.
 
 Here's an example of using the compiler to compile a vertex shader and
 emit :ext:`GL_ARB_vertex_program`-style instructions:
 
-.. code-block:: console
+.. code-block:: sh
 
        src/compiler/glsl/glsl_compiler --version XXX --dump-ast myshader.vert
 
 Options include
 
--  **--dump-ast** - dump GPU code
+-  **--dump-ast** - dump source syntax tree
 -  **--dump-hir** - dump high-level IR code
 -  **--dump-lir** - dump low-level IR code
--  **--dump-builder** - dump GLSL IR code
+-  **--dump-builder** - dump C++ ir_builder code to generate the shader's GLSL IR
 -  **--link** - link shaders
 -  **--just-log** - display only shader / linker info if exist, without
    any header or separator

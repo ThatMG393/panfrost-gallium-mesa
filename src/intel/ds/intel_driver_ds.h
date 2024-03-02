@@ -56,15 +56,23 @@ enum intel_ds_stall_flag {
    INTEL_DS_DEPTH_STALL_BIT                  = BITFIELD_BIT(11),
    INTEL_DS_CS_STALL_BIT                     = BITFIELD_BIT(12),
    INTEL_DS_UNTYPED_DATAPORT_CACHE_FLUSH_BIT = BITFIELD_BIT(13),
+   INTEL_DS_PSS_STALL_SYNC_BIT               = BITFIELD_BIT(14),
+   INTEL_DS_END_OF_PIPE_BIT                  = BITFIELD_BIT(15),
+   INTEL_DS_CCS_CACHE_FLUSH_BIT              = BITFIELD_BIT(16),
 };
 
 /* Convert internal driver PIPE_CONTROL stall bits to intel_ds_stall_flag. */
 typedef enum intel_ds_stall_flag (*intel_ds_stall_cb_t)(uint32_t flags);
 
 enum intel_ds_queue_stage {
+   INTEL_DS_QUEUE_STAGE_QUEUE,
+   INTEL_DS_QUEUE_STAGE_FRAME,
    INTEL_DS_QUEUE_STAGE_CMD_BUFFER,
+   INTEL_DS_QUEUE_STAGE_INTERNAL_OPS,
    INTEL_DS_QUEUE_STAGE_STALL,
    INTEL_DS_QUEUE_STAGE_COMPUTE,
+   INTEL_DS_QUEUE_STAGE_AS,
+   INTEL_DS_QUEUE_STAGE_RT,
    INTEL_DS_QUEUE_STAGE_RENDER_PASS,
    INTEL_DS_QUEUE_STAGE_BLORP,
    INTEL_DS_QUEUE_STAGE_DRAW,
@@ -101,13 +109,21 @@ struct intel_ds_device {
    /* Unique perfetto identifier for the context */
    uint64_t iid;
 
-   /* Event ID generator */
+   /* Event ID generator (manipulate only inside
+    * IntelRenderpassDataSource::Trace)
+    */
    uint64_t event_id;
+
+   /* Tracepoint name perfetto identifiers for each of the events. */
+   uint64_t tracepoint_iids[96];
+
+   /* Protects submissions of u_trace data to trace_context */
+   simple_mtx_t trace_context_mutex;
 
    struct u_trace_context trace_context;
 
    /* List of intel_ds_queue */
-   struct u_vector queues;
+   struct list_head queues;
 };
 
 struct intel_ds_stage {
@@ -117,16 +133,21 @@ struct intel_ds_stage {
    /* Unique stage IID */
    uint64_t stage_iid;
 
-   /* Start timestamp of the last work element */
-   uint64_t start_ns;
+   /* Start timestamp of the last work element. We have a array indexed by
+    * level so that we can track multi levels of events (like
+    * primary/secondary command buffers).
+    */
+   uint64_t start_ns[5];
+
+   /* Current number of valid elements in start_ns */
+   uint32_t level;
 };
 
 struct intel_ds_queue {
+   struct list_head link;
+
    /* Device this queue belongs to */
    struct intel_ds_device *device;
-
-   /* Unique queue ID across the device */
-   uint32_t queue_id;
 
    /* Unique name of the queue */
    char name[80];
@@ -158,15 +179,24 @@ void intel_ds_device_init(struct intel_ds_device *device,
                           enum intel_ds_api api);
 void intel_ds_device_fini(struct intel_ds_device *device);
 
-struct intel_ds_queue *intel_ds_device_add_queue(struct intel_ds_device *device,
-                                                 const char *fmt_name,
-                                                 ...);
+struct intel_ds_queue *
+intel_ds_device_init_queue(struct intel_ds_device *device,
+                           struct intel_ds_queue *queue,
+                           const char *fmt_name,
+                           ...);
 
 void intel_ds_flush_data_init(struct intel_ds_flush_data *data,
                               struct intel_ds_queue *queue,
                               uint64_t submission_id);
 
 void intel_ds_flush_data_fini(struct intel_ds_flush_data *data);
+
+void intel_ds_queue_flush_data(struct intel_ds_queue *queue,
+                               struct u_trace *ut,
+                               struct intel_ds_flush_data *data,
+                               bool free_data);
+
+void intel_ds_device_process(struct intel_ds_device *device, bool eof);
 
 #ifdef HAVE_PERFETTO
 

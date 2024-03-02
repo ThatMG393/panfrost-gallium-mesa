@@ -21,6 +21,7 @@
  * IN THE SOFTWARE.
  */
 
+#include "anv_private.h"
 #include "genX_grl.h"
 
 static struct anv_shader_bin *
@@ -44,22 +45,27 @@ get_shader_bin(struct anv_device *device,
    assert(kernel_data.prog_data.base.nr_params <= ARRAY_SIZE(dummy_param));
    kernel_data.prog_data.base.param = dummy_param;
 
-   struct anv_push_descriptor_info push_desc_info = {};
+   struct anv_push_descriptor_info empty_push_desc_info = {};
    struct anv_pipeline_bind_map bind_map = {
       .kernel_args_size = kernel_data.args_size,
       .kernel_arg_count = kernel_data.arg_count,
       .kernel_args = (struct brw_kernel_arg_desc *)kernel_data.args,
    };
 
+   struct anv_shader_upload_params upload_params = {
+      .stage               = MESA_SHADER_KERNEL,
+      .key_data            = key,
+      .key_size            = key_len,
+      .kernel_data         = kernel_data.code,
+      .kernel_size         = kernel_data.prog_data.base.program_size,
+      .prog_data           = &kernel_data.prog_data.base,
+      .prog_data_size      = sizeof(kernel_data.prog_data),
+      .bind_map            = &bind_map,
+      .push_desc_info      = &empty_push_desc_info,
+   };
+
    bin = anv_device_upload_kernel(device, device->internal_cache,
-                                  MESA_SHADER_KERNEL,
-                                  key, key_len,
-                                  kernel_data.code,
-                                  kernel_data.prog_data.base.program_size,
-                                  &kernel_data.prog_data.base,
-                                  sizeof(kernel_data.prog_data),
-                                  NULL, 0, NULL, &bind_map,
-                                  &push_desc_info);
+                                  &upload_params);
 
    /* The cache already has a reference and it's not going anywhere so there
     * is no need to hold a second reference.
@@ -88,4 +94,20 @@ genX(grl_dispatch)(struct anv_cmd_buffer *cmd_buffer,
 
    genX(cmd_buffer_dispatch_kernel)(cmd_buffer, &ak, global_size,
                                     arg_count, args);
+}
+
+uint32_t
+genX(grl_max_scratch_size)(void)
+{
+   uint32_t scratch_size = 0;
+
+   for (uint32_t i = 0; i < GRL_CL_KERNEL_MAX; i++) {
+      struct brw_kernel kernel_data;
+      genX(grl_get_cl_kernel)(&kernel_data, i);
+
+      scratch_size = MAX2(kernel_data.prog_data.base.total_scratch,
+                          scratch_size);
+   }
+
+   return scratch_size;
 }

@@ -139,6 +139,10 @@ struct mi_builder {
    unsigned num_math_dwords;
    uint32_t math_dwords[MI_BUILDER_MAX_MATH_DWORDS];
 #endif
+
+#if GFX_VERx10 >= 125
+   uint32_t mocs;
+#endif
 };
 
 static inline void
@@ -166,10 +170,29 @@ mi_builder_flush_math(struct mi_builder *b)
    uint32_t *dw = (uint32_t *)__gen_get_batch_dwords(b->user_data,
                                                      1 + b->num_math_dwords);
    mi_builder_pack(b, GENX(MI_MATH), dw, math) {
+#if GFX_VERx10 >= 125
+      math.MOCS = b->mocs;
+#endif
       math.DWordLength = 1 + b->num_math_dwords - GENX(MI_MATH_length_bias);
    }
    memcpy(dw + 1, b->math_dwords, b->num_math_dwords * sizeof(uint32_t));
    b->num_math_dwords = 0;
+#endif
+}
+
+/**
+ * Set mocs index to mi_build
+ *
+ * This is required when a MI_MATH instruction will be emitted and
+ * the code is used in GFX 12.5 or newer.
+ */
+static inline void
+mi_builder_set_mocs(UNUSED struct mi_builder *b, UNUSED uint32_t mocs)
+{
+#if GFX_VERx10 >= 125
+   if (b->mocs != 0 && b->mocs != mocs)
+      mi_builder_flush_math(b);
+   b->mocs = mocs;
 #endif
 }
 
@@ -980,7 +1003,7 @@ mi_ushr_imm(struct mi_builder *b, struct mi_value src, uint32_t shift)
    while (shift) {
       int bit = u_bit_scan(&shift);
       assert(bit <= 5);
-      res = mi_ushr(b, res, mi_imm(1 << bit));
+      res = mi_ushr(b, res, mi_imm(1ULL << bit));
    }
 
    return res;

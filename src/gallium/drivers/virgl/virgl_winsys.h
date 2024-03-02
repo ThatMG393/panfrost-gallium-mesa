@@ -27,6 +27,7 @@
 #include "virtio-gpu/virgl_hw.h"
 
 struct pipe_box;
+struct pipe_resource;
 struct pipe_fence_handle;
 struct winsys_handle;
 struct virgl_hw_res;
@@ -51,6 +52,8 @@ struct virgl_winsys {
    int supports_coherent;          /* Coherent memory is supported */
 
    void (*destroy)(struct virgl_winsys *vws);
+
+   int (*get_fd)(struct virgl_winsys *vws);
 
    int (*transfer_put)(struct virgl_winsys *vws,
                        struct virgl_hw_res *res,
@@ -79,11 +82,12 @@ struct virgl_winsys {
 
    void *(*resource_map)(struct virgl_winsys *vws, struct virgl_hw_res *res);
    void (*resource_wait)(struct virgl_winsys *vws, struct virgl_hw_res *res);
-   boolean (*resource_is_busy)(struct virgl_winsys *vws,
-                               struct virgl_hw_res *res);
+   bool (*resource_is_busy)(struct virgl_winsys *vws,
+                            struct virgl_hw_res *res);
 
    struct virgl_hw_res *(*resource_create_from_handle)(struct virgl_winsys *vws,
                                                        struct winsys_handle *whandle,
+                                                       struct pipe_resource *templ,
                                                        uint32_t *plane,
                                                        uint32_t *stride,
                                                        uint32_t *plane_offset,
@@ -98,10 +102,10 @@ struct virgl_winsys {
                              const uint32_t *plane_strides,
                              const uint32_t *plane_offsets);
 
-   boolean (*resource_get_handle)(struct virgl_winsys *vws,
-                                  struct virgl_hw_res *res,
-                                  uint32_t stride,
-                                  struct winsys_handle *whandle);
+   bool (*resource_get_handle)(struct virgl_winsys *vws,
+                               struct virgl_hw_res *res,
+                               uint32_t stride,
+                               struct winsys_handle *whandle);
 
    uint32_t (*resource_get_storage_size)(struct virgl_winsys* vws,
                                          struct virgl_hw_res* res);
@@ -109,13 +113,13 @@ struct virgl_winsys {
    struct virgl_cmd_buf *(*cmd_buf_create)(struct virgl_winsys *ws, uint32_t size);
    void (*cmd_buf_destroy)(struct virgl_cmd_buf *buf);
 
-   void (*emit_res)(struct virgl_winsys *vws, struct virgl_cmd_buf *buf, struct virgl_hw_res *res, boolean write_buffer);
+   void (*emit_res)(struct virgl_winsys *vws, struct virgl_cmd_buf *buf, struct virgl_hw_res *res, bool write_buffer);
    int (*submit_cmd)(struct virgl_winsys *vws, struct virgl_cmd_buf *buf,
                      struct pipe_fence_handle **fence);
 
-   boolean (*res_is_referenced)(struct virgl_winsys *vws,
-                                struct virgl_cmd_buf *buf,
-                                struct virgl_hw_res *res);
+   bool (*res_is_referenced)(struct virgl_winsys *vws,
+                             struct virgl_cmd_buf *buf,
+                             struct virgl_hw_res *res);
 
    int (*get_caps)(struct virgl_winsys *vws, struct virgl_drm_caps *caps);
 
@@ -131,6 +135,7 @@ struct virgl_winsys {
 
    /* for sw paths */
    void (*flush_frontbuffer)(struct virgl_winsys *vws,
+                             struct virgl_cmd_buf *cbuf,
                              struct virgl_hw_res *res,
                              unsigned level, unsigned layer,
                              void *winsys_drawable_handle,
@@ -182,5 +187,5 @@ static inline void virgl_ws_fill_new_caps_defaults(struct virgl_drm_caps *caps)
 }
 
 extern enum virgl_formats pipe_to_virgl_format(enum pipe_format format);
-
+extern enum pipe_format virgl_to_pipe_format(enum virgl_formats format);
 #endif

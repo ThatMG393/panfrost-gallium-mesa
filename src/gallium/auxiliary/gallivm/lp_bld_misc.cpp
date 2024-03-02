@@ -56,16 +56,23 @@
 #include <llvm-c/ExecutionEngine.h>
 #include <llvm/Target/TargetOptions.h>
 #include <llvm/ExecutionEngine/ExecutionEngine.h>
-#include <llvm/ADT/Triple.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/ExecutionEngine/SectionMemoryManager.h>
 #include <llvm/Support/CommandLine.h>
-#include <llvm/Support/Host.h>
 #include <llvm/Support/PrettyStackTrace.h>
 #include <llvm/ExecutionEngine/ObjectCache.h>
 #include <llvm/Support/TargetSelect.h>
+#include <llvm/CodeGen/SelectionDAGNodes.h>
 #if LLVM_VERSION_MAJOR >= 15
 #include <llvm/Support/MemoryBuffer.h>
+#endif
+
+#if LLVM_VERSION_MAJOR >= 17
+#include <llvm/TargetParser/Host.h>
+#include <llvm/TargetParser/Triple.h>
+#else
+#include <llvm/Support/Host.h>
+#include <llvm/ADT/Triple.h>
 #endif
 
 #if LLVM_VERSION_MAJOR < 11
@@ -93,6 +100,8 @@
 
 #include "lp_bld_misc.h"
 #include "lp_bld_debug.h"
+
+static void lp_run_atexit_for_destructors(void);
 
 namespace {
 
@@ -141,6 +150,7 @@ static void init_native_targets()
       }
    }
 #endif
+   lp_run_atexit_for_destructors();
 }
 
 extern "C" void
@@ -360,9 +370,13 @@ lp_build_create_jit_compiler_for_module(LLVMExecutionEngineRef *OutJIT,
    builder.setEngineKind(EngineKind::JIT)
           .setErrorStr(&Error)
           .setTargetOptions(options)
+#if LLVM_VERSION_MAJOR >= 18
+          .setOptLevel((CodeGenOptLevel)OptLevel);
+#else
           .setOptLevel((CodeGenOpt::Level)OptLevel);
+#endif
 
-#ifdef _WIN32
+#if DETECT_OS_WINDOWS
     /*
      * MCJIT works on Windows, but currently only through ELF object format.
      *
@@ -370,10 +384,14 @@ lp_build_create_jit_compiler_for_module(LLVMExecutionEngineRef *OutJIT,
      * different strings for MinGW/MSVC, so better play it safe and be
      * explicit.
      */
-#  ifdef _WIN64
+#  if DETECT_ARCH_X86_64
     LLVMSetTarget(M, "x86_64-pc-win32-elf");
-#  else
+#  elif DETECT_ARCH_X86
     LLVMSetTarget(M, "i686-pc-win32-elf");
+#  elif DETECT_ARCH_AARCH64
+    LLVMSetTarget(M, "aarch64-pc-win32-elf");
+#  else
+#    error Unsupported architecture for MCJIT on Windows.
 #  endif
 #endif
 
@@ -398,6 +416,13 @@ lp_build_create_jit_compiler_for_module(LLVMExecutionEngineRef *OutJIT,
     * so we do not use llvm::sys::getHostCPUFeatures to detect cpu features
     * but using util_get_cpu_caps() instead.
     */
+#if DETECT_ARCH_X86_64
+   /*
+    * Without this, on some "buggy" qemu cpu setup, LLVM could crash
+    * if LLVM detects the wrong CPU type.
+    */
+   MAttrs.push_back("+64bit");
+#endif
    MAttrs.push_back(util_get_cpu_caps()->has_sse    ? "+sse"    : "-sse"   );
    MAttrs.push_back(util_get_cpu_caps()->has_sse2   ? "+sse2"   : "-sse2"  );
    MAttrs.push_back(util_get_cpu_caps()->has_sse3   ? "+sse3"   : "-sse3"  );
@@ -608,4 +633,34 @@ lp_set_module_stack_alignment_override(LLVMModuleRef MRef, unsigned align)
    llvm::Module *M = llvm::unwrap(MRef);
    M->setOverrideStackAlignment(align);
 #endif
+}
+
+using namespace llvm;
+
+class GallivmRunAtExitForStaticDestructors : public SDNode
+{
+public:
+   /* getSDVTList (protected) calls getValueTypeList (private), which contains static variables. */
+   GallivmRunAtExitForStaticDestructors(): SDNode(0, 0, DebugLoc(), getSDVTList(MVT::Other))
+   {
+   }
+};
+
+static void
+lp_run_atexit_for_destructors(void)
+{
+   /* LLVM >= 16 registers static variable destructors on the first compile, which gcc
+    * implements by calling atexit there. Before that, u_queue registers its atexit
+    * handler to kill all threads. Since exit() runs atexit handlers in the reverse order,
+    * the LLVM destructors are called first while shader compiler threads may still be
+    * running, which crashes in LLVM in SelectionDAG.cpp.
+    *
+    * The solution is to run the code that declares the LLVM static variables first,
+    * so that atexit for LLVM is registered first and u_queue is registered after that,
+    * which ensures that all u_queue threads are terminated before LLVM destructors are
+    * called.
+    *
+    * This just executes the code that declares static variables.
+    */
+   GallivmRunAtExitForStaticDestructors();
 }

@@ -137,7 +137,7 @@ VirtualValue::from_string(const std::string& s)
    case 'L':
       return LiteralConstant::from_string(s);
    case 'K':
-      return UniformValue::from_string(s);
+      return UniformValue::from_string(s, nullptr);
    case 'P':
       return InlineConstant::param_from_string(s);
    case 'I':
@@ -198,7 +198,6 @@ void
 Register::add_parent(Instr *instr)
 {
    m_parents.insert(instr);
-   instr->add_use();
    add_parent_to_array(instr);
 }
 
@@ -212,7 +211,6 @@ void
 Register::del_parent(Instr *instr)
 {
    m_parents.erase(instr);
-   instr->dec_use();
    del_parent_from_array(instr);
 }
 
@@ -225,14 +223,7 @@ Register::del_parent_from_array(Instr *instr)
 void
 Register::add_use(Instr *instr)
 {
-   const auto& [itr, inserted] = m_uses.insert(instr);
-   {
-   }
-
-   if (inserted) {
-      for (auto& p : m_parents)
-         p->add_use();
-   }
+   m_uses.insert(instr);
 }
 
 void
@@ -241,9 +232,6 @@ Register::del_use(Instr *instr)
    sfn_log << SfnLog::opt << "Del use of " << *this << " in " << *instr << "\n";
    if (m_uses.find(instr) != m_uses.end()) {
       m_uses.erase(instr);
-      if (m_flags.test(ssa))
-         for (auto& p : m_parents)
-            p->dec_use();
    }
 }
 
@@ -275,6 +263,17 @@ Register::accept(ConstRegisterVisitor& visitor) const
 void
 Register::print(std::ostream& os) const
 {
+   if (m_flags.test(addr_or_idx)) {
+      switch (sel()) {
+      case AddressRegister::addr: os << "AR"; break;
+      case AddressRegister::idx0: os << "IDX0"; break;
+      case AddressRegister::idx1: os << "IDX1"; break;
+      default:
+         unreachable("Wrong address ID");
+      }
+      return;
+   }
+
    os << (m_flags.test(ssa) ? "S" : "R") << sel() << "." << chanchar[chan()];
 
    if (pin() != pin_none)
@@ -297,6 +296,14 @@ Register::from_string(const std::string& s)
    std::string numstr;
    char chan = 0;
    std::string pinstr;
+
+   if (s == "AR") {
+      return new AddressRegister(AddressRegister::addr);
+   } else if (s == "IDX0") {
+      return new AddressRegister(AddressRegister::idx0);
+   } else if (s == "IDX1") {
+      return new AddressRegister(AddressRegister::idx1);
+   }
 
    assert(s[0] == 'R' || s[0] == '_' || s[0] == 'S');
 
@@ -656,7 +663,7 @@ InlineConstant::from_string(const std::string& s)
       use_chan = entry->second.second;
    }
 
-   ASSERT_OR_THROW(value != ALU_SRC_UNKNOWN, "Unknwon inline constant was given");
+   ASSERT_OR_THROW(value != ALU_SRC_UNKNOWN, "Unknown inline constant was given");
 
    if (use_chan) {
       ASSERT_OR_THROW(s[i + 1] == '.', "inline const channel not started with '.'");
@@ -683,7 +690,7 @@ InlineConstant::from_string(const std::string& s)
          chan = 7;
          break;
       default:
-         ASSERT_OR_THROW(0, "invalied inline const channel ");
+         ASSERT_OR_THROW(0, "invalid inline const channel ");
       }
    }
    return new InlineConstant(value, chan);
@@ -756,6 +763,11 @@ UniformValue::buf_addr() const
    return m_buf_addr;
 }
 
+void UniformValue::set_buf_addr(PVirtualValue addr)
+{
+   m_buf_addr = addr; 
+}
+
 void
 UniformValue::print(std::ostream& os) const
 {
@@ -781,10 +793,12 @@ UniformValue::equal_buf_and_cache(const UniformValue& other) const
 }
 
 UniformValue::Pointer
-UniformValue::from_string(const std::string& s)
+UniformValue::from_string(const std::string& s, ValueFactory *factory)
 {
    assert(s[1] == 'C');
    std::istringstream is(s.substr(2));
+
+   VirtualValue *bufid = nullptr;
    int bank;
    char c;
    is >> bank;
@@ -792,10 +806,31 @@ UniformValue::from_string(const std::string& s)
 
    assert(c == '[');
 
+   std::stringstream index0_ss;
+
    int index;
-   is >> index;
 
    is >> c;
+   while (c != ']' && is.good()) {
+      index0_ss << c;
+      is >> c;
+   }
+
+   auto index0_str = index0_ss.str();
+   if (isdigit(index0_str[0])) {
+      std::istringstream is_digit(index0_str);
+      is_digit >> index;
+   } else {
+      bufid = factory ?
+                 factory->src_from_string(index0_str) :
+                 Register::from_string(index0_str);
+      assert(c == ']');
+      is >> c;
+      assert(c == '[');
+      is >> index;
+      is >> c;
+   }
+
    assert(c == ']');
    is >> c;
    assert(c == '.');
@@ -816,9 +851,12 @@ UniformValue::from_string(const std::string& s)
       chan = 3;
       break;
    default:
-      unreachable("Unknown channle when reading uniform");
+      unreachable("Unknown channel when reading uniform");
    }
-   return new UniformValue(index + 512, chan, bank);
+   if (bufid)
+      return new UniformValue(index + 512, chan, bufid, bank);
+   else
+      return new UniformValue(index + 512, chan, bank);
 }
 
 LocalArray::LocalArray(int base_sel, int nchannels, int size, int frac):
@@ -835,17 +873,11 @@ LocalArray::LocalArray(int base_sel, int nchannels, int size, int frac):
    sfn_log << SfnLog::reg << "Allocate array A" << base_sel << "(" << size << ", " << frac
            << ", " << nchannels << ")\n";
 
+   auto pin = m_size > 1 ? pin_array : (nchannels > 1 ? pin_none : pin_free);
    for (int c = 0; c < nchannels; ++c) {
       for (unsigned i = 0; i < m_size; ++i) {
-         PRegister reg = new Register(base_sel + i, c + frac, pin_array);
+         PRegister reg = new Register(base_sel + i, c + frac, pin);
          m_values[m_size * c + i] = new LocalArrayValue(reg, *this);
-
-         /* Pin the array register on the start, because currently we don't
-          * don't track the first write to an array element as write to all
-          * array elements, and it seems that the one can not just use
-          * registers that are not written to in an array for other purpouses
-          */
-         m_values[m_size * c + i]->set_flag(Register::pin_start);
       }
    }
 }
@@ -943,6 +975,13 @@ LocalArray::element(size_t offset, PVirtualValue indirect, uint32_t chan)
    return reg;
 }
 
+void LocalArray::add_parent_to_elements(int chan, Instr *instr)
+{
+   for (auto& e : m_values)
+      if (e->chan() == chan)
+         e->add_parent(instr);
+}
+
 bool
 LocalArray::ready_for_direct(int block, int index, int chan) const
 {
@@ -996,6 +1035,12 @@ LocalArrayValue::addr() const
    return m_addr;
 }
 
+void LocalArrayValue::set_addr(PRegister addr)
+{
+   m_addr = addr;
+}
+
+
 const LocalArray&
 LocalArrayValue::array() const
 {
@@ -1031,7 +1076,8 @@ LocalArrayValue::accept(ConstRegisterVisitor& vistor) const
 void
 LocalArrayValue::add_parent_to_array(Instr *instr)
 {
-   m_array.add_parent(instr);
+   if (m_addr)
+      m_array.add_parent_to_elements(chan(), instr);
 }
 
 void

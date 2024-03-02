@@ -212,7 +212,7 @@ svga_screen_cache_shrink(struct svga_screen *svgascreen,
 static void
 svga_screen_cache_add(struct svga_screen *svgascreen,
                       const struct svga_host_surface_cache_key *key,
-                      boolean to_invalidate,
+                      bool to_invalidate,
                       struct svga_winsys_surface **p_handle)
 {
    struct svga_host_surface_cache *cache = &svgascreen->cache;
@@ -490,12 +490,12 @@ svga_screen_cache_init(struct svga_screen *svgascreen)
 struct svga_winsys_surface *
 svga_screen_surface_create(struct svga_screen *svgascreen,
                            unsigned bind_flags, enum pipe_resource_usage usage,
-                           boolean *validated,
+                           bool *validated,
                            struct svga_host_surface_cache_key *key)
 {
    struct svga_winsys_screen *sws = svgascreen->sws;
    struct svga_winsys_surface *handle = NULL;
-   boolean cachable = SVGA_SURFACE_CACHE_ENABLED && key->cachable;
+   bool cachable = SVGA_SURFACE_CACHE_ENABLED && key->cachable;
 
    SVGA_DBG(DEBUG_CACHE|DEBUG_DMA,
             "%s sz %dx%dx%d mips %d faces %d arraySize %d cachable %d\n",
@@ -565,7 +565,7 @@ svga_screen_surface_create(struct svga_screen *svgascreen,
                      key->numMipLevels,
                      key->numFaces,
                      key->arraySize);
-         *validated = TRUE;
+         *validated = true;
       }
    }
 
@@ -573,7 +573,11 @@ svga_screen_surface_create(struct svga_screen *svgascreen,
       /* Unable to recycle surface, allocate a new one */
       unsigned usage = 0;
 
-      if (!key->cachable)
+      /* mark the surface as shareable if the surface is not
+       * cachable or the RENDER_TARGET bind flag is set.
+       */
+      if (!key->cachable ||
+          ((bind_flags & PIPE_BIND_RENDER_TARGET) != 0))
          usage |= SVGA_SURFACE_USAGE_SHARED;
       if (key->scanout)
          usage |= SVGA_SURFACE_USAGE_SCANOUT;
@@ -596,7 +600,7 @@ svga_screen_surface_create(struct svga_screen *svgascreen,
                   key->size.height,
                   key->size.depth);
 
-      *validated = FALSE;
+      *validated = false;
    }
 
    return handle;
@@ -610,7 +614,7 @@ svga_screen_surface_create(struct svga_screen *svgascreen,
 void
 svga_screen_surface_destroy(struct svga_screen *svgascreen,
                             const struct svga_host_surface_cache_key *key,
-                            boolean to_invalidate,
+                            bool to_invalidate,
                             struct svga_winsys_surface **p_handle)
 {
    struct svga_winsys_screen *sws = svgascreen->sws;

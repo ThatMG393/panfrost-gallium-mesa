@@ -1,24 +1,4 @@
-# https://gitlab.freedesktop.org/mesa/mesa/-/issues/4167
-dEQP-GLES3.functional.texture.compressed.astc.void_extent_ldr.10x10,Fail
-dEQP-GLES3.functional.texture.compressed.astc.void_extent_ldr.10x5,Fail
-dEQP-GLES3.functional.texture.compressed.astc.void_extent_ldr.10x6,Fail
-dEQP-GLES3.functional.texture.compressed.astc.void_extent_ldr.10x8,Fail
-dEQP-GLES3.functional.texture.compressed.astc.void_extent_ldr.12x10,Fail
-dEQP-GLES3.functional.texture.compressed.astc.void_extent_ldr.12x12,Fail
-dEQP-GLES3.functional.texture.compressed.astc.void_extent_ldr.4x4,Fail
-dEQP-GLES3.functional.texture.compressed.astc.void_extent_ldr.5x4,Fail
-dEQP-GLES3.functional.texture.compressed.astc.void_extent_ldr.6x5,Fail
-dEQP-GLES3.functional.texture.compressed.astc.void_extent_ldr.6x6,Fail
-dEQP-GLES3.functional.texture.compressed.astc.void_extent_ldr.8x5,Fail
-dEQP-GLES3.functional.texture.compressed.astc.void_extent_ldr.8x6,Fail
-dEQP-GLES3.functional.texture.compressed.astc.void_extent_ldr.8x8,Fail
-
-# X Error of failed request:  BadMatch (invalid parameter attributes)
-#   Major opcode of failed request:  151 (GLX)
-#   Minor opcode of failed request:  11 (X_GLXSwapBuffers)
-#   Serial number of failed request:  79
-#   Current serial number in output stream:  80
-glx@glx-make-current,Crash
+glx@glx-make-current,Fail
 
 glx@glx-multi-window-single-context,Fail
 
@@ -46,17 +26,6 @@ glx@glx_arb_create_context_robustness@invalid reset notification strategy,Fail
 # X error 167 (GLXBadFBConfig (9)) was generated, but GLXBadProfileARB (13) was expected.
 # Version = 3.3
 glx@glx_arb_create_context_es2_profile@invalid opengl es version,Fail
-
-# Xorg has disabled indirect rendering contexts.
-glx@glx_ext_import_context@free context,Fail
-glx@glx_ext_import_context@get context id,Fail
-glx@glx_ext_import_context@get current display,Fail
-glx@glx_ext_import_context@import context- multi process,Fail
-glx@glx_ext_import_context@import context- single process,Fail
-glx@glx_ext_import_context@imported context has same context id,Fail
-glx@glx_ext_import_context@make current- multi process,Fail
-glx@glx_ext_import_context@make current- single process,Fail
-glx@glx_ext_import_context@query context info,Fail
 
 spec@!opengl 1.0@rasterpos,Fail
 
@@ -116,9 +85,6 @@ spec@egl_chromium_sync_control@conformance,Fail
 # piglit: error: SBC did not change after second SwapBuffers: 0
 spec@egl_chromium_sync_control@conformance@eglGetSyncValuesCHROMIUM_msc_and_sbc_test,Fail
 
-# test binary not built
-spec@egl_ext_protected_content@conformance,Fail
-
 # Failed blit src(0,0;1,1) - dst(0,0;2147483647,2147483647)
 # Failed blit src(0,0;40,40) - dst(0,0;134217727,134217727)
 # Failed blit src(0,0;40,40) - dst(0,0;2147483647,2147483647)
@@ -157,5 +123,12 @@ spec@khr_texture_compression_astc@sliced-3d-miptree-gl srgb-fp@sRGB decode full 
 spec@khr_texture_compression_astc@sliced-3d-miptree-gles srgb-fp,Fail
 spec@khr_texture_compression_astc@sliced-3d-miptree-gles srgb-fp@sRGB decode full precision,Fail
 
-# https://gitlab.freedesktop.org/mesa/mesa/-/issues/7152
-spec@ext_transform_feedback@builtin-varyings gl_culldistance,Fail
+spec@!opengl 1.1@line-smooth-coverage,Fail
+spec@!opengl 1.1@line-smooth-stipple,Fail
+
+# fails after Debian bookworm update
+spec@arb_viewport_array@display-list,Fail
+
+# uprev Piglit in Mesa
+spec@arb_tessellation_shader@execution@tesslevels-indirect,Crash
+

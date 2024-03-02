@@ -36,12 +36,12 @@ TEMPLATE_H = Template(COPYRIGHT + """
 #ifndef GRL_CL_KERNEL_H
 #define GRL_CL_KERNEL_H
 
+#include "genxml/gen_macros.h"
+#include "compiler/brw_kernel.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include "genxml/gen_macros.h"
-#include "compiler/brw_kernel.h"
 
 enum grl_cl_kernel {
 % for k in kernels:
@@ -50,7 +50,7 @@ enum grl_cl_kernel {
     GRL_CL_KERNEL_MAX,
 };
 
-const char *grl_cl_kernel_name(enum grl_cl_kernel kernel);
+const char *genX(grl_cl_kernel_name)(enum grl_cl_kernel kernel);
 
 const char *genX(grl_get_cl_kernel_sha1)(enum grl_cl_kernel id);
 
@@ -61,7 +61,7 @@ void genX(grl_get_cl_kernel)(struct brw_kernel *kernel, enum grl_cl_kernel id);
 #endif
 
 #endif /* INTEL_GRL_H */
-""", output_encoding='utf-8')
+""")
 
 TEMPLATE_C = Template(COPYRIGHT + """
 /* This file generated from ${filename}, don't edit directly. */
@@ -73,7 +73,7 @@ TEMPLATE_C = Template(COPYRIGHT + """
 % endfor
 
 const char *
-grl_cl_kernel_name(enum grl_cl_kernel kernel)
+genX(grl_cl_kernel_name)(enum grl_cl_kernel kernel)
 {
     switch (kernel) {
 % for k in kernels:
@@ -108,7 +108,7 @@ ${prefix}_grl_get_cl_kernel(struct brw_kernel *kernel, enum grl_cl_kernel id)
         unreachable("Invalid GRL kernel enum");
     }
 }
-""", output_encoding='utf-8')
+""")
 
 def get_libraries_files(kernel_module):
     lib_files = []
@@ -201,12 +201,12 @@ def main():
 
     try:
         if args.out_h:
-            with open(args.out_h, 'wb') as f:
+            with open(args.out_h, 'w', encoding='utf-8') as f:
                 f.write(TEMPLATE_H.render(kernels=kernel_c_names,
                                           filename=os.path.basename(__file__)))
 
         if args.out_c:
-            with open(args.out_c, 'wb') as f:
+            with open(args.out_c, 'w', encoding='utf-8') as f:
                 f.write(TEMPLATE_C.render(kernels=kernel_c_names,
                                           prefix=args.prefix,
                                           filename=os.path.basename(__file__)))

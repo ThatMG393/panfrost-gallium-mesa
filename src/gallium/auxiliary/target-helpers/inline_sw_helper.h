@@ -2,7 +2,7 @@
 #ifndef INLINE_SW_HELPER_H
 #define INLINE_SW_HELPER_H
 
-#include "pipe/p_compiler.h"
+#include "util/compiler.h"
 #include "pipe/p_screen.h"
 #include "util/u_debug.h"
 #include "frontend/sw_winsys.h"
@@ -31,10 +31,6 @@
 
 #ifdef GALLIUM_D3D12
 #include "d3d12/d3d12_public.h"
-#endif
-
-#if defined(GALLIUM_ASAHI) && __APPLE__
-#include "asahi/agx_public.h"
 #endif
 
 #if defined(GALLIUM_PANFROST)
@@ -74,11 +70,6 @@ sw_screen_create_named(struct sw_winsys *winsys, const char *driver)
       screen = d3d12_create_dxcore_screen(winsys, NULL);
 #endif
 
-#if defined(GALLIUM_ASAHI) && __APPLE__
-   if (screen == NULL && strcmp(driver, "asahi") == 0)
-      screen = agx_screen_create(0, NULL, winsys);
-#endif
-
 #if defined(GALLIUM_PANFROST)
    if(screen == NULL && strcmp(driver, "panfrost") == 0) {
       int kbase_device_fd = open("/dev/mali0", O_RDWR | O_CLOEXEC | O_NONBLOCK);
@@ -104,9 +95,6 @@ sw_screen_create_vk(struct sw_winsys *winsys, bool sw_vk)
       (sw_vk ? "" : debug_get_option("GALLIUM_DRIVER", "")),
 #if defined(GALLIUM_D3D12)
       (sw_vk || only_sw) ? "" : "d3d12",
-#endif
-#if defined(GALLIUM_ASAHI) && __APPLE__
-      (sw_vk || only_sw) ? "" : "asahi",
 #endif
 #if defined(GALLIUM_LLVMPIPE)
       "llvmpipe",

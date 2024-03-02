@@ -66,6 +66,9 @@ struct sw_winsys
    void 
    (*destroy)( struct sw_winsys *ws );
 
+   int
+   (*get_fd)( struct sw_winsys *ws );
+
    bool
    (*is_displaytarget_format_supported)( struct sw_winsys *ws,
                                          unsigned tex_usage,
@@ -129,6 +132,7 @@ struct sw_winsys
    (*displaytarget_display)( struct sw_winsys *ws, 
                              struct sw_displaytarget *dt,
                              void *context_private,
+                             unsigned nboxes,
                              struct pipe_box *box );
 
    void 

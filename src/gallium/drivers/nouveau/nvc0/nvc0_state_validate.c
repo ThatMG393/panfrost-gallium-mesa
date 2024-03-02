@@ -287,7 +287,7 @@ static void
 nvc0_validate_stencil_ref(struct nvc0_context *nvc0)
 {
     struct nouveau_pushbuf *push = nvc0->base.pushbuf;
-    const ubyte *ref = &nvc0->stencil_ref.ref_value[0];
+    const uint8_t *ref = &nvc0->stencil_ref.ref_value[0];
 
     IMMED_NVC0(push, NVC0_3D(STENCIL_FRONT_FUNC_REF), ref[0]);
     IMMED_NVC0(push, NVC0_3D(STENCIL_BACK_FUNC_REF), ref[1]);
@@ -760,7 +760,7 @@ nvc0_validate_fbread(struct nvc0_context *nvc0)
        nvc0->fragprog->fp.reads_framebuffer &&
        nvc0->framebuffer.nr_cbufs &&
        nvc0->framebuffer.cbufs[0]) {
-      struct pipe_sampler_view tmpl;
+      struct pipe_sampler_view tmpl = {0};
       struct pipe_surface *sf = nvc0->framebuffer.cbufs[0];
 
       tmpl.target = PIPE_TEXTURE_2D_ARRAY;
