@@ -158,17 +158,4 @@ panfrost_disk_cache_retrieve(struct disk_cache *cache,
 void
 panfrost_disk_cache_init(struct panfrost_screen *screen)
 {
-#ifdef ENABLE_SHADER_CACHE
-   const uint8_t *id_sha1 = "1";
-   assert(id_sha1);
-
-   char timestamp[41];
-   _mesa_sha1_format(timestamp, id_sha1);
-
-   /* Consider any flags affecting the compile when caching */
-   uint64_t driver_flags = screen->dev.debug;
-   driver_flags |= ((uint64_t)(midgard_debug | bifrost_debug) << 32);
-
-   screen->disk_cache = disk_cache_create(renderer, timestamp, driver_flags);
-#endif
 }
