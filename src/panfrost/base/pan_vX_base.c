@@ -1158,8 +1158,7 @@ kbase_submit(kbase k, uint64_t va, unsigned req,
         for (unsigned i = 0; i < num_handles; ++i) {
                 int32_t h = handles[i];
                 assert(h < handle_buf_size);
-                
-                printf("handle_buf.use_count = %u", handle_buf[h].use_count);
+                // printf("handle_buf.use_count = %u", handle_buf[h].use_count);
                 assert(handle_buf[h].use_count < 255);
 
                 /* Implicit sync */
@@ -1220,7 +1219,7 @@ kbase_submit(kbase k, uint64_t va, unsigned req,
         util_dynarray_fini(&extres);
 
         if (ret == -1) {
-                perror("ioctl(KBASE_IOCTL_JOB_SUBMIT)");
+                // perror("ioctl(KBASE_IOCTL_JOB_SUBMIT)");
                 return -1;
         }
 
@@ -1315,7 +1314,7 @@ kbase_cs_bind_noevent(kbase k, struct kbase_context *ctx,
         ret = kbase_ioctl(k->fd, KBASE_IOCTL_CS_QUEUE_BIND, &bind);
 
         if (ret == -1) {
-                perror("ioctl(KBASE_IOCTL_CS_QUEUE_BIND)");
+                // perror("ioctl(KBASE_IOCTL_CS_QUEUE_BIND)");
                 // hack
                 cs.user_io = (void *)1;
                 return cs;
@@ -1328,7 +1327,7 @@ kbase_cs_bind_noevent(kbase k, struct kbase_context *ctx,
                            k->fd, bind.out.mmap_handle);
 
         if (cs.user_io == MAP_FAILED) {
-                perror("mmap(CS USER IO)");
+                // perror("mmap(CS USER IO)");
                 cs.user_io = NULL;
         }
 
