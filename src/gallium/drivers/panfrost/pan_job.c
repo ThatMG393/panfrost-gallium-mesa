@@ -1270,8 +1270,10 @@ panfrost_batch_submit(struct panfrost_context *ctx,
         else
                 ret = panfrost_batch_submit_csf(batch, &fb);
 
+        /* Remove debug cus lag
         if (ret)
                 fprintf(stderr, "panfrost_batch_submit failed: %d\n", ret);
+        */
 
         /* We must reset the damage info of our render targets here even
          * though a damage reset normally happens when the DRI layer swaps
