@@ -1158,6 +1158,8 @@ kbase_submit(kbase k, uint64_t va, unsigned req,
         for (unsigned i = 0; i < num_handles; ++i) {
                 int32_t h = handles[i];
                 assert(h < handle_buf_size);
+                
+                printf("handle_buf.use_count = %u", handle_buf[h].use_count);
                 assert(handle_buf[h].use_count < 255);
 
                 /* Implicit sync */
